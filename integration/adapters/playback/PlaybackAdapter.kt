@@ -1,9 +1,9 @@
-package tv49eastz.integration.adapters.playback
+package com.tv49eastz.integration.adapters.playback
 
-import tv49eastz.core.model.PlaybackState
-import tv49eastz.core.model.Stream
+import com.tv49eastz.core.model.PlaybackState
+import com.tv49eastz.core.model.Stream
 
-/** Player-independent seam. Concrete ExoPlayer/Media3 integration belongs behind this adapter. */
+/** Player-independent seam. Concrete Media3 integration belongs behind this adapter. */
 interface PlaybackAdapter {
     suspend fun prepare(stream: Stream)
     suspend fun play()
