@@ -24,11 +24,32 @@ func NewTunnelRegistry() *TunnelRegistry {
 	return &TunnelRegistry{devices: make(map[string]*DeviceTunnel)}
 }
 
+func validateTunnelBaseURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Scheme != "http" || u.Host == "" {
+		return nil, errors.New("invalid device tunnel")
+	}
+	// A tunnel endpoint is an origin, not a URL template. Reject userinfo,
+	// query strings and fragments so request paths cannot be reinterpreted by
+	// an intermediary or accidentally inherit attacker-controlled components.
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" {
+		return nil, errors.New("invalid device tunnel")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return nil, errors.New("invalid device tunnel")
+	}
+	u.Path = ""
+	return u, nil
+}
+
 func (r *TunnelRegistry) Register(deviceID, baseURL string, transport http.RoundTripper) error {
 	deviceID = normalizeDeviceID(deviceID)
-	u, err := url.Parse(baseURL)
-	if deviceID == "" || strings.Contains(deviceID, "/") || strings.Contains(deviceID, "..") || err != nil || u.Host == "" || u.Scheme != "http" {
+	if deviceID == "" || strings.Contains(deviceID, "/") || strings.Contains(deviceID, "..") {
 		return errors.New("invalid device tunnel")
+	}
+	u, err := validateTunnelBaseURL(baseURL)
+	if err != nil {
+		return err
 	}
 	if transport == nil {
 		transport = http.DefaultTransport
@@ -38,7 +59,16 @@ func (r *TunnelRegistry) Register(deviceID, baseURL string, transport http.Round
 	if _, exists := r.devices[deviceID]; exists {
 		return errors.New("device tunnel already registered")
 	}
-	r.devices[deviceID] = &DeviceTunnel{DeviceID: deviceID, BaseURL: strings.TrimRight(baseURL, "/"), client: &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	r.devices[deviceID] = &DeviceTunnel{
+		DeviceID: deviceID,
+		BaseURL:  strings.TrimRight(u.String(), "/"),
+		client: &http.Client{
+			Transport: transport,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				return http.ErrUseLastResponse
+			},
+		},
+	}
 	return nil
 }
 
@@ -68,9 +98,12 @@ func (r *TunnelRegistry) Count() int {
 }
 
 func NewTunnelTransport(cert tls.Certificate, roots *tls.Config, gatewayURL string) (http.RoundTripper, error) {
-	u, err := url.Parse(gatewayURL)
-	if err != nil || u.Scheme != "https" || u.Host == "" {
+	u, err := url.Parse(strings.TrimSpace(gatewayURL))
+	if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") {
 		return nil, errors.New("invalid tunnel gateway")
+	}
+	if roots == nil {
+		return nil, errors.New("missing tunnel TLS configuration")
 	}
 	cfg := roots.Clone()
 	cfg.Certificates = []tls.Certificate{cert}
