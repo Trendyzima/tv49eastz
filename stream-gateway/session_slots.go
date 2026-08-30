@@ -1,7 +1,5 @@
 package main
 
-import "sync/atomic"
-
 // reserveSessionSlot atomically reserves one of the configured session slots.
 // A separate Load-then-Add is unsafe under concurrent requests because several
 // callers can observe the same available slot and all proceed.
@@ -30,7 +28,7 @@ func (g *Gateway) releaseSessionSlot() {
 		if current <= 0 {
 			return
 		}
-		if atomic.CompareAndSwapInt64((*int64)(&g.sessionCount), current, current-1) {
+		if g.sessionCount.CompareAndSwap(current, current-1) {
 			return
 		}
 	}
