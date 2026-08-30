@@ -1,0 +1,42 @@
+name: Server Tap
+
+on:
+  push:
+    paths:
+      - 'server-tap/**'
+      - '.github/workflows/server-tap.yml'
+  pull_request:
+    paths:
+      - 'server-tap/**'
+      - '.github/workflows/server-tap.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: server-tap-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Server Tap tests
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: server-tap
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: server-tap/go.mod
+
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Run tests
+        run: go test ./...
