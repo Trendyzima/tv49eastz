@@ -1,7 +1,7 @@
-package tv49eastz.integration.contracts
+package com.tv49eastz.integration.contracts
 
-import tv49eastz.core.model.Channel
-import tv49eastz.core.model.Stream
+import com.tv49eastz.core.model.Channel
+import com.tv49eastz.core.model.Stream
 
 /** Resolves playable streams for canonical channels. */
 interface StreamProvider {
