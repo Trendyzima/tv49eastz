@@ -1,6 +1,7 @@
 package main
 
 import (
+	"crypto/rand"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -59,9 +60,10 @@ func newSession(principal Principal, channelID, streamID string, ttl time.Durati
 	if ttl <= 0 {
 		return Session{}, errors.New("invalid session ttl")
 	}
+
 	now := time.Now().UTC()
 	idBytes := make([]byte, 24)
-	if _, err := randRead(idBytes); err != nil {
+	if _, err := rand.Read(idBytes); err != nil {
 		return Session{}, err
 	}
 	return Session{
@@ -77,12 +79,4 @@ func newSession(principal Principal, channelID, streamID string, ttl time.Durati
 
 func sessionValid(s Session, now time.Time) bool {
 	return s.ID != "" && s.UserID != "" && s.DeviceID != "" && s.ChannelID != "" && s.StreamID != "" && now.After(s.IssuedAt) && now.Before(s.Expires)
-}
-
-func randRead(b []byte) (int, error) {
-	return cryptoRandRead(b)
-}
-
-var cryptoRandRead = func(b []byte) (int, error) {
-	return rand.Read(b)
 }
