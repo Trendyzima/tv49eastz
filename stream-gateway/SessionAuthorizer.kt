@@ -19,9 +19,8 @@ class StreamSessionManager(
         val userId = authorizer.authenticate(credential) ?: error("unauthorized")
         require(authorizer.authorize(userId, streamId)) { "forbidden" }
         val now = clock()
-        val id = java.util.UUID.randomUUID().toString()
-        return StreamSession(
-            id = id,
+        val session = StreamSession(
+            id = java.util.UUID.randomUUID().toString(),
             streamId = streamId,
             userId = userId,
             deviceId = deviceId,
@@ -29,10 +28,27 @@ class StreamSessionManager(
             startedAt = now.toString(),
             lastActivityAt = now.toString(),
             expiresAt = (now + ttlSeconds).toString()
-        ).also { sessions[id] = it }
+        )
+        sessions[session.id] = session
+        return session
     }
 
-    fun get(id: String): StreamSession? = sessions[id]?.takeUnless { it.expiresAt?.toLongOrNull()?.let(clock::invoke)?.let { _ -> false } ?: false }
+    fun get(id: String): StreamSession? {
+        val session = sessions[id] ?: return null
+        val expiry = session.expiresAt?.toLongOrNull() ?: return null
+        if (clock() >= expiry) {
+            sessions[id] = session.copy(state = StreamSession.State.EXPIRED, lastActivityAt = clock().toString())
+            return null
+        }
+        return session
+    }
+
+    fun touch(id: String): StreamSession? {
+        val current = get(id) ?: return null
+        val updated = current.copy(lastActivityAt = clock().toString())
+        sessions[id] = updated
+        return updated
+    }
 
     fun end(id: String): Boolean {
         val current = sessions[id] ?: return false
