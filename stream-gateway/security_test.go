@@ -9,13 +9,12 @@ import (
 	"time"
 )
 
-func testCertificate(raw string, enabled bool) *x509.Certificate {
+func testCertificate(raw string) *x509.Certificate {
 	now := time.Now().UTC()
 	return &x509.Certificate{
 		Raw:       []byte(raw),
 		NotBefore: now.Add(-time.Minute),
 		NotAfter:  now.Add(time.Hour),
-		DNSNames:  []string{map[bool]string{true: "enabled", false: "disabled"}[enabled]},
 	}
 }
 
@@ -31,7 +30,7 @@ func TestSessionIsBoundAndExpires(t *testing.T) {
 	if !sessionValid(s, s.IssuedAt.Add(time.Second)) {
 		t.Fatal("fresh session should be valid")
 	}
-	if sessionValid(s, s.ExpiresAt) {
+	if sessionValid(s, s.Expires) {
 		t.Fatal("expired session must be rejected")
 	}
 }
@@ -82,14 +81,14 @@ func TestExpiredCapabilityRejected(t *testing.T) {
 
 func TestRegistryCertificateBinding(t *testing.T) {
 	r := NewDeviceRegistry()
-	cert := testCertificate("device-a-cert", true)
+	cert := testCertificate("device-a-cert")
 	if err := r.Register(DeviceRecord{DeviceID: "device-a", PrincipalID: "principal-a", Fingerprint: certificateFingerprint(cert), Channels: map[string]bool{"camera": true}, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
 	if got, ok := r.Verify(cert); !ok || got.DeviceID != "device-a" {
 		t.Fatal("registered certificate was not resolved")
 	}
-	other := testCertificate("device-b-cert", true)
+	other := testCertificate("device-b-cert")
 	if _, ok := r.Verify(other); ok {
 		t.Fatal("unregistered certificate accepted")
 	}
@@ -97,7 +96,7 @@ func TestRegistryCertificateBinding(t *testing.T) {
 
 func TestDisabledDeviceRejected(t *testing.T) {
 	r := NewDeviceRegistry()
-	cert := testCertificate("disabled-cert", false)
+	cert := testCertificate("disabled-cert")
 	if err := r.Register(DeviceRecord{DeviceID: "device-disabled", PrincipalID: "principal-a", Fingerprint: certificateFingerprint(cert), Channels: map[string]bool{"camera": true}, Enabled: false}); err != nil {
 		t.Fatal(err)
 	}
