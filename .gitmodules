@@ -2,3 +2,18 @@
 	path = docs/FadCam.wiki
 	url = https://github.com/anonfaded/FadCam.wiki.git
 	branch = master
+
+[submodule "components/player"]
+	path = components/player
+	url = https://github.com/opentvproject/opentv.git
+	branch = main
+
+[submodule "components/channel-engine"]
+	path = components/channel-engine
+	url = https://github.com/ErsatzTV/legacy.git
+	branch = main
+
+[submodule "components/media-router"]
+	path = components/media-router
+	url = https://github.com/Trendyzima/mediamtx.git
+	branch = main
