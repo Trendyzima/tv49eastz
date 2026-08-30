@@ -298,6 +298,18 @@ func (g *Gateway) playlist(w http.ResponseWriter, r *http.Request, s Session) {
 	g.requests.Add(1)
 }
 
+func allowedMediaPath(raw string) bool {
+	u, err := url.Parse(raw)
+	if err != nil || u.IsAbs() || u.Host != "" || strings.HasPrefix(raw, "//") || u.Path == "" {
+		return false
+	}
+	p := u.Path
+	if p == "/status" || p == "/audio/volume" || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/audio/volume/") {
+		return false
+	}
+	return !strings.Contains(p, "..")
+}
+
 func (g *Gateway) rewritePlaylistLine(line string, s Session) string {
 	trim := strings.TrimSpace(line)
 	if trim == "" {
@@ -309,18 +321,23 @@ func (g *Gateway) rewritePlaylistLine(line string, s Session) string {
 			start := i + len(key)
 			if end := strings.Index(line[start:], "\""); end >= 0 {
 				raw := line[start : start+end]
-				if u, e := url.Parse(raw); e == nil && !u.IsAbs() && !strings.HasPrefix(raw, "//") && !strings.Contains(u.Path, "..") {
-					cap, e := g.signCapability(s.ID, s.StreamID, u.RequestURI(), s.Expires)
-					if e == nil {
-						return line[:start] + "/stream/" + s.ID + "/resource/" + cap + line[start+end:]
+				if allowedMediaPath(raw) {
+					if u, e := url.Parse(raw); e == nil {
+						cap, e := g.signCapability(s.ID, s.StreamID, u.RequestURI(), s.Expires)
+						if e == nil {
+							return line[:start] + "/stream/" + s.ID + "/resource/" + cap + line[start+end:]
+						}
 					}
 				}
 			}
 		}
 		return "# UNSAFE_RESOURCE_REJECTED"
 	}
+	if !allowedMediaPath(trim) {
+		return "# UNSAFE_RESOURCE_REJECTED"
+	}
 	u, e := url.Parse(trim)
-	if e != nil || u.IsAbs() || strings.HasPrefix(trim, "//") || u.Path == "" || strings.Contains(u.Path, "..") {
+	if e != nil {
 		return "# UNSAFE_RESOURCE_REJECTED"
 	}
 	cap, e := g.signCapability(s.ID, s.StreamID, u.RequestURI(), s.Expires)
@@ -332,7 +349,7 @@ func (g *Gateway) rewritePlaylistLine(line string, s Session) string {
 }
 
 func (g *Gateway) signCapability(sessionID, streamID, path string, expires time.Time) (string, error) {
-	if sessionID == "" || streamID == "" || path == "" || !strings.HasPrefix(path, "/") {
+	if sessionID == "" || streamID == "" || path == "" || !strings.HasPrefix(path, "/") || !allowedMediaPath(path) {
 		return "", errors.New("invalid capability")
 	}
 	payload := sessionID + "\x00" + streamID + "\x00" + strconv.FormatInt(expires.Unix(), 10) + "\x00" + path
@@ -360,6 +377,9 @@ func (g *Gateway) verifyCapability(token, sessionID, streamID string, expires ti
 	_, _ = mac.Write([]byte(strings.Join(parts[:4], "\x00")))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if !constantTime(parts[4], expected) {
+		return "", false
+	}
+	if !allowedMediaPath(path) {
 		return "", false
 	}
 	u, e := url.Parse(path)
@@ -410,6 +430,9 @@ func (g *Gateway) resource(w http.ResponseWriter, r *http.Request, sessionID, to
 }
 
 func (g *Gateway) upstreamGET(r *http.Request, path, deviceID string) ([]byte, int, error) {
+	if !allowedMediaPath(path) {
+		return nil, 0, errors.New("upstream path not allowed")
+	}
 	t, ok := g.tunnels.Get(deviceID)
 	if !ok {
 		return nil, 0, errors.New("device tunnel unavailable")
@@ -453,13 +476,9 @@ func env(k, d string) string {
 }
 
 func envInt(k string, d int) int {
-	v := env(k, "")
-	if v == "" {
+	v, e := strconv.Atoi(os.Getenv(k))
+	if e != nil || v <= 0 {
 		return d
 	}
-	n, e := strconv.Atoi(v)
-	if e != nil || n < 1 {
-		return d
-	}
-	return n
+	return v
 }
