@@ -1,7 +1,7 @@
-package tv49eastz.services.deviceservice
+package com.tv49eastz.services.deviceservice
 
-import tv49eastz.core.model.Device
-import tv49eastz.integration.contracts.DeviceProvider
+import com.tv49eastz.core.model.Device
+import com.tv49eastz.integration.contracts.DeviceProvider
 
 class DeviceService(private val providers: List<DeviceProvider>) {
     suspend fun devices(): List<Device> = providers.flatMap { it.devices() }.distinctBy(Device::id)
