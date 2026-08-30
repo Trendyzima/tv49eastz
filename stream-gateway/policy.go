@@ -12,10 +12,14 @@ func (p AuthorizationPolicy) AuthorizeStream(pr Principal, channelID, streamID s
 	if pr.UserID == "" || pr.DeviceID == "" || channelID == "" || streamID == "" {
 		return errors.New("missing authorization subject or resource")
 	}
-	if p.Registry == nil {
+	registry := p.Registry
+	if registry == nil {
+		registry = defaultDeviceRegistry
+	}
+	if registry == nil {
 		return errors.New("device registry unavailable")
 	}
-	d, ok := p.Registry.Lookup(pr.DeviceID)
+	d, ok := registry.Lookup(pr.DeviceID)
 	if !ok || d.PrincipalID != pr.UserID || !channelAllowed(d, channelID) {
 		return errors.New("device or channel not authorized")
 	}
