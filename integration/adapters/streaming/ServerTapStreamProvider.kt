@@ -6,22 +6,26 @@ import com.tv49eastz.core.model.StreamSource
 import com.tv49eastz.integration.contracts.StreamProvider
 
 /**
- * Adapter boundary for the protected FadCam server-tap.
- * The tap, not the domain layer, owns the private upstream connection.
+ * Live streaming adapter backed by the configured server-tap transport.
+ * It owns no FadCam knowledge; the tap is the only upstream boundary.
  */
 class ServerTapStreamProvider(
-    private val sourceResolver: suspend (channel: Channel) -> List<StreamSource>
+    private val tapClient: ServerTapClient,
+    private val providerId: String = "server-tap"
 ) : StreamProvider {
-    override suspend fun streamsFor(channel: Channel): List<Stream> =
-        sourceResolver(channel).map { source ->
-            require(source.channelId == channel.id) { "source/channel mismatch" }
-            require(source.enabled) { "disabled stream source" }
+    override suspend fun streamsFor(channel: Channel): List<Stream> {
+        val source = tapClient.resolveLiveSource(channel, providerId)
+        require(source.channelId == channel.id)
+        require(source.kind == StreamSource.Kind.HLS)
+        return listOf(
             Stream(
-                id = "${channel.id}:${source.id}",
+                id = "${channel.id}:server-tap",
                 channelId = channel.id,
                 sourceIds = listOf(source.id),
-                live = source.kind == StreamSource.Kind.HLS || source.kind == StreamSource.Kind.DASH,
+                title = channel.name,
+                live = true,
                 available = source.enabled
             )
-        }
+        )
+    }
 }
