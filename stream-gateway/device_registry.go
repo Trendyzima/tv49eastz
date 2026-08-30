@@ -91,11 +91,11 @@ func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
 		}
 
 		var v struct {
-			DeviceID    string `json:"device_id"`
-			PrincipalID string `json:"principal_id"`
-			Channel     string `json:"channel"`
-			Enabled     bool   `json:"enabled"`
-			Revoked     bool   `json:"revoked"`
+			DeviceID    string          `json:"device_id"`
+			PrincipalID string          `json:"principal_id"`
+			Channels    map[string]bool `json:"channels"`
+			Enabled     bool            `json:"enabled"`
+			Revoked     bool            `json:"revoked"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
 			return DeviceRecord{}, false
@@ -103,16 +103,12 @@ func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
 		if v.Revoked || !v.Enabled || v.DeviceID != deviceID || v.PrincipalID == "" {
 			return DeviceRecord{}, false
 		}
-		channels := make(map[string]bool)
-		if v.Channel != "" {
-			channels[v.Channel] = true
-		}
 		return DeviceRecord{
 			DeviceID:    v.DeviceID,
 			PrincipalID: v.PrincipalID,
 			Enabled:     v.Enabled,
 			Revoked:     v.Revoked,
-			Channels:    channels,
+			Channels:    v.Channels,
 		}, true
 	}
 
