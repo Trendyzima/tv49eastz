@@ -19,9 +19,9 @@ type DeviceRecord struct {
 }
 
 type DeviceRegistry struct {
-	mu      sync.RWMutex
-	byID    map[string]DeviceRecord
-	byFP    map[string]string
+	mu   sync.RWMutex
+	byID map[string]DeviceRecord
+	byFP map[string]string
 }
 
 func NewDeviceRegistry() *DeviceRegistry {
@@ -45,8 +45,18 @@ func (r *DeviceRegistry) Register(d DeviceRecord) error {
 	return nil
 }
 
+func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
+	r.mu.RLock()
+	d, ok := r.byID[normalizeDeviceID(deviceID)]
+	r.mu.RUnlock()
+	return d, ok && d.Enabled
+}
+
 func (r *DeviceRegistry) Verify(cert *x509.Certificate) (DeviceRecord, bool) {
 	if cert == nil {
+		return DeviceRecord{}, false
+	}
+	if err := validateCertificate(cert, time.Now()); err != nil {
 		return DeviceRecord{}, false
 	}
 	fp := certificateFingerprint(cert)
@@ -63,14 +73,17 @@ func certificateFingerprint(cert *x509.Certificate) string {
 }
 
 func validateCertificate(cert *x509.Certificate, now time.Time) error {
-	if cert == nil { return errors.New("missing certificate") }
-	if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) { return errors.New("certificate expired or not yet valid") }
+	if cert == nil {
+		return errors.New("missing certificate")
+	}
+	if now.Before(cert.NotBefore) || !now.Before(cert.NotAfter) {
+		return errors.New("certificate expired or not yet valid")
+	}
 	return nil
 }
 
 func channelAllowed(d DeviceRecord, channelID string) bool {
-	if !d.Enabled || channelID == "" { return false }
-	return d.Channels[channelID]
+	return d.Enabled && channelID != "" && d.Channels[channelID]
 }
 
 func normalizeDeviceID(s string) string { return strings.TrimSpace(s) }
