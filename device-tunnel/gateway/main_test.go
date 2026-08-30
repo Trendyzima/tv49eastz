@@ -23,26 +23,33 @@ func testDeviceRegistry(ids ...string) *DeviceRegistry {
 	return &DeviceRegistry{devices: devices, subscribers: make(map[chan DeviceEvent]struct{})}
 }
 
+func attachTestDevice(t *testing.T, b *broker, cert *x509.Certificate) string {
+	t.Helper()
+	id, err := b.registry.bind(cert)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if _, exists := b.devices[id]; exists {
+		t.Fatalf("device %q already attached", id)
+	}
+	b.devices[id] = newDevicePool(b.poolSize)
+	return id
+}
+
 func TestBrokerBindsMultipleDevicesToDistinctPools(t *testing.T) {
 	reg := testDeviceRegistry("device-a", "device-b")
 	b := newBroker(2, reg)
 	a := &x509.Certificate{Raw: []byte("cert-device-a"), Subject: pkix.Name{CommonName: "device-a"}}
 	bb := &x509.Certificate{Raw: []byte("cert-device-b"), Subject: pkix.Name{CommonName: "device-b"}}
 
-	idA, err := b.registry.bind(a)
-	if err != nil || idA != "device-a" {
-		t.Fatalf("bind A: %v %q", err, idA)
-	}
-	idB, err := b.registry.bind(bb)
-	if err != nil || idB != "device-b" {
-		t.Fatalf("bind B: %v %q", err, idB)
-	}
+	idA := attachTestDevice(t, b, a)
+	idB := attachTestDevice(t, b, bb)
 
-	b.mu.Lock()
-	b.devices[idA] = newDevicePool(2)
-	b.devices[idB] = newDevicePool(2)
-	b.mu.Unlock()
-
+	if idA != "device-a" || idB != "device-b" {
+		t.Fatalf("unexpected device IDs: %q %q", idA, idB)
+	}
 	if b.count() != 2 {
 		t.Fatalf("device count=%d", b.count())
 	}
