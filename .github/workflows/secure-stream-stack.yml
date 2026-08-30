@@ -1,0 +1,33 @@
+name: Secure Stream Stack
+
+on:
+  push:
+    branches: [master, 'feat/**']
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        module:
+          - device-tunnel
+          - server-tap
+          - stream-gateway
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.mod
+      - run: gofmt -w $(find . -name '*.go' -type f)
+      - run: go test ./...
+      - run: go vet ./...
