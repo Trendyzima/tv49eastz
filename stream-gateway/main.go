@@ -94,28 +94,43 @@ func main() {
 
 func (g *Gateway) middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(204)
+		if r.URL.Path == "/health" {
+			if r.Method != http.MethodGet {
+				g.denied.Add(1)
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			next.ServeHTTP(w, r)
 			return
 		}
-		if r.URL.Path == "/health" {
+		if r.URL.Path == "/metrics" {
+			if r.Method != http.MethodGet {
+				g.denied.Add(1)
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+				return
+			}
+			if !g.auth(r) {
+				g.denied.Add(1)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}
 		if r.URL.Path == "/v1/session" {
 			if r.Method != http.MethodGet {
 				g.denied.Add(1)
-				http.Error(w, "method not allowed", 405)
+				http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 				return
 			}
 			if !g.auth(r) {
 				g.denied.Add(1)
-				http.Error(w, "unauthorized", 401)
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
 				return
 			}
 			if !g.allowRate(r.RemoteAddr) {
 				g.denied.Add(1)
-				http.Error(w, "rate limit exceeded", 429)
+				http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 				return
 			}
 			next.ServeHTTP(w, r)
@@ -123,12 +138,12 @@ func (g *Gateway) middleware(next http.Handler) http.Handler {
 		}
 		if !strings.HasPrefix(r.URL.Path, "/stream/") || r.Method != http.MethodGet {
 			g.denied.Add(1)
-			http.Error(w, "method not allowed", 405)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
 		if !g.allowRate(r.RemoteAddr) {
 			g.denied.Add(1)
-			http.Error(w, "rate limit exceeded", 429)
+			http.Error(w, "rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -452,15 +467,13 @@ func (g *Gateway) upstreamGET(r *http.Request, path, deviceID string) ([]byte, i
 
 func (g *Gateway) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"ok":              true,
-		"active_sessions": g.sessionCount.Load(),
-		"tunnels":         g.tunnels.Count(),
-	})
+	w.Header().Set("Cache-Control", "no-store")
+	json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (g *Gateway) metrics(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	w.Header().Set("Cache-Control", "no-store")
 	io.WriteString(w,
 		"gateway_requests_total "+strconv.FormatUint(g.requests.Load(), 10)+"\n"+
 			"gateway_denied_total "+strconv.FormatUint(g.denied.Load(), 10)+"\n"+
