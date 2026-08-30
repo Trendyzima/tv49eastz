@@ -2,7 +2,6 @@ package main
 
 import (
 	"crypto/hmac"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -25,18 +24,6 @@ type Session struct { ID, UserID, DeviceID, ChannelID, StreamID string; IssuedAt
 type limiter struct { mu sync.Mutex; window time.Time; count int }
 type Gateway struct { cfg Config; client *http.Client; sessions sync.Map; limits sync.Map; sessionCount atomic.Int64; requests atomic.Uint64; bytes atomic.Uint64; denied atomic.Uint64; policy AuthorizationPolicy; tunnels *TunnelRegistry }
 
-func newSession(p Principal, channelID, streamID string, ttl time.Duration) (Session, error) {
-	if p.UserID == "" || p.DeviceID == "" || strings.TrimSpace(channelID) == "" || strings.TrimSpace(streamID) == "" || ttl <= 0 {
-		return Session{}, errors.New("invalid session parameters")
-	}
-	id, err := opaque(24)
-	if err != nil { return Session{}, err }
-	now := time.Now().UTC()
-	return Session{ID:id, UserID:p.UserID, DeviceID:p.DeviceID, ChannelID:channelID, StreamID:streamID, IssuedAt:now, Expires:now.Add(ttl)}, nil
-}
-
-func sessionValid(s Session, now time.Time) bool { return s.ID != "" && !s.IssuedAt.IsZero() && now.After(s.IssuedAt) && now.Before(s.Expires) }
-
 func main(){cfg:=Config{Listen:env("GATEWAY_LISTEN",":8787"),Upstream:strings.TrimRight(env("TAP_UPSTREAM","http://127.0.0.1:8786"),"/"),APIKey:os.Getenv("GATEWAY_API_KEY"),CapabilityKey:os.Getenv("GATEWAY_CAPABILITY_KEY"),MaxSessions:envInt("MAX_SESSIONS",25),RatePerMinute:envInt("RATE_PER_MINUTE",120),RequestTimeout:time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS",15))*time.Second};if cfg.APIKey==""||cfg.CapabilityKey==""{log.Fatal("GATEWAY_API_KEY and GATEWAY_CAPABILITY_KEY must be set")};u,e:=url.Parse(cfg.Upstream);if e!=nil||u.Host==""||(u.Scheme!="http"&&u.Scheme!="https"){log.Fatal("invalid TAP_UPSTREAM")};g:=&Gateway{cfg:cfg,client:&http.Client{Timeout:cfg.RequestTimeout,CheckRedirect:func(*http.Request,[]*http.Request)error{return http.ErrUseLastResponse}},tunnels:NewTunnelRegistry(),policy:AuthorizationPolicy{Registry:defaultDeviceRegistry}};mux:=http.NewServeMux();mux.HandleFunc("/health",g.health);mux.HandleFunc("/metrics",g.metrics);mux.HandleFunc("/v1/session",g.createSession);mux.HandleFunc("/stream/",g.stream);srv:=&http.Server{Addr:cfg.Listen,Handler:g.middleware(mux),ReadHeaderTimeout:5*time.Second,IdleTimeout:30*time.Second};log.Printf("stream-gateway listening on %s; upstream=%s",cfg.Listen,cfg.Upstream);log.Fatal(srv.ListenAndServe())}
 func(g *Gateway)middleware(next http.Handler)http.Handler{return http.HandlerFunc(func(w http.ResponseWriter,r *http.Request){if r.Method==http.MethodOptions{w.WriteHeader(204);return};if r.URL.Path=="/health"{next.ServeHTTP(w,r);return};if r.URL.Path=="/v1/session"{if r.Method!=http.MethodGet{g.denied.Add(1);http.Error(w,"method not allowed",405);return};if !g.auth(r){g.denied.Add(1);http.Error(w,"unauthorized",401);return};if !g.allowRate(r.RemoteAddr){g.denied.Add(1);http.Error(w,"rate limit exceeded",429);return};next.ServeHTTP(w,r);return};if !strings.HasPrefix(r.URL.Path,"/stream/")||r.Method!=http.MethodGet{g.denied.Add(1);http.Error(w,"method not allowed",405);return};if !g.allowRate(r.RemoteAddr){g.denied.Add(1);http.Error(w,"rate limit exceeded",429);return};next.ServeHTTP(w,r)})}
 func(g *Gateway)auth(r *http.Request)bool{return constantTime(r.Header.Get("Authorization"),"Bearer "+g.cfg.APIKey)}
@@ -54,6 +41,5 @@ func(g *Gateway)resource(w http.ResponseWriter,r *http.Request,sessionID,token s
 func(g *Gateway)upstreamGET(r *http.Request,path,deviceID string)([]byte,int,error){t,ok:=g.tunnels.Get(deviceID);if !ok{return nil,0,errors.New("device tunnel unavailable")};req,e:=http.NewRequestWithContext(r.Context(),http.MethodGet,t.BaseURL+path,nil);if e!=nil{return nil,0,e};resp,e:=t.client.Do(req);if e!=nil{return nil,0,e};defer resp.Body.Close();b,e:=io.ReadAll(io.LimitReader(resp.Body,32<<20+1));return b,resp.StatusCode,e}
 func(g *Gateway)health(w http.ResponseWriter,r *http.Request){w.Header().Set("Content-Type","application/json");json.NewEncoder(w).Encode(map[string]any{"ok":true,"active_sessions":g.sessionCount.Load(),"tunnels":g.tunnels.Count()})}
 func(g *Gateway)metrics(w http.ResponseWriter,r *http.Request){w.Header().Set("Content-Type","text/plain; version=0.0.4");io.WriteString(w,"gateway_requests_total "+strconv.FormatUint(g.requests.Load(),10)+"\n"+"gateway_denied_total "+strconv.FormatUint(g.denied.Load(),10)+"\n"+"gateway_bytes_total "+strconv.FormatUint(g.bytes.Load(),10)+"\n"+"gateway_sessions "+strconv.FormatInt(g.sessionCount.Load(),10)+"\n")}
-func opaque(n int)(string,error){b:=make([]byte,n);if _,e:=rand.Read(b);e!=nil{return "",e};return hex.EncodeToString(b),nil}
 func env(k,d string)string{if v:=os.Getenv(k);v!=""{return v};return d}
 func envInt(k string,d int)int{v:=env(k,"");if v==""{return d};n,e:=strconv.Atoi(v);if e!=nil||n<1{return d};return n}
