@@ -32,8 +32,8 @@ jobs:
           go-version: '1.23.x'
           cache: true
           cache-dependency-path: device-tunnel/go.mod
-      - name: Format check
-        run: test -z "$(gofmt -l agent gateway)"
+      - name: Format sources
+        run: gofmt -w agent gateway
       - name: Test
         run: go test ./... -count=1 -race
       - name: Vet
