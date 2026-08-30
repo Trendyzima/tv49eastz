@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
+	"encoding/hex"
 	"errors"
 	"io"
 	"log"
@@ -81,4 +82,4 @@ func (b *broker) proxyHTTP(w http.ResponseWriter, r *http.Request) {
 	resp,err:=http.ReadResponse(bufio.NewReader(conn),req); if err!=nil { http.Error(w,"device response failed",502); return }; defer resp.Body.Close()
 	for k,vv:=range resp.Header { for _,v:=range vv { w.Header().Add(k,v) } }; w.WriteHeader(resp.StatusCode); _,_=io.Copy(w,resp.Body)
 }
-func (b *broker) health(w http.ResponseWriter,r *http.Request) { w.Header().Set("Content-Type","application/json"); io.WriteString(w,`{"ok":true,"devices":`+strconv.Itoa(b.count())+`}`) }
+func (b *broker) health(w http.ResponseWriter, r *http.Request) { w.Header().Set("Content-Type","application/json"); io.WriteString(w,`{"ok":true,"devices":`+strconv.Itoa(b.count())+`}`) }
