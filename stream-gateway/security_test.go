@@ -9,63 +9,109 @@ import (
 	"time"
 )
 
+func testCertificate(raw string, enabled bool) *x509.Certificate {
+	now := time.Now().UTC()
+	return &x509.Certificate{
+		Raw:       []byte(raw),
+		NotBefore: now.Add(-time.Minute),
+		NotAfter:  now.Add(time.Hour),
+		DNSNames:  []string{map[bool]string{true: "enabled", false: "disabled"}[enabled]},
+	}
+}
+
 func TestSessionIsBoundAndExpires(t *testing.T) {
 	p := Principal{UserID: "u1", DeviceID: "d1"}
 	s, err := newSession(p, "ch1", "stream1", time.Minute)
-	if err != nil { t.Fatal(err) }
-	if s.UserID != "u1" || s.DeviceID != "d1" || s.ChannelID != "ch1" || s.StreamID != "stream1" { t.Fatal("session is not fully bound") }
-	if !sessionValid(s, s.IssuedAt.Add(time.Second)) { t.Fatal("fresh session should be valid") }
-	if sessionValid(s, s.ExpiresAt) { t.Fatal("expired session must be rejected") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.UserID != "u1" || s.DeviceID != "d1" || s.ChannelID != "ch1" || s.StreamID != "stream1" {
+		t.Fatal("session is not fully bound")
+	}
+	if !sessionValid(s, s.IssuedAt.Add(time.Second)) {
+		t.Fatal("fresh session should be valid")
+	}
+	if sessionValid(s, s.ExpiresAt) {
+		t.Fatal("expired session must be rejected")
+	}
 }
 
 func TestAuthenticateRejectsMissingCredential(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
-	if _, err := authenticate(r, "secret"); err == nil { t.Fatal("missing credential accepted") }
+	if _, err := authenticate(r, "secret"); err == nil {
+		t.Fatal("missing credential accepted")
+	}
 }
 
 func TestAuthenticateRejectsWrongCredential(t *testing.T) {
 	r := httptest.NewRequest("GET", "/", nil)
 	r.Header.Set("Authorization", "Bearer wrong")
-	if _, err := authenticate(r, "secret"); err == nil { t.Fatal("wrong credential accepted") }
+	if _, err := authenticate(r, "secret"); err == nil {
+		t.Fatal("wrong credential accepted")
+	}
 }
 
 func TestCapabilityTamperingRejected(t *testing.T) {
 	g := &Gateway{cfg: Config{CapabilityKey: "test-secret"}}
 	now := time.Now().UTC().Add(5 * time.Minute)
 	token, err := g.signCapability("session-a", "stream-a", "/init.mp4", now)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	raw, err := base64.RawURLEncoding.DecodeString(token)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	tampered := strings.Replace(string(raw), "/init.mp4", "/status", 1)
-	if _, ok := g.verifyCapability(base64.RawURLEncoding.EncodeToString([]byte(tampered)), "session-a", "stream-a", now); ok { t.Fatal("tampered capability accepted") }
+	if _, ok := g.verifyCapability(base64.RawURLEncoding.EncodeToString([]byte(tampered)), "session-a", "stream-a", now); ok {
+		t.Fatal("tampered capability accepted")
+	}
 }
 
 func TestExpiredCapabilityRejected(t *testing.T) {
 	g := &Gateway{cfg: Config{CapabilityKey: "test-secret"}}
 	expired := time.Now().UTC().Add(-time.Minute)
 	token, err := g.signCapability("session-a", "stream-a", "/init.mp4", expired)
-	if err != nil { t.Fatal(err) }
-	if _, ok := g.verifyCapability(token, "session-a", "stream-a", expired); ok { t.Fatal("expired capability accepted") }
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := g.verifyCapability(token, "session-a", "stream-a", expired); ok {
+		t.Fatal("expired capability accepted")
+	}
 }
 
 func TestRegistryCertificateBinding(t *testing.T) {
 	r := NewDeviceRegistry()
-	cert := &x509.Certificate{Raw: []byte("device-a-cert")}
-	if err := r.Register(DeviceRecord{DeviceID: "device-a", PrincipalID: "principal-a", Fingerprint: certificateFingerprint(cert), Channels: map[string]bool{"camera": true}, Enabled: true}); err != nil { t.Fatal(err) }
-	if got, ok := r.Verify(cert); !ok || got.DeviceID != "device-a" { t.Fatal("registered certificate was not resolved") }
-	other := &x509.Certificate{Raw: []byte("device-b-cert")}
-	if _, ok := r.Verify(other); ok { t.Fatal("unregistered certificate accepted") }
+	cert := testCertificate("device-a-cert", true)
+	if err := r.Register(DeviceRecord{DeviceID: "device-a", PrincipalID: "principal-a", Fingerprint: certificateFingerprint(cert), Channels: map[string]bool{"camera": true}, Enabled: true}); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := r.Verify(cert); !ok || got.DeviceID != "device-a" {
+		t.Fatal("registered certificate was not resolved")
+	}
+	other := testCertificate("device-b-cert", true)
+	if _, ok := r.Verify(other); ok {
+		t.Fatal("unregistered certificate accepted")
+	}
 }
 
 func TestDisabledDeviceRejected(t *testing.T) {
 	r := NewDeviceRegistry()
-	cert := &x509.Certificate{Raw: []byte("disabled-cert")}
-	if err := r.Register(DeviceRecord{DeviceID: "device-disabled", PrincipalID: "principal-a", Fingerprint: certificateFingerprint(cert), Channels: map[string]bool{"camera": true}, Enabled: false}); err != nil { t.Fatal(err) }
-	if _, ok := r.Verify(cert); ok { t.Fatal("disabled device accepted") }
+	cert := testCertificate("disabled-cert", false)
+	if err := r.Register(DeviceRecord{DeviceID: "device-disabled", PrincipalID: "principal-a", Fingerprint: certificateFingerprint(cert), Channels: map[string]bool{"camera": true}, Enabled: false}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.Verify(cert); ok {
+		t.Fatal("disabled device accepted")
+	}
 }
 
 func TestChannelAuthorizationIsExplicit(t *testing.T) {
 	d := DeviceRecord{DeviceID: "device-a", PrincipalID: "principal-a", Channels: map[string]bool{"camera": true}, Enabled: true}
-	if !channelAllowed(d, "camera") { t.Fatal("authorized channel rejected") }
-	if channelAllowed(d, "audio-control") { t.Fatal("unauthorized channel accepted") }
+	if !channelAllowed(d, "camera") {
+		t.Fatal("authorized channel rejected")
+	}
+	if channelAllowed(d, "audio-control") {
+		t.Fatal("unauthorized channel accepted")
+	}
 }
