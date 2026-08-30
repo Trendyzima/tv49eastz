@@ -1,0 +1,61 @@
+name: Server Room Integrity
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  protected-server:
+    name: Protect existing FadCam server/application
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Load protected baseline
+        id: baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$(tr -d '[:space:]' < server-room/BASELINE)"
+          test -n "$baseline"
+          echo "sha=$baseline" >> "$GITHUB_OUTPUT"
+
+      - name: Reject changes inside the protected FadCam server boundary
+        shell: bash
+        env:
+          BASELINE: ${{ steps.baseline.outputs.sha }}
+        run: |
+          set -euo pipefail
+
+          if ! git cat-file -e "$BASELINE^{commit}"; then
+            echo "Protected baseline $BASELINE is unavailable in this checkout."
+            exit 1
+          fi
+
+          changed="$(git diff --name-only "$BASELINE"...HEAD -- 'app/src/main/java/com/fadcam/**' 'app/src/main/res/**' 'app/src/main/AndroidManifest.xml')"
+
+          if [ -n "$changed" ]; then
+            echo "Protected FadCam server/application files changed since the approved baseline:"
+            printf '%s\n' "$changed"
+            echo
+            echo "The streaming bridge must be implemented in server-tap/ and stream-gateway/."
+            echo "Do not modify the protected server/application boundary."
+            exit 1
+          fi
+
+          echo "Protected server/application boundary unchanged."
+
+      - name: Verify bridge separation
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -d server-tap
+          test -d stream-gateway
+          echo "Bridge separation verified."
