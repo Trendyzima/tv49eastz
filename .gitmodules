@@ -17,3 +17,18 @@
 	path = components/media-router
 	url = https://github.com/Trendyzima/mediamtx.git
 	branch = main
+
+[submodule "components/epg-engine"]
+	path = components/epg-engine
+	url = https://github.com/iptv-org/epg.git
+	branch = master
+
+[submodule "components/playlist-client"]
+	path = components/playlist-client
+	url = https://github.com/oxyroid/M3UAndroid.git
+	branch = master
+
+[submodule "components/tv-client"]
+	path = components/tv-client
+	url = https://github.com/Davidona/StreamVault-IPTV.git
+	branch = master
