@@ -25,35 +25,35 @@ class ServerTapClient(
 ) {
     private val baseUri = normalizeAndValidateBaseUri(tapBaseUrl)
 
-    /** Returns true only when the configured tap answers its health endpoint. */
-    fun isHealthy(): Boolean = getText("/health").let { response ->
+    fun isHealthy(): Boolean = getText("health").let { response ->
         response.code in 200..299 && response.body.contains("\"ok\":true")
     }
 
     /**
-     * Resolves the fixed tap HLS entry point into a canonical source.
-     * The returned URI is the tap URI, never the private FadCam upstream URI.
+     * Contacts the real tap and publishes only the tap's fixed HLS URI.
+     * The private FadCam upstream address never enters the returned model.
      */
     fun resolveLiveSource(channel: Channel, providerId: String = "server-tap"): StreamSource {
-        val response = getText("/live.m3u8")
+        val response = getText("live.m3u8")
         require(response.code in 200..299) { "server-tap returned HTTP ${response.code}" }
-        require(response.body.startsWith("#EXTM3U")) { "server-tap did not return an HLS playlist" }
-
+        require(response.body.trimStart().startsWith("#EXTM3U")) {
+            "server-tap did not return an HLS playlist"
+        }
         return StreamSource(
             id = "server-tap:${channel.id}",
             providerId = providerId,
             channelId = channel.id,
             kind = StreamSource.Kind.HLS,
-            uri = buildTapUrl("/live.m3u8"),
+            uri = buildTapUrl("live.m3u8"),
             mimeType = "application/vnd.apple.mpegurl",
             priority = 0,
             enabled = true
         )
     }
 
-    private fun getText(path: String): Response {
-        val url = URL(buildTapUrl(path))
-        val connection = (url.openConnection() as HttpURLConnection).apply {
+    private fun getText(relativePath: String): Response {
+        require(relativePath.matches(Regex("[A-Za-z0-9._-]+"))) { "invalid tap path" }
+        val connection = (URL(buildTapUrl(relativePath)).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             instanceFollowRedirects = false
             connectTimeout = connectTimeoutMs
@@ -61,10 +61,9 @@ class ServerTapClient(
             setRequestProperty("Accept", "application/vnd.apple.mpegurl,application/json,text/plain")
             setRequestProperty("User-Agent", "tv49eastz-server-tap-client/1")
         }
-
         return try {
             val code = connection.responseCode
-            require(code !in 300..399) { "server-tap redirects are not permitted" }
+            if (code in 300..399) throw IOException("server-tap redirects are not permitted")
             val stream = if (code in 200..299) connection.inputStream else connection.errorStream
             val body = stream?.use { it.readBounded(maxPlaylistBytes) } ?: ""
             Response(code, body)
@@ -73,13 +72,13 @@ class ServerTapClient(
         }
     }
 
-    private fun buildTapUrl(path: String): String =
-        baseUri.resolve(path.removePrefix("/")).toString()
+    private fun buildTapUrl(relativePath: String): String = baseUri.resolve(relativePath).toString()
 
     private data class Response(val code: Int, val body: String)
 
     private fun java.io.InputStream.readBounded(limit: Int): String {
-        val bytes = java.io.ByteArrayOutputStream()
+        require(limit > 0) { "response limit must be positive" }
+        val out = java.io.ByteArrayOutputStream()
         val buffer = ByteArray(8192)
         var total = 0
         while (true) {
@@ -87,9 +86,9 @@ class ServerTapClient(
             if (read < 0) break
             total += read
             if (total > limit) throw IOException("server-tap response exceeds configured limit")
-            bytes.write(buffer, 0, read)
+            out.write(buffer, 0, read)
         }
-        return bytes.toString(Charsets.UTF_8.name())
+        return out.toString(Charsets.UTF_8.name())
     }
 
     companion object {
@@ -98,11 +97,15 @@ class ServerTapClient(
                 throw IllegalArgumentException("invalid server-tap URL", e)
             }
             require(uri.scheme == "http" || uri.scheme == "https") { "server-tap URL must use HTTP(S)" }
-            require(!uri.userInfo.isNullOrBlank()) { "server-tap URL must not contain userinfo" }
+            require(uri.userInfo == null) { "server-tap URL must not contain userinfo" }
             require(uri.rawQuery == null && uri.rawFragment == null) { "server-tap URL must not contain query/fragment" }
             require(!uri.host.isNullOrBlank()) { "server-tap URL must contain a host" }
-            return URI(uri.scheme, null, uri.host, if (uri.port >= 0) uri.port else -1,
-                if (uri.path.isNullOrBlank()) "/" else uri.path.trimEnd('/') + "/", null, null)
+            return URI(
+                uri.scheme, null, uri.host,
+                if (uri.port >= 0) uri.port else -1,
+                if (uri.path.isNullOrBlank()) "/" else uri.path.trimEnd('/') + "/",
+                null, null
+            )
         }
     }
 }
