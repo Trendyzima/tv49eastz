@@ -24,10 +24,21 @@ func TestPublicStreamBoundaryDoesNotExposeControlEndpointsOrOrigin(t *testing.T)
 	}))
 	defer origin.Close()
 
+	if err := defaultDeviceRegistry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "u",
+		Fingerprint: "integration-device-a",
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
 	g := &Gateway{
 		cfg:     Config{CapabilityKey: "test-secret", Upstream: origin.URL},
 		client:  origin.Client(),
 		tunnels: NewTunnelRegistry(),
+		policy:  AuthorizationPolicy{Registry: defaultDeviceRegistry},
 	}
 	if err := g.tunnels.Register("device-a", origin.URL, origin.Client().Transport); err != nil {
 		t.Fatal(err)
@@ -36,6 +47,7 @@ func TestPublicStreamBoundaryDoesNotExposeControlEndpointsOrOrigin(t *testing.T)
 		ID:        "s",
 		UserID:    "u",
 		DeviceID:  "device-a",
+		ChannelID: "camera",
 		StreamID:  "stream-a",
 		IssuedAt:  time.Now().UTC(),
 		Expires:   time.Now().UTC().Add(time.Minute),
