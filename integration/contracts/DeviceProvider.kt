@@ -1,6 +1,6 @@
-package tv49eastz.integration.contracts
+package com.tv49eastz.integration.contracts
 
-import tv49eastz.core.model.Device
+import com.tv49eastz.core.model.Device
 
 /** Discovers and reports the health of protected streaming devices. */
 interface DeviceProvider {
