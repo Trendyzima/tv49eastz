@@ -1,8 +1,10 @@
 package main
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/base64"
 	"errors"
 	"net/http"
 	"strings"
@@ -40,6 +42,29 @@ func authenticate(r *http.Request, apiKey string) (Principal, error) {
 		return Principal{}, errors.New("device identity required")
 	}
 	return Principal{UserID: "api-key-user", DeviceID: deviceID}, nil
+}
+
+func newSession(principal Principal, channelID, streamID string, ttl time.Duration) (Session, error) {
+	if principal.UserID == "" || principal.DeviceID == "" || channelID == "" || streamID == "" {
+		return Session{}, errors.New("invalid session binding")
+	}
+	if ttl <= 0 {
+		return Session{}, errors.New("invalid session ttl")
+	}
+	id := make([]byte, 24)
+	if _, err := rand.Read(id); err != nil {
+		return Session{}, err
+	}
+	now := time.Now().UTC()
+	return Session{
+		ID:        base64.RawURLEncoding.EncodeToString(id),
+		UserID:    principal.UserID,
+		DeviceID:  principal.DeviceID,
+		ChannelID: channelID,
+		StreamID:  streamID,
+		IssuedAt:  now,
+		Expires:   now.Add(ttl),
+	}, nil
 }
 
 func sessionValid(s Session, now time.Time) bool {
