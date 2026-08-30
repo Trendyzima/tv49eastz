@@ -1,0 +1,22 @@
+upstream:
+  base_url: "http://192.168.100.5:8080"
+  connect_timeout: 3s
+  request_timeout: 10s
+
+public:
+  listen: "0.0.0.0:8787"
+  base_path: "/stream"
+
+security:
+  require_auth: true
+  allow_control_endpoints: false
+  hide_upstream_address: true
+
+hls:
+  manifest_cache_ttl: 1s
+  max_segment_bytes: 16777216
+  rewrite_upstream_urls: true
+
+limits:
+  max_viewers_per_stream: 10
+  max_requests_per_second: 20
