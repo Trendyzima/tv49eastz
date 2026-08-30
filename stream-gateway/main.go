@@ -53,10 +53,10 @@ func main() {
 	cfg := Config{
 		Listen:         env("GATEWAY_LISTEN", ":8787"),
 		Upstream:       strings.TrimRight(env("TAP_UPSTREAM", "http://127.0.0.1:8786"), "/"),
-		APIKey:         os.Getenv("GATEWAY_API_KEY"),
-		CapabilityKey:  os.Getenv("GATEWAY_CAPABILITY_KEY"),
-		MaxSessions:    envInt("MAX_SESSIONS", 25),
-		RatePerMinute:  envInt("RATE_PER_MINUTE", 120),
+		APIKey:        os.Getenv("GATEWAY_API_KEY"),
+		CapabilityKey: os.Getenv("GATEWAY_CAPABILITY_KEY"),
+		MaxSessions:   envInt("MAX_SESSIONS", 25),
+		RatePerMinute: envInt("RATE_PER_MINUTE", 120),
 		RequestTimeout: time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 15)) * time.Second,
 	}
 	if cfg.APIKey == "" || cfg.CapabilityKey == "" {
@@ -187,10 +187,6 @@ func (g *Gateway) allowRate(addr string) bool {
 }
 
 func (g *Gateway) createSession(w http.ResponseWriter, r *http.Request) {
-	if g.sessionCount.Load() >= int64(g.cfg.MaxSessions) {
-		http.Error(w, "session limit reached", 429)
-		return
-	}
 	p, e := authenticate(r, g.cfg.APIKey)
 	if e != nil {
 		http.Error(w, "unauthorized", 401)
@@ -210,13 +206,17 @@ func (g *Gateway) createSession(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "device tunnel unavailable", 503)
 		return
 	}
+	if !g.reserveSessionSlot() {
+		http.Error(w, "session limit reached", 429)
+		return
+	}
 	s, e := newSession(p, channelID, streamID, 15*time.Minute)
 	if e != nil {
+		g.releaseSessionSlot()
 		http.Error(w, "internal error", 500)
 		return
 	}
 	g.sessions.Store(s.ID, s)
-	g.sessionCount.Add(1)
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(map[string]any{
@@ -234,7 +234,7 @@ func (g *Gateway) session(id string) (Session, bool) {
 	s := v.(Session)
 	if !sessionValid(s, time.Now().UTC()) {
 		if g.sessions.CompareAndDelete(id, s) {
-			g.sessionCount.Add(-1)
+			g.releaseSessionSlot()
 		}
 		return Session{}, false
 	}
@@ -269,7 +269,7 @@ func (g *Gateway) stream(w http.ResponseWriter, r *http.Request) {
 	}
 	if !g.authorizedSession(s) {
 		if g.sessions.CompareAndDelete(s.ID, s) {
-			g.sessionCount.Add(-1)
+			g.releaseSessionSlot()
 		}
 		http.Error(w, "session authorization revoked", 403)
 		return
@@ -412,7 +412,7 @@ func (g *Gateway) resource(w http.ResponseWriter, r *http.Request, sessionID, to
 	}
 	if !g.authorizedSession(s) {
 		if g.sessions.CompareAndDelete(s.ID, s) {
-			g.sessionCount.Add(-1)
+			g.releaseSessionSlot()
 		}
 		http.Error(w, "session authorization revoked", 403)
 		return
