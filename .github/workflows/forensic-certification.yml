@@ -1,0 +1,58 @@
+name: Forensic Certification
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [master, forensic-overhaul-2026-08-31]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: forensic-certification-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  go-security:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Go tests
+        run: go test ./...
+      - name: Go race tests
+        run: go test -race ./...
+
+  android-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate Gradle wrapper
+        run: test -x ./gradlew
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Android unit tests
+        run: ./gradlew testDefaultDebugUnitTest --no-daemon --stacktrace
+      - name: Android debug build
+        run: ./gradlew assembleDefaultDebug --no-daemon --stacktrace
+
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify required source boundaries
+        run: |
+          test -d app
+          test -d server-tap
+          test -d device-tunnel
+          test -d stream-gateway
+          test -d internal/deviceauth
+          test -x ./gradlew
+      - name: Verify FadCam server remains isolated
+        run: |
+          test -f docs/FORENSIC_AUDIT_2026-08-31.md
+          grep -q 'FadCam' docs/FORENSIC_AUDIT_2026-08-31.md
