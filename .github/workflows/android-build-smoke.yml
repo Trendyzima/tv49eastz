@@ -65,12 +65,11 @@ jobs:
             -keyalg RSA -keysize 2048 -validity 2 \
             -dname "CN=tv49eastz CI,O=tv49eastz,C=XX"
           chmod 600 "$CI_KEYSTORE_PATH"
-          cat > local.properties <<EOF
-KEYSTORE_FILE=$CI_KEYSTORE_PATH
-KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD
-KEY_ALIAS=$CI_KEY_ALIAS
-KEY_PASSWORD=$CI_KEY_PASSWORD
-EOF
+          printf '%s\n' \
+            "KEYSTORE_FILE=$CI_KEYSTORE_PATH" \
+            "KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD" \
+            "KEY_ALIAS=$CI_KEY_ALIAS" \
+            "KEY_PASSWORD=$CI_KEY_PASSWORD" > local.properties
           chmod 600 local.properties
           test -s "$CI_KEYSTORE_PATH"
           test -s local.properties
@@ -98,7 +97,6 @@ EOF
             assembleProPlus; do
             grep -Fq "$task" /tmp/app-tasks.txt || {
               echo "Required Android task not exposed: $task"
-              echo "--- matching Android assemble/test tasks ---"
               grep -E '(^|:)assemble|test.*UnitTest' /tmp/app-tasks.txt | head -n 160 || true
               exit 1
             }
@@ -131,7 +129,6 @@ EOF
             cat "$output"
             grep -Fq "project $project" "$output" || {
               echo "FAIL: $module was not substituted by $project"
-              echo "--- resolved Media3 projects ---"
               grep -E 'project :media3-patched:lib-' "$output" || true
               exit 1
             }
