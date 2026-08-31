@@ -35,7 +35,7 @@ func TestAuthenticateUsesCertificateIdentityNotHeader(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/v1/session?channel_id=camera&stream_id=s1", nil)
 	r.Header.Set("Authorization", "Bearer secret")
 	r.Header.Set("X-Device-ID", "device-a")
-	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	r.TLS = verifiedIdentityTLSState(cert)
 
 	p, err := authenticateWithRegistry(r, "secret", registry)
 	if err != nil {
@@ -43,6 +43,29 @@ func TestAuthenticateUsesCertificateIdentityNotHeader(t *testing.T) {
 	}
 	if p.DeviceID != "device-a" || p.UserID != "principal-a" || p.Fingerprint != fp {
 		t.Fatalf("principal was not certificate-bound: %+v", p)
+	}
+}
+
+func TestAuthenticateRejectsUnverifiedCertificateState(t *testing.T) {
+	cert := newIdentityTestCert(t, "device-a")
+	registry := NewDeviceRegistry()
+	fp := certificateFingerprint(cert)
+	if err := registry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "principal-a",
+		Fingerprint: fp,
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest(http.MethodGet, "/v1/session?channel_id=camera&stream_id=s1", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+
+	if _, err := authenticateWithRegistry(r, "secret", registry); err == nil {
+		t.Fatal("unverified TLS certificate state was accepted")
 	}
 }
 
@@ -62,7 +85,7 @@ func TestAuthenticateRejectsForgedDeviceHeader(t *testing.T) {
 	r := httptest.NewRequest(http.MethodGet, "/v1/session?channel_id=camera&stream_id=s1", nil)
 	r.Header.Set("Authorization", "Bearer secret")
 	r.Header.Set("X-Device-ID", "device-b")
-	r.TLS = &tls.ConnectionState{PeerCertificates: []*x509.Certificate{cert}}
+	r.TLS = verifiedIdentityTLSState(cert)
 
 	if _, err := authenticateWithRegistry(r, "secret", registry); err == nil {
 		t.Fatal("forged device header was accepted")
