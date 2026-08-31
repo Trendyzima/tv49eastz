@@ -119,11 +119,9 @@ jobs:
           build_tools="$sdk/build-tools"
           test -d "$build_tools" || { echo "ERROR: Android SDK build-tools directory is unavailable: $build_tools"; exit 1; }
 
-          # Do not assign through a while-loop fed by process substitution: that
-          # loop executes in a subshell in bash and the selected path is lost.
           mapfile -t zipalign_candidates < <(
             find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null \
-              | sort -t/ -k1,1 -k2,2V -r
+              | sort -V -r
           )
 
           zipalign=""
@@ -142,7 +140,20 @@ jobs:
           fi
 
           echo "Using zipalign: $zipalign"
-          "$zipalign" version
+          test -x "$zipalign"
+          test -f "$zipalign"
+          file "$zipalign"
+
+          # zipalign's help/usage path intentionally exits with status 2.
+          # Validate the executable and its banner without misclassifying that
+          # expected usage status as a broken installation.
+          help_output="$(mktemp)"
+          help_status=0
+          "$zipalign" -h >"$help_output" 2>&1 || help_status=$?
+          grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; exit 1; }
+          [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; exit 1; }
+          rm -f "$help_output"
+
           echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
 
       - name: Verify APK artifacts
