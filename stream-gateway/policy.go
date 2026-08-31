@@ -6,25 +6,15 @@ type AuthorizationPolicy struct {
 	Registry *DeviceRegistry
 }
 
-// AuthorizeStream is the legacy device-ID policy. It is retained for callers
-// that have already established identity elsewhere. Network stream entry
-// points should use AuthorizeStreamWithIdentity.
+// AuthorizeStream is the gateway session authorization entry point.
+// It is intentionally certificate-bound: a network session may not be
+// authorized from DeviceID alone. The Principal fingerprint must have been
+// derived from a verified TLS peer certificate by the authentication layer.
 func (p AuthorizationPolicy) AuthorizeStream(pr Principal, channelID, streamID string) error {
-	if pr.UserID == "" || pr.DeviceID == "" || channelID == "" || streamID == "" {
-		return errors.New("missing authorization subject or resource")
+	if pr.Fingerprint == "" {
+		return errors.New("certificate identity required")
 	}
-	registry := p.Registry
-	if registry == nil {
-		registry = defaultDeviceRegistry
-	}
-	if registry == nil {
-		return errors.New("device registry unavailable")
-	}
-	d, ok := registry.Lookup(pr.DeviceID)
-	if !ok || d.PrincipalID != pr.UserID || !channelAllowed(d, channelID) {
-		return errors.New("device or channel not authorized")
-	}
-	return nil
+	return p.AuthorizeStreamWithIdentity(pr, pr.Fingerprint, channelID, streamID)
 }
 
 // AuthorizeStreamWithIdentity is the certificate-bound authorization path.
