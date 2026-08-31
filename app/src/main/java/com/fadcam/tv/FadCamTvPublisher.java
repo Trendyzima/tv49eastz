@@ -48,7 +48,7 @@ public final class FadCamTvPublisher {
             Certificate cert = ks.getCertificate(KEY_ALIAS);
             String publicKey = b64(cert.getPublicKey().getEncoded());
 
-            Uri uri = Uri.parse("fadcam://stream").buildUpon()
+            Uri uri = Uri.parse(SCHEME + "://" + HOST).buildUpon()
                     .appendQueryParameter("v", Integer.toString(PROTOCOL_VERSION))
                     .appendQueryParameter("nonce", nonce)
                     .appendQueryParameter("iat", Long.toString(issuedAt))
