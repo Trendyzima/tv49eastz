@@ -47,6 +47,27 @@ func TestParseExtInfHandlesQuotedSpacesAndComma(t *testing.T) {
 	}
 }
 
+func TestParseExtInfPreservesMultipleDisplayNameCommas(t *testing.T) {
+	line := `#EXTINF:-1 tvg-id="east-2" tvg-name="East 2" group-title="News, Kenya",East News, Live, Today`
+	meta := parseExtInf(line)
+	if meta["tvg-id"] != "east-2" {
+		t.Fatalf("tvg-id = %q, want east-2", meta["tvg-id"])
+	}
+	if meta["group-title"] != "News, Kenya" {
+		t.Fatalf("group-title = %q, want News, Kenya", meta["group-title"])
+	}
+	if meta["name"] != "East News, Live, Today" {
+		t.Fatalf("name = %q, want East News, Live, Today", meta["name"])
+	}
+}
+
+func TestParseExtInfHandlesDurationWithoutAttributes(t *testing.T) {
+	meta := parseExtInf(`#EXTINF:-1,Plain Channel, With Commas`)
+	if meta["name"] != "Plain Channel, With Commas" {
+		t.Fatalf("name = %q, want Plain Channel, With Commas", meta["name"])
+	}
+}
+
 func TestSafeHTTPSStreamRejectsUnsafeSchemes(t *testing.T) {
 	for _, raw := range []string{"http://example.com/a.m3u8", "file:///tmp/a", "//example.com/a", "/a.m3u8", "javascript:alert(1)"} {
 		if _, ok := safeHTTPSStream(raw); ok {
