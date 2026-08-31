@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -18,6 +20,7 @@ type server struct {
 	timeout     time.Duration
 	maxBytes    int64
 	creator     *creatorStore
+	publishKey  string
 	mu          sync.RWMutex
 	cache       Catalog
 }
@@ -34,6 +37,7 @@ func main() {
 		timeout:     time.Duration(envInt("CATALOG_TIMEOUT_SECONDS", 20)) * time.Second,
 		maxBytes:    int64(envInt("CATALOG_MAX_BYTES", 32 << 20)),
 		creator:     creators,
+		publishKey:  strings.TrimSpace(os.Getenv("CREATOR_PUBLISH_KEY")),
 	}
 	if s.refresh <= 0 {
 		s.refresh = 30 * time.Minute
@@ -55,12 +59,7 @@ func main() {
 
 	addr := env("CATALOG_LISTEN", ":8790")
 	log.Printf("TV 49 East channel catalog listening on %s", addr)
-	log.Fatal((&http.Server{
-		Addr:              addr,
-		Handler:           securityHeaders(mux),
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       20 * time.Second,
-	}).ListenAndServe())
+	log.Fatal((&http.Server{Addr: addr, Handler: securityHeaders(mux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 20 * time.Second}).ListenAndServe())
 }
 
 func (s *server) refreshCatalog() error {
@@ -121,8 +120,6 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 	region := strings.TrimSpace(r.URL.Query().Get("country"))
 	group := strings.TrimSpace(r.URL.Query().Get("group"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-
-	// FadCam creator channels are always placed before external variety channels.
 	var merged []Channel
 	for _, ch := range s.creator.list() {
 		if region != "" && !strings.EqualFold(ch.Country, region) {
@@ -147,19 +144,68 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 		merged = append(merged, ch)
 	}
 	c.Channels = merged
-
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	_ = json.NewEncoder(w).Encode(c)
 }
 
 func (s *server) creatorChannels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodGet {
+	switch r.Method {
+	case http.MethodGet:
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"channels": s.creator.list()})
+	case http.MethodPost:
+		if !s.authorizedPublisher(r) {
+			http.Error(w, "publisher authorization required", http.StatusUnauthorized)
+			return
+		}
+		var ch CreatorChannel
+		dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
+		if err := dec.Decode(&ch); err != nil {
+			http.Error(w, "invalid channel payload", http.StatusBadRequest)
+			return
+		}
+		if err := s.creator.upsert(ch); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(ch)
+	case http.MethodDelete:
+		if !s.authorizedPublisher(r) {
+			http.Error(w, "publisher authorization required", http.StatusUnauthorized)
+			return
+		}
+		id := strings.TrimSpace(r.URL.Query().Get("id"))
+		if id == "" {
+			http.Error(w, "missing channel id", http.StatusBadRequest)
+			return
+		}
+		if err := s.creator.remove(id); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusNoContent)
+	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"channels": s.creator.list()})
+}
+
+func (s *server) authorizedPublisher(r *http.Request) bool {
+	if s.publishKey == "" {
+		return false
+	}
+	const prefix = "Bearer "
+	got := r.Header.Get("Authorization")
+	if !strings.HasPrefix(got, prefix) {
+		return false
+	}
+	got = strings.TrimSpace(strings.TrimPrefix(got, prefix))
+	if len(got) != len(s.publishKey) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(s.publishKey)) == 1
 }
 
 func securityHeaders(next http.Handler) http.Handler {
@@ -184,3 +230,5 @@ func envInt(k string, d int) int {
 	}
 	return v
 }
+
+var _ = errors.New
