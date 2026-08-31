@@ -16,19 +16,30 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
-            android:permission="com.tv49.com.permission.PUBLISH_FADCAM"
             android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".FadCamHandoffActivity"
+            android:exported="true"
+            android:permission="com.tv49.com.permission.PUBLISH_FADCAM"
+            android:theme="@style/Theme.TV49East">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="fadcam" android:host="stream" />
             </intent-filter>
+        </activity>
+
+        <activity
+            android:name=".TvEastChannelActivity"
+            android:exported="true"
+            android:theme="@style/Theme.TV49East">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
