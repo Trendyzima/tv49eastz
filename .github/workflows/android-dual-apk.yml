@@ -148,14 +148,15 @@ jobs:
           test -f "$zipalign"
           file "$zipalign"
 
-          # zipalign's help/usage path intentionally exits with status 2.
-          # Validate the executable and banner without treating expected usage
-          # output as an installation failure.
+          # zipalign intentionally returns status 2 for its usage/help path.
+          # Validate the binary by checking its banner and accepting only the
+          # documented usage statuses; do not invoke an unsupported `version`
+          # subcommand (zipalign has no such command).
           help_output="$(mktemp)"
           help_status=0
           "$zipalign" -h >"$help_output" 2>&1 || help_status=$?
-          grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; exit 1; }
-          [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; exit 1; }
+          grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; rm -f "$help_output"; exit 1; }
+          [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; rm -f "$help_output"; exit 1; }
           rm -f "$help_output"
 
           echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
@@ -168,17 +169,13 @@ jobs:
           set -euo pipefail
           test -n "$ZIPALIGN"
           test -x "$ZIPALIGN"
-          "$ZIPALIGN" version
           apk_count=0
-          for root in app/build/outputs/apk tv-receiver/build/outputs/apk; do
-            [[ -d "$root" ]] || continue
-            while IFS= read -r -d '' apk; do
-              test -s "$apk"
-              echo "APK: $apk"
-              "$ZIPALIGN" -c -P 16 -v 4 "$apk"
-              apk_count=$((apk_count + 1))
-            done < <(find "$root" -type f -name '*.apk' -print0)
-          done
+          while IFS= read -r -d '' apk; do
+            test -s "$apk"
+            echo "APK: $apk"
+            "$ZIPALIGN" -c -P 16 -v 4 "$apk"
+            apk_count=$((apk_count + 1))
+          done < <(find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print0)
           test "$apk_count" -ge 6 || { echo "Expected at least 6 APKs, found $apk_count"; find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print || true; exit 1; }
           echo "Certified APK count: $apk_count"
 
