@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
-	"errors"
 	"log"
 	"net/http"
 	"os"
@@ -230,5 +229,3 @@ func envInt(k string, d int) int {
 	}
 	return v
 }
-
-var _ = errors.New
