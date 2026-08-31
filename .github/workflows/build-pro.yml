@@ -6,7 +6,6 @@ on:
 jobs:
   build-pro-variants:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -20,9 +19,11 @@ jobs:
           test -f "$image_dir/featureGraphic.jpg"
           test -f "$image_dir/promoGraphic.jpg"
           test -f "$image_dir/tvBanner.jpg"
-          magick "$image_dir/featureGraphic.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 1024x500! -sampling-factor 4:2:0 -quality 92 "$image_dir/featureGraphic.jpg"
-          magick "$image_dir/promoGraphic.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 180x120! -sampling-factor 4:2:0 -quality 92 "$image_dir/promoGraphic.jpg"
-          magick "$image_dir/tvBanner.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 1280x720! -sampling-factor 4:2:0 -quality 92 "$image_dir/tvBanner.jpg"
+          command -v convert
+          command -v identify
+          convert "$image_dir/featureGraphic.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 1024x500! -sampling-factor 4:2:0 -quality 92 "$image_dir/featureGraphic.jpg"
+          convert "$image_dir/promoGraphic.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 180x120! -sampling-factor 4:2:0 -quality 92 "$image_dir/promoGraphic.jpg"
+          convert "$image_dir/tvBanner.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 1280x720! -sampling-factor 4:2:0 -quality 92 "$image_dir/tvBanner.jpg"
           identify -format '%f %wx%h %[channels]\n' "$image_dir/featureGraphic.jpg" "$image_dir/promoGraphic.jpg" "$image_dir/tvBanner.jpg"
 
       - name: Validate Fastlane Supply Metadata
@@ -32,8 +33,7 @@ jobs:
           use-play-store-locales: false
 
       - name: Clone patched Media3 for live streaming
-        run: |
-          git clone --depth 1 https://github.com/anonfaded/media3-patched.git /tmp/media3-patched
+        run: git clone --depth 1 https://github.com/anonfaded/media3-patched.git /tmp/media3-patched
 
       - name: Set up Java 17
         uses: actions/setup-java@v4
@@ -45,10 +45,6 @@ jobs:
       - name: Setup local.properties with release keystore
         run: |
           set -euo pipefail
-          : "${KEYSTORE_PASSWORD:?missing KEYSTORE_PASSWORD secret}"
-          : "${KEY_ALIAS:?missing KEY_ALIAS secret}"
-          : "${KEY_PASSWORD:?missing KEY_PASSWORD secret}"
-          : "${KEYSTORE_BASE64:?missing KEYSTORE_BASE64 secret}"
           printf '%s\n' "KEYSTORE_FILE=$RUNNER_TEMP/release.keystore" >> local.properties
           printf '%s\n' "KEYSTORE_PASSWORD=${KEYSTORE_PASSWORD}" >> local.properties
           printf '%s\n' "KEY_ALIAS=${KEY_ALIAS}" >> local.properties
@@ -57,7 +53,6 @@ jobs:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
 
       - name: Decode and validate keystore
         run: |
@@ -65,7 +60,7 @@ jobs:
           printf '%s' "${KEYSTORE_BASE64}" | base64 --decode > "$RUNNER_TEMP/release.keystore"
           test -s "$RUNNER_TEMP/release.keystore"
           chmod 600 "$RUNNER_TEMP/release.keystore"
-          keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "${KEYSTORE_PASSWORD}" -alias "${KEY_ALIAS}" >/dev/null
+          keytool -list -keystore "$RUNNER_TEMP/release.keystore" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
           echo 'Release keystore validated.'
         env:
           KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
@@ -86,24 +81,23 @@ jobs:
       - name: Verify APKs were built
         run: |
           set -euo pipefail
-          expected=(
-            'app/build/outputs/apk/notesPro/release/FadCam_notesPro_v4.0.0-arm64-v8a.apk'
-            'app/build/outputs/apk/calcPro/release/FadCam_calcPro_v4.0.0-arm64-v8a.apk'
-            'app/build/outputs/apk/weatherPro/release/FadCam_weatherPro_v4.0.0-arm64-v8a.apk'
-          )
-          for apk in "${expected[@]}"; do
-            test -s "$apk"
-            echo "✓ $apk"
+          for flavor in notesPro calcPro weatherPro; do
+            dir="app/build/outputs/apk/$flavor/release"
+            shopt -s nullglob
+            matches=("$dir"/FadCam_${flavor}_v*-arm64-v8a.apk)
+            if [ ${#matches[@]} -ne 1 ] || [ ! -s "${matches[0]}" ]; then
+              echo "Expected exactly one non-empty $flavor APK in $dir"
+              find "$dir" -maxdepth 1 -type f -print 2>/dev/null || true
+              exit 1
+            fi
+            echo "✓ ${matches[0]}"
           done
 
       - name: Upload Pro variant artifacts
         uses: actions/upload-artifact@v4
         with:
           name: fadcam-pro-variants
-          path: |
-            app/build/outputs/apk/notesPro/release/FadCam_notesPro_v4.0.0-arm64-v8a.apk
-            app/build/outputs/apk/calcPro/release/FadCam_calcPro_v4.0.0-arm64-v8a.apk
-            app/build/outputs/apk/weatherPro/release/FadCam_weatherPro_v4.0.0-arm64-v8a.apk
+          path: app/build/outputs/apk/*/release/FadCam_*_arm64-v8a.apk
           if-no-files-found: error
           retention-days: 7
 
