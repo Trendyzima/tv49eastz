@@ -27,8 +27,8 @@ type Config struct {
 }
 
 type Session struct {
-	ID, UserID, DeviceID, ChannelID, StreamID string
-	IssuedAt, Expires                         time.Time
+	ID, UserID, DeviceID, Fingerprint, ChannelID, StreamID string
+	IssuedAt, Expires                                     time.Time
 }
 
 type limiter struct {
@@ -166,9 +166,9 @@ func (g *Gateway) session(id string) (Session, bool) {
 }
 
 func (g *Gateway) authorizedSession(s Session) bool {
-	if s.DeviceID == "" { return true }
+	if s.DeviceID == "" || s.Fingerprint == "" { return false }
 	registry := g.policy.Registry; if registry == nil { registry = defaultDeviceRegistry }; if registry == nil { return false }
-	d, ok := registry.Lookup(s.DeviceID)
+	d, ok := registry.LookupByIdentity(s.DeviceID, s.Fingerprint)
 	return ok && d.PrincipalID == s.UserID && channelAllowed(d, s.ChannelID)
 }
 
