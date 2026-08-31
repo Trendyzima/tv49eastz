@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -10,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -17,12 +20,11 @@ import (
 const (
 	maxPlaylistBytes = 8 << 20
 	maxRedirects     = 3
+	assetTTL         = 5 * time.Minute
 )
 
 var hlsURI = regexp.MustCompile(`URI="([^"]+)"`)
 
-// relayClient deliberately rejects redirects and private/link-local destinations.
-// Catalog URLs are untrusted input even though they originate from an external M3U.
 func relayClient(timeout time.Duration) *http.Client {
 	transport := &http.Transport{
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
@@ -81,6 +83,24 @@ func decodeRelayURL(raw string) (string, bool) {
 	return string(b), true
 }
 
+func capabilitySignature(secret, channelID, encodedURL string, exp int64) string {
+	mac := hmac.New(sha256.New, []byte(secret))
+	_, _ = mac.Write([]byte(channelID))
+	_, _ = mac.Write([]byte("\n"))
+	_, _ = mac.Write([]byte(encodedURL))
+	_, _ = mac.Write([]byte("\n"))
+	_, _ = mac.Write([]byte(strconv.FormatInt(exp, 10)))
+	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil))
+}
+
+func validCapability(secret, channelID, encodedURL, sig string, exp int64, now time.Time) bool {
+	if exp < now.Unix() || exp > now.Add(assetTTL).Unix() {
+		return false
+	}
+	want := capabilitySignature(secret, channelID, encodedURL, exp)
+	return hmac.Equal([]byte(want), []byte(sig))
+}
+
 func (s *server) relay(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -105,8 +125,15 @@ func (s *server) relayAsset(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id := strings.TrimSpace(r.URL.Query().Get("id"))
-	u, ok := decodeRelayURL(strings.TrimSpace(r.URL.Query().Get("u")))
-	if id == "" || !ok {
+	encoded := strings.TrimSpace(r.URL.Query().Get("u"))
+	sig := strings.TrimSpace(r.URL.Query().Get("sig"))
+	exp, err := strconv.ParseInt(strings.TrimSpace(r.URL.Query().Get("exp")), 10, 64)
+	if id == "" || encoded == "" || sig == "" || err != nil || !validCapability(s.relaySecret, id, encoded, sig, exp, time.Now()) {
+		http.Error(w, "invalid or expired relay capability", http.StatusForbidden)
+		return
+	}
+	u, ok := decodeRelayURL(encoded)
+	if !ok {
 		http.Error(w, "invalid relay asset", http.StatusBadRequest)
 		return
 	}
@@ -159,7 +186,7 @@ func (s *server) serveUpstream(w http.ResponseWriter, r *http.Request, ch Channe
 		http.Error(w, "playlist too large", http.StatusBadGateway)
 		return
 	}
-	playlist := rewriteHLS(string(body), req.URL, ch.ID)
+	playlist := rewriteHLS(string(body), req.URL, ch.ID, s.relaySecret)
 	w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 	w.Header().Set("Cache-Control", "no-store")
 	w.WriteHeader(http.StatusOK)
@@ -168,7 +195,7 @@ func (s *server) serveUpstream(w http.ResponseWriter, r *http.Request, ch Channe
 	}
 }
 
-func rewriteHLS(playlist string, base *url.URL, channelID string) string {
+func rewriteHLS(playlist string, base *url.URL, channelID, secret string) string {
 	rewriteURI := func(raw string) string {
 		target, err := url.Parse(strings.TrimSpace(raw))
 		if err != nil {
@@ -178,7 +205,10 @@ func rewriteHLS(playlist string, base *url.URL, channelID string) string {
 		if target.Scheme != "https" || target.Host == "" {
 			return raw
 		}
-		return "/v1/relay-asset?id=" + url.QueryEscape(channelID) + "&u=" + url.QueryEscape(encodeRelayURL(target.String()))
+		encoded := encodeRelayURL(target.String())
+		exp := time.Now().Add(assetTTL).Unix()
+		sig := capabilitySignature(secret, channelID, encoded, exp)
+		return "/v1/relay-asset?id=" + url.QueryEscape(channelID) + "&u=" + url.QueryEscape(encoded) + "&exp=" + strconv.FormatInt(exp, 10) + "&sig=" + url.QueryEscape(sig)
 	}
 	playlist = hlsURI.ReplaceAllStringFunc(playlist, func(match string) string {
 		parts := hlsURI.FindStringSubmatch(match)
