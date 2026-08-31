@@ -88,10 +88,11 @@ jobs:
               exit 1
             fi
             cat "$out"
-            # Composite-build substitutions are reported with the composite
-            # build's project path (for example :media3-patched:lib-muxer),
-            # not merely the nested project name (:lib-muxer).
-            grep -Fqx "${project}" <(grep -E '^project :media3-patched:lib-' "$out") || {
+            # dependencyInsight reports composite substitutions as:
+            #   project :media3-patched:lib-muxer (by composite build)
+            # Match the complete project identity, not a substring such as
+            # ':lib-muxer', which can create false positives/false negatives.
+            grep -Fq "project ${project} " "$out" || {
               echo "FAIL: ${module} is not resolved to expected composite project ${project}"
               echo "--- resolved composite projects ---"
               grep -E '^project :media3-patched:lib-' "$out" || true
