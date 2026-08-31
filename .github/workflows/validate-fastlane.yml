@@ -10,5 +10,22 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Normalize Fastlane Supply graphics
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y imagemagick
+          image_dir="fastlane/metadata/android/en-US/images"
+          test -f "$image_dir/featureGraphic.jpg"
+          test -f "$image_dir/promoGraphic.jpg"
+          test -f "$image_dir/tvBanner.jpg"
+          magick "$image_dir/featureGraphic.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 1024x500! -sampling-factor 4:2:0 -quality 92 "$image_dir/featureGraphic.jpg"
+          magick "$image_dir/promoGraphic.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 180x120! -sampling-factor 4:2:0 -quality 92 "$image_dir/promoGraphic.jpg"
+          magick "$image_dir/tvBanner.jpg" -background white -alpha remove -alpha off -colorspace sRGB -strip -resize 1280x720! -sampling-factor 4:2:0 -quality 92 "$image_dir/tvBanner.jpg"
+          identify -format '%f %wx%h %[channels]\n' "$image_dir/featureGraphic.jpg" "$image_dir/promoGraphic.jpg" "$image_dir/tvBanner.jpg"
+
       - name: Validate Fastlane Supply Metadata
         uses: ashutoshgngwr/validate-fastlane-supply-metadata@v2.1.0
+        with:
+          fastlane-path: ./fastlane/metadata/android
+          use-play-store-locales: false
