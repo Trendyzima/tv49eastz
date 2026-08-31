@@ -39,11 +39,12 @@ func TestDeviceRegistryReplacementIsReplacementNotAppend(t *testing.T) {
 
 func TestDeviceRegistryPersistenceFailureDoesNotPublish(t *testing.T) {
 	dir := t.TempDir()
-	parentFile := filepath.Join(dir, "not-a-directory")
-	if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil { t.Fatal(err) }
-	path := filepath.Join(parentFile, "registry.json")
+	validDir := filepath.Join(dir, "registry-dir")
+	path := filepath.Join(validDir, "registry.json")
 	r := NewDeviceRegistry()
 	if err := r.SetPersistencePath(path); err != nil { t.Fatal(err) }
+	if err := os.Remove(validDir); err != nil { t.Fatal(err) }
+	if err := os.WriteFile(validDir, []byte("x"), 0o600); err != nil { t.Fatal(err) }
 	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected persistence failure") }
 	if _, ok := r.Lookup("device-a"); ok { t.Fatal("failed persistence published in-memory state") }
 }
