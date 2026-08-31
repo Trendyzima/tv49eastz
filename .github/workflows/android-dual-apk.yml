@@ -63,8 +63,12 @@ jobs:
           set -euo pipefail
           ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/app-tasks.txt
           ./gradlew --no-daemon --no-watch-fs :tv-receiver:tasks --all > /tmp/tv-tasks.txt
-          for task in testDefaultDebugUnitTest assembleDefaultDebug assembleDefaultRelease; do
-            grep -Fq "$task" /tmp/app-tasks.txt || { echo "Missing app task: $task"; exit 1; }
+          for task in testDefaultDebugUnitTest assembleDefaultDebug assembleDefaultRelease assembleProPlus; do
+            grep -Fq "$task" /tmp/app-tasks.txt || {
+              echo "Missing app task: $task"
+              grep -E '(^|:)assemble|test.*UnitTest' /tmp/app-tasks.txt | head -n 160 || true
+              exit 1
+            }
           done
           for task in testDebugUnitTest assembleDebug assembleRelease; do
             grep -Fq "$task" /tmp/tv-tasks.txt || { echo "Missing TV task: $task"; exit 1; }
@@ -88,13 +92,8 @@ jobs:
               exit 1
             fi
             cat "$out"
-            # dependencyInsight reports composite substitutions as:
-            #   project :media3-patched:lib-muxer (by composite build)
-            # Match the complete project identity, not a substring such as
-            # ':lib-muxer', which can create false positives/false negatives.
             grep -Fq "project ${project} " "$out" || {
               echo "FAIL: ${module} is not resolved to expected composite project ${project}"
-              echo "--- resolved composite projects ---"
               grep -E '^project :media3-patched:lib-' "$out" || true
               exit 1
             }
@@ -105,13 +104,13 @@ jobs:
           verify "androidx.media3:media3-container" ":media3-patched:lib-container"
 
       - name: Android unit tests
-        run: ./gradlew :app:test :tv-receiver:test --no-daemon --stacktrace
+        run: ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
       - name: Build FadCam APKs
-        run: ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
+        run: ./gradlew :app:assembleDebug :app:assembleRelease :app:assembleProPlus --no-daemon --no-watch-fs --stacktrace
 
       - name: Build TV receiver APKs
-        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --stacktrace
+        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --no-watch-fs --stacktrace
 
       - name: Verify APK outputs and alignment
         shell: bash
@@ -126,8 +125,8 @@ jobs:
               apk_count=$((apk_count + 1))
             done < <(find "$root" -type f -name '*.apk' -print0)
           done
-          test "$apk_count" -ge 4 || {
-            echo "Expected at least 4 APKs, found $apk_count"
+          test "$apk_count" -ge 6 || {
+            echo "Expected at least 6 APKs, found $apk_count"
             find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print || true
             exit 1
           }
