@@ -14,16 +14,35 @@ concurrency:
 
 jobs:
   go-security:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - module: device-tunnel
+            go: '1.23.x'
+          - module: stream-gateway
+            go: '1.22.x'
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ${{ matrix.module }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version-file: go.mod
+          go-version: ${{ matrix.go }}
+          cache: true
+          cache-dependency-path: ${{ matrix.module }}/go.mod
       - name: Go tests
-        run: go test ./...
+        run: go test ./... -count=1
       - name: Go race tests
-        run: go test -race ./...
+        run: go test ./... -count=1 -race
+      - name: Go vet
+        run: go vet ./...
+      - name: Go build
+        run: go build ./...
+        env:
+          CGO_ENABLED: '0'
 
   android-smoke:
     runs-on: ubuntu-latest
