@@ -16,13 +16,14 @@ func TestValidateRemoteRegistryURLRejectsAmbiguousOrigins(t *testing.T) {
 		"http://127.0.0.1:8785/registry",
 		"http://127.0.0.1:8785?device_id=x",
 		"http://127.0.0.1:8785#fragment",
+		"http://registry.example.test:8785",
 	} {
 		if _, err := validateRemoteRegistryURL(raw); err == nil {
 			t.Fatalf("accepted invalid registry URL %q", raw)
 		}
 	}
 
-	for _, raw := range []string{"http://127.0.0.1:8785", "https://registry.example.test"} {
+	for _, raw := range []string{"http://127.0.0.1:8785", "http://[::1]:8785", "https://registry.example.test"} {
 		if _, err := validateRemoteRegistryURL(raw); err != nil {
 			t.Fatalf("rejected valid registry URL %q: %v", raw, err)
 		}
