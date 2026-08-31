@@ -3,8 +3,7 @@ name: Build FadCam Pro Variants (Pre-built)
 on:
   workflow_dispatch:
   push:
-    branches:
-      - master
+    branches: [master]
 
 jobs:
   build-pro-variants:
