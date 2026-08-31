@@ -53,10 +53,10 @@ func main() {
 	cfg := Config{
 		Listen:         env("GATEWAY_LISTEN", ":8787"),
 		Upstream:       strings.TrimRight(env("TAP_UPSTREAM", "http://127.0.0.1:8786"), "/"),
-		APIKey:        os.Getenv("GATEWAY_API_KEY"),
-		CapabilityKey: os.Getenv("GATEWAY_CAPABILITY_KEY"),
-		MaxSessions:   envInt("MAX_SESSIONS", 25),
-		RatePerMinute: envInt("RATE_PER_MINUTE", 120),
+		APIKey:         os.Getenv("GATEWAY_API_KEY"),
+		CapabilityKey:  os.Getenv("GATEWAY_CAPABILITY_KEY"),
+		MaxSessions:    envInt("MAX_SESSIONS", 25),
+		RatePerMinute:  envInt("RATE_PER_MINUTE", 120),
 		RequestTimeout: time.Duration(envInt("UPSTREAM_TIMEOUT_SECONDS", 15)) * time.Second,
 	}
 	if cfg.APIKey == "" || cfg.CapabilityKey == "" {
@@ -314,15 +314,28 @@ func (g *Gateway) playlist(w http.ResponseWriter, r *http.Request, s Session) {
 }
 
 func allowedMediaPath(raw string) bool {
+	if raw == "" || strings.ContainsAny(raw, "\x00\r\n") {
+		return false
+	}
 	u, err := url.Parse(raw)
 	if err != nil || u.IsAbs() || u.Host != "" || strings.HasPrefix(raw, "//") || u.Path == "" {
 		return false
 	}
 	p := u.Path
-	if p == "/status" || p == "/audio/volume" || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/audio/volume/") {
+	for i := 0; i < 3; i++ {
+		decoded, err := url.PathUnescape(p)
+		if err != nil {
+			return false
+		}
+		if decoded == p {
+			break
+		}
+		p = decoded
+	}
+	if strings.Contains(p, "..") || strings.HasPrefix(p, "//") || p == "/status" || p == "/audio/volume" || strings.HasPrefix(p, "/status/") || strings.HasPrefix(p, "/audio/volume/") {
 		return false
 	}
-	return !strings.Contains(p, "..")
+	return true
 }
 
 func (g *Gateway) rewritePlaylistLine(line string, s Session) string {
