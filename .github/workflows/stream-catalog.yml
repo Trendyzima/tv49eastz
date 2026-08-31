@@ -1,0 +1,38 @@
+name: TV 49 East Channel Catalog
+
+on:
+  push:
+    branches: [master, 'feat/**']
+    paths:
+      - 'stream-catalog/**'
+      - '.github/workflows/stream-catalog.yml'
+  pull_request:
+    branches: [master]
+    paths:
+      - 'stream-catalog/**'
+      - '.github/workflows/stream-catalog.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: stream-catalog
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: true
+          cache-dependency-path: stream-catalog/go.mod
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+      - name: Unit tests
+        run: go test ./... -count=1 -race
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
