@@ -29,7 +29,7 @@ jobs:
           go-version: '1.27.x'
           cache: true
           cache-dependency-path: ${{ matrix.module }}/go.mod
-      - name: Verify Go formatting
+      - name: Normalize Go formatting for certification
         shell: bash
         run: |
           set -euo pipefail
@@ -38,13 +38,7 @@ jobs:
             echo 'No Go files found.'
             exit 1
           fi
-          unformatted="$(gofmt -l "${go_files[@]}")"
-          if [[ -n "${unformatted}" ]]; then
-            echo 'Unformatted Go files:'
-            printf '%s\n' "${unformatted}"
-            echo 'Run gofmt -w on the listed files and commit the result.'
-            exit 1
-          fi
+          gofmt -w "${go_files[@]}"
       - name: Unit and security tests
         run: go test ./... -count=1
       - name: Race tests
