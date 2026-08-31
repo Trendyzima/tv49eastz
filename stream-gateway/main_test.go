@@ -42,7 +42,7 @@ func TestPlaylistAndMapRewrite(t *testing.T) {
 		tunnels: tunnels,
 		policy:  AuthorizationPolicy{Registry: defaultDeviceRegistry},
 	}
-	s := Session{ID: "s", UserID: "api-key-user", DeviceID: "test-device-playlist", ChannelID: "camera", StreamID: "stream-1", IssuedAt: time.Now().Add(-time.Second), Expires: time.Now().Add(time.Hour)}
+	s := Session{ID: "s", UserID: "api-key-user", DeviceID: "test-device-playlist", Fingerprint: "test-device-playlist-fingerprint", ChannelID: "camera", StreamID: "stream-1", IssuedAt: time.Now().Add(-time.Second), Expires: time.Now().Add(time.Hour)}
 	g.sessions.Store("s", s)
 	r := httptest.NewRequest("GET", "/stream/s/index.m3u8", nil)
 	w := httptest.NewRecorder()
@@ -72,7 +72,7 @@ func TestRejectUnsafeResource(t *testing.T) {
 		tunnels: tunnels,
 		policy:  AuthorizationPolicy{Registry: defaultDeviceRegistry},
 	}
-	g.sessions.Store("s", Session{ID: "s", UserID: "api-key-user", DeviceID: "test-device-unsafe", ChannelID: "camera", StreamID: "stream-1", IssuedAt: time.Now().Add(-time.Second), Expires: time.Now().Add(time.Hour)})
+	g.sessions.Store("s", Session{ID: "s", UserID: "api-key-user", DeviceID: "test-device-unsafe", Fingerprint: "test-device-unsafe-fingerprint", ChannelID: "camera", StreamID: "stream-1", IssuedAt: time.Now().Add(-time.Second), Expires: time.Now().Add(time.Hour)})
 	bad := "aHR0cDovL2V2aWw="
 	r := httptest.NewRequest("GET", "/stream/s/resource/"+bad, nil)
 	w := httptest.NewRecorder()

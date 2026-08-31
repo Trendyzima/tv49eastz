@@ -44,13 +44,14 @@ func TestPublicStreamBoundaryDoesNotExposeControlEndpointsOrOrigin(t *testing.T)
 		t.Fatal(err)
 	}
 	s := Session{
-		ID:        "s",
-		UserID:    "u",
-		DeviceID:  "device-a",
-		ChannelID: "camera",
-		StreamID:  "stream-a",
-		IssuedAt:  time.Now().UTC(),
-		Expires:   time.Now().UTC().Add(time.Minute),
+		ID:          "s",
+		UserID:      "u",
+		DeviceID:    "device-a",
+		Fingerprint: "integration-device-a",
+		ChannelID:   "camera",
+		StreamID:    "stream-a",
+		IssuedAt:    time.Now().UTC(),
+		Expires:     time.Now().UTC().Add(time.Minute),
 	}
 	g.sessions.Store(s.ID, s)
 	g.sessionCount.Add(1)
