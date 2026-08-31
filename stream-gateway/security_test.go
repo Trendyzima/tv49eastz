@@ -19,12 +19,12 @@ func testCertificateFixture(raw string) *x509.Certificate {
 }
 
 func TestSessionIsBoundAndExpires(t *testing.T) {
-	p := Principal{UserID: "u1", DeviceID: "d1"}
+	p := Principal{UserID: "u1", DeviceID: "d1", Fingerprint: "fp1"}
 	s, err := newSession(p, "ch1", "stream1", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if s.UserID != "u1" || s.DeviceID != "d1" || s.ChannelID != "ch1" || s.StreamID != "stream1" {
+	if s.UserID != "u1" || s.DeviceID != "d1" || s.Fingerprint != "fp1" || s.ChannelID != "ch1" || s.StreamID != "stream1" {
 		t.Fatal("session is not fully bound")
 	}
 	if !sessionValid(s, s.IssuedAt.Add(time.Second)) {
