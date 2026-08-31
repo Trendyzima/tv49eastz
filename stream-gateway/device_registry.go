@@ -31,10 +31,11 @@ type DeviceRegistry struct {
 	remoteURL string
 	client *http.Client
 	persistencePath string
+	persistenceOps registryPersistenceOps
 }
 
 func NewDeviceRegistry() *DeviceRegistry {
-	return &DeviceRegistry{byID: make(map[string]DeviceRecord), byFP: make(map[string]string), remoteURL: strings.TrimRight(os.Getenv("DEVICE_REGISTRY_URL"), "/"), client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}
+	return &DeviceRegistry{byID: make(map[string]DeviceRecord), byFP: make(map[string]string), remoteURL: strings.TrimRight(os.Getenv("DEVICE_REGISTRY_URL"), "/"), client: &http.Client{Timeout: 3 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, persistenceOps: defaultRegistryPersistenceOps()}
 }
 
 func (r *DeviceRegistry) Register(d DeviceRecord) error {
@@ -75,26 +76,20 @@ func (r *DeviceRegistry) mutateDevice(deviceID string, mutate func(*DeviceRecord
 
 func validateRemoteRegistryURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw)); if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") { return nil, errors.New("invalid device registry URL") }
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" { return nil, errors.New("invalid device registry URL") }
-	if u.Path != "" && u.Path != "/" { return nil, errors.New("invalid device registry URL") }; u.Path = ""; return u, nil
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" { return nil, errors.New("invalid device registry URL") }; if u.Path != "" && u.Path != "/" { return nil, errors.New("invalid device registry URL") }; u.Path = ""; return u, nil
 }
 
 // Lookup returns an authorization record by device ID. It is retained for
 // non-TLS administrative callers. Stream authorization should use
 // LookupByIdentity so the certificate fingerprint is part of the decision.
-func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
-	return r.lookup(deviceID, "")
-}
+func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) { return r.lookup(deviceID, "") }
 
 // LookupByIdentity joins device selection to certificate identity. A remote
 // registry response is accepted only when it carries the same fingerprint as
 // the verified TLS certificate. This prevents a device-ID lookup from silently
 // selecting a different certificate-bound device.
 func (r *DeviceRegistry) LookupByIdentity(deviceID, fingerprint string) (DeviceRecord, bool) {
-	deviceID = normalizeDeviceID(deviceID)
-	fingerprint = normalizeFingerprint(fingerprint)
-	if deviceID == "" || fingerprint == "" { return DeviceRecord{}, false }
-	return r.lookup(deviceID, fingerprint)
+	deviceID = normalizeDeviceID(deviceID); fingerprint = normalizeFingerprint(fingerprint); if deviceID == "" || fingerprint == "" { return DeviceRecord{}, false }; return r.lookup(deviceID, fingerprint)
 }
 
 func (r *DeviceRegistry) lookup(deviceID, expectedFingerprint string) (DeviceRecord, bool) {
@@ -108,10 +103,7 @@ func (r *DeviceRegistry) lookup(deviceID, expectedFingerprint string) (DeviceRec
 		if expectedFingerprint != "" && !secureStringEqual(normalizeFingerprint(v.Fingerprint), expectedFingerprint) { return DeviceRecord{}, false }
 		return DeviceRecord{DeviceID:v.DeviceID, PrincipalID:v.PrincipalID, Fingerprint:normalizeFingerprint(v.Fingerprint), Enabled:v.Enabled, Revoked:v.Revoked, Channels:v.Channels}, true
 	}
-	r.mu.RLock(); d, ok := r.byID[deviceID]; r.mu.RUnlock()
-	if !ok || !d.Enabled || d.Revoked { return DeviceRecord{}, false }
-	if expectedFingerprint != "" && !secureStringEqual(normalizeFingerprint(d.Fingerprint), expectedFingerprint) { return DeviceRecord{}, false }
-	return d, true
+	r.mu.RLock(); d, ok := r.byID[deviceID]; r.mu.RUnlock(); if !ok || !d.Enabled || d.Revoked { return DeviceRecord{}, false }; if expectedFingerprint != "" && !secureStringEqual(normalizeFingerprint(d.Fingerprint), expectedFingerprint) { return DeviceRecord{}, false }; return d, true
 }
 
 func (r *DeviceRegistry) Verify(cert *x509.Certificate) (DeviceRecord, bool) {
