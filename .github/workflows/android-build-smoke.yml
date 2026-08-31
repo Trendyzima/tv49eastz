@@ -144,14 +144,14 @@ jobs:
           test -f "$zipalign"
           file "$zipalign"
 
-          # zipalign's help/usage path intentionally exits with status 2.
-          # Validate the executable and its banner without misclassifying that
-          # expected usage status as a broken installation.
+          # zipalign intentionally returns status 2 for its usage/help path.
+          # Validate the binary by checking its banner and accepting only the
+          # documented usage statuses rather than inventing a `version` command.
           help_output="$(mktemp)"
           help_status=0
           "$zipalign" -h >"$help_output" 2>&1 || help_status=$?
-          grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; exit 1; }
-          [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; exit 1; }
+          grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; rm -f "$help_output"; exit 1; }
+          [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; rm -f "$help_output"; exit 1; }
           rm -f "$help_output"
 
           echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
@@ -164,7 +164,6 @@ jobs:
           set -euo pipefail
           test -n "$ZIPALIGN"
           test -x "$ZIPALIGN"
-          "$ZIPALIGN" version
           apk_count=0
           while IFS= read -r -d '' apk; do
             test -s "$apk"
