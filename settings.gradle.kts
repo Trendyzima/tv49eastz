@@ -17,18 +17,15 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven { url = uri("https://jitpack.io") }
-        flatDir {
-            dirs("app/libs")
-        }
+        flatDir { dirs("app/libs") }
     }
 }
 
 rootProject.name = "FadCam"
 include(":app")
+include(":tv-receiver")
 
-// Include patched Media3 as composite build for live streaming support
-// Clone it once: git clone --depth 1 https://github.com/anonfaded/media3-patched.git /tmp/media3-patched
-// Or set your own path in local.properties: media3.patched.path=/your/path
+// Include patched Media3 as composite build for live streaming support.
 val media3PatchedPath = if (file("local.properties").exists()) {
     val props = java.util.Properties()
     file("local.properties").inputStream().use { props.load(it) }
@@ -46,7 +43,5 @@ if (file(media3PatchedPath).exists()) {
         }
     }
 } else {
-    logger.warn("⚠️ Patched Media3 not found at: $media3PatchedPath")
-    logger.warn("📥 Clone it with: git clone --depth 1 https://github.com/anonfaded/media3-patched.git $media3PatchedPath")
+    logger.warn("Patched Media3 not found at: $media3PatchedPath")
 }
- 
