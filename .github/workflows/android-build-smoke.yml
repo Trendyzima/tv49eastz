@@ -16,6 +16,10 @@ env:
   MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
   MEDIA3_PATCHED_SHA: 6d498560637d273dcb754727c9dcdce97548e621
   MEDIA3_PATCHED_PATH: /tmp/media3-patched
+  CI_KEYSTORE_PATH: /tmp/tv49eastz-ci-release.jks
+  CI_KEYSTORE_PASSWORD: changeit-ci-only
+  CI_KEY_ALIAS: tv49eastz-ci
+  CI_KEY_PASSWORD: changeit-ci-only
 
 jobs:
   android-build:
@@ -47,6 +51,29 @@ jobs:
           java-version: '17'
           distribution: temurin
           cache: gradle
+
+      - name: Prepare CI release signing
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -f "$CI_KEYSTORE_PATH"
+          keytool -genkeypair -noprompt \
+            -keystore "$CI_KEYSTORE_PATH" \
+            -storepass "$CI_KEYSTORE_PASSWORD" \
+            -keypass "$CI_KEY_PASSWORD" \
+            -alias "$CI_KEY_ALIAS" \
+            -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=tv49eastz CI,O=tv49eastz,C=XX"
+          chmod 600 "$CI_KEYSTORE_PATH"
+          cat > local.properties <<EOF
+KEYSTORE_FILE=$CI_KEYSTORE_PATH
+KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD
+KEY_ALIAS=$CI_KEY_ALIAS
+KEY_PASSWORD=$CI_KEY_PASSWORD
+EOF
+          chmod 600 local.properties
+          test -s "$CI_KEYSTORE_PATH"
+          test -s local.properties
 
       - name: Prepare Gradle
         shell: bash
@@ -102,10 +129,6 @@ jobs:
               exit 1
             fi
             cat "$output"
-            # Composite builds are reported with their included-build prefix,
-            # e.g. `project :media3-patched:lib-muxer (by composite build)`.
-            # Match the exact expected composite project path rather than the
-            # old `:lib-*` suffix, which does not match Gradle's actual output.
             grep -Fq "project $project" "$output" || {
               echo "FAIL: $module was not substituted by $project"
               echo "--- resolved Media3 projects ---"
