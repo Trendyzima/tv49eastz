@@ -79,17 +79,39 @@ func validateRemoteRegistryURL(raw string) (*url.URL, error) {
 	if u.Path != "" && u.Path != "/" { return nil, errors.New("invalid device registry URL") }; u.Path = ""; return u, nil
 }
 
+// Lookup returns an authorization record by device ID. It is retained for
+// non-TLS administrative callers. Stream authorization should use
+// LookupByIdentity so the certificate fingerprint is part of the decision.
 func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
+	return r.lookup(deviceID, "")
+}
+
+// LookupByIdentity joins device selection to certificate identity. A remote
+// registry response is accepted only when it carries the same fingerprint as
+// the verified TLS certificate. This prevents a device-ID lookup from silently
+// selecting a different certificate-bound device.
+func (r *DeviceRegistry) LookupByIdentity(deviceID, fingerprint string) (DeviceRecord, bool) {
+	deviceID = normalizeDeviceID(deviceID)
+	fingerprint = normalizeFingerprint(fingerprint)
+	if deviceID == "" || fingerprint == "" { return DeviceRecord{}, false }
+	return r.lookup(deviceID, fingerprint)
+}
+
+func (r *DeviceRegistry) lookup(deviceID, expectedFingerprint string) (DeviceRecord, bool) {
 	deviceID = normalizeDeviceID(deviceID); if deviceID == "" { return DeviceRecord{}, false }
 	if r.remoteURL != "" {
 		base, err := validateRemoteRegistryURL(r.remoteURL); if err != nil { return DeviceRecord{}, false }; u := *base; u.Path = "/registry/authorize"; q := u.Query(); q.Set("device_id", deviceID); u.RawQuery = q.Encode()
 		resp, err := r.client.Get(u.String()); if err != nil { return DeviceRecord{}, false }; defer resp.Body.Close(); if resp.StatusCode != http.StatusOK || !strings.HasPrefix(strings.ToLower(resp.Header.Get("Content-Type")), "application/json") { return DeviceRecord{}, false }
 		const maxRegistryResponse = 64 << 10; body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponse+1)); if err != nil || len(body) > maxRegistryResponse { return DeviceRecord{}, false }
-		var v struct { DeviceID string `json:"device_id"`; PrincipalID string `json:"principal_id"`; Channels map[string]bool `json:"channels"`; Enabled bool `json:"enabled"`; Revoked bool `json:"revoked"` }
-		if err := json.Unmarshal(body, &v); err != nil || v.Revoked || !v.Enabled || v.DeviceID != deviceID || v.PrincipalID == "" { return DeviceRecord{}, false }
-		return DeviceRecord{DeviceID:v.DeviceID, PrincipalID:v.PrincipalID, Enabled:v.Enabled, Revoked:v.Revoked, Channels:v.Channels}, true
+		var v struct { DeviceID string `json:"device_id"`; PrincipalID string `json:"principal_id"`; Fingerprint string `json:"fingerprint"`; Channels map[string]bool `json:"channels"`; Enabled bool `json:"enabled"`; Revoked bool `json:"revoked"` }
+		if err := json.Unmarshal(body, &v); err != nil || v.Revoked || !v.Enabled || v.DeviceID != deviceID || v.PrincipalID == "" || normalizeFingerprint(v.Fingerprint) == "" { return DeviceRecord{}, false }
+		if expectedFingerprint != "" && !secureStringEqual(normalizeFingerprint(v.Fingerprint), expectedFingerprint) { return DeviceRecord{}, false }
+		return DeviceRecord{DeviceID:v.DeviceID, PrincipalID:v.PrincipalID, Fingerprint:normalizeFingerprint(v.Fingerprint), Enabled:v.Enabled, Revoked:v.Revoked, Channels:v.Channels}, true
 	}
-	r.mu.RLock(); d, ok := r.byID[deviceID]; r.mu.RUnlock(); return d, ok && d.Enabled && !d.Revoked
+	r.mu.RLock(); d, ok := r.byID[deviceID]; r.mu.RUnlock()
+	if !ok || !d.Enabled || d.Revoked { return DeviceRecord{}, false }
+	if expectedFingerprint != "" && !secureStringEqual(normalizeFingerprint(d.Fingerprint), expectedFingerprint) { return DeviceRecord{}, false }
+	return d, true
 }
 
 func (r *DeviceRegistry) Verify(cert *x509.Certificate) (DeviceRecord, bool) {
@@ -101,3 +123,5 @@ func certificateFingerprint(cert *x509.Certificate) string { s := sha256.Sum256(
 func validateCertificate(cert *x509.Certificate, now time.Time) error { if cert == nil { return errors.New("missing certificate") }; if !cert.NotBefore.IsZero() && now.Before(cert.NotBefore) { return errors.New("certificate not yet valid") }; if !cert.NotAfter.IsZero() && !now.Before(cert.NotAfter) { return errors.New("certificate expired") }; return nil }
 func channelAllowed(d DeviceRecord, channelID string) bool { return d.Enabled && !d.Revoked && channelID != "" && d.Channels[channelID] }
 func normalizeDeviceID(s string) string { return strings.TrimSpace(s) }
+func normalizeFingerprint(s string) string { return strings.ToLower(strings.TrimSpace(s)) }
+func secureStringEqual(a, b string) bool { if len(a) != len(b) { return false }; var x byte; for i := range a { x |= a[i] ^ b[i] }; return x == 0 }
