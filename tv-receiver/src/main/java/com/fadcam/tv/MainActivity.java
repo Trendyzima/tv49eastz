@@ -7,7 +7,6 @@ import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
 import android.view.Gravity;
-import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
@@ -23,14 +22,12 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
+import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * TV 49 East global receiver. FadCam remains the first-class featured source;
- * creator channels are imported through the signed/deep-link channel contract
- * and stored locally for reliable offline discovery.
- */
+/** Standalone TV 49 East receiver. All catalog playback is served through the TV East relay. */
 public final class MainActivity extends AppCompatActivity {
     private static final int BG = Color.rgb(15, 15, 18);
     private static final int SURFACE = Color.rgb(31, 24, 49);
@@ -47,6 +44,8 @@ public final class MainActivity extends AppCompatActivity {
     private Button stop;
     private LinearLayout channelList;
     private ChannelStore store;
+    private CatalogClient catalogClient;
+    private final List<ChannelStore.Channel> remoteChannels = new ArrayList<>();
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
@@ -54,9 +53,10 @@ public final class MainActivity extends AppCompatActivity {
         getWindow().setStatusBarColor(BG);
         getWindow().setNavigationBarColor(Color.rgb(9, 9, 11));
         store = new ChannelStore(this);
+        catalogClient = new CatalogClient(BuildConfig.TV_EAST_CATALOG_URL);
         buildUi();
         handleIntent(getIntent());
-        renderChannels();
+        refreshCatalog();
     }
 
     @Override
@@ -64,7 +64,7 @@ public final class MainActivity extends AppCompatActivity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIntent(intent);
-        renderChannels();
+        refreshCatalog();
     }
 
     private TextView label(String text, float size, int color, boolean bold) {
@@ -96,13 +96,12 @@ public final class MainActivity extends AppCompatActivity {
         header.setGravity(Gravity.CENTER_VERTICAL);
         header.setPadding(22, 16, 22, 16);
         header.setBackground(surface(SURFACE, 28));
-
         LinearLayout titles = new LinearLayout(this);
         titles.setOrientation(LinearLayout.VERTICAL);
         titles.addView(label("TV 49 East", 27f, TEXT, true));
-        titles.addView(label("FadCam creator network • worldwide", 13f, MUTED, false));
+        titles.addView(label("FadCam creators • TV East • worldwide", 13f, MUTED, false));
         header.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        status = label("READY", 12f, ACCENT, true);
+        status = label("CONNECTING", 12f, ACCENT, true);
         status.setGravity(Gravity.CENTER);
         header.addView(status);
         content.addView(header);
@@ -110,8 +109,7 @@ public final class MainActivity extends AppCompatActivity {
         playerView = new PlayerView(this);
         playerView.setUseController(true);
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
-        playerView.setPlayer(null);
-        LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.58f);
+        LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.56f);
         videoParams.topMargin = 16;
         content.addView(playerView, videoParams);
 
@@ -120,39 +118,36 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout catalog = new LinearLayout(this);
         catalog.setOrientation(LinearLayout.VERTICAL);
         catalog.setPadding(0, 14, 0, 8);
-
         catalog.addView(label("FEATURED", 12f, ACCENT, true));
         catalog.addView(label("FadCam Local", 21f, TEXT, true));
-        TextView featuredHint = label("The original FadCam stream is always presented first.", 13f, MUTED, false);
+        TextView featuredHint = label("FadCam-originated channels are surfaced first, followed by TV East creators and global variety.", 13f, MUTED, false);
         featuredHint.setPadding(0, 2, 0, 10);
         catalog.addView(featuredHint);
-
         channelList = new LinearLayout(this);
         channelList.setOrientation(LinearLayout.VERTICAL);
         catalog.addView(channelList);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
-        Button add = actionButton("＋  Add TV East channel");
+        Button add = actionButton("＋  Add authorized channel");
         add.setOnClickListener(v -> showAddChannelDialog());
         actions.addView(add, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         Button refresh = actionButton("Refresh");
-        refresh.setOnClickListener(v -> renderChannels());
+        refresh.setOnClickListener(v -> refreshCatalog());
         LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         refreshParams.leftMargin = 10;
         actions.addView(refresh, refreshParams);
         catalog.addView(actions);
 
-        TextView protocol = label("TV East channels are accepted from FadCam using tv49east://channel links. Playback requires HTTPS; no camera or local-network permission is needed.", 12f, MUTED, false);
+        TextView protocol = label("Catalog channels play through the TV 49 East HTTPS relay. FadCam publishers register through the authenticated TV East publishing API.", 12f, MUTED, false);
         protocol.setPadding(0, 14, 0, 8);
         catalog.addView(protocol);
-
         scroll.addView(catalog);
-        content.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.42f));
+        content.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.44f));
 
         LinearLayout footer = new LinearLayout(this);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.addView(label("TV East • secure receiver", 12f, MUTED, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        footer.addView(label("TV East • secure standalone receiver", 12f, MUTED, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         stop = new Button(this);
         stop.setText("STOP");
         stop.setTextColor(TEXT);
@@ -161,7 +156,6 @@ public final class MainActivity extends AppCompatActivity {
         stop.setOnClickListener(v -> stopPlayback());
         footer.addView(stop);
         content.addView(footer);
-
         root.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         setContentView(root);
     }
@@ -176,47 +170,80 @@ public final class MainActivity extends AppCompatActivity {
         return b;
     }
 
+    private void refreshCatalog() {
+        renderChannels();
+        catalogClient.load(new CatalogClient.Listener() {
+            @Override
+            public void onSuccess(List<ChannelStore.Channel> channels) {
+                runOnUiThread(() -> {
+                    remoteChannels.clear();
+                    remoteChannels.addAll(channels);
+                    setStatus("CATALOG LIVE", GOOD);
+                    renderChannels();
+                });
+            }
+
+            @Override
+            public void onError(Exception error) {
+                runOnUiThread(() -> {
+                    setStatus(BuildConfig.TV_EAST_CATALOG_URL.isEmpty() ? "SERVER NOT CONFIGURED" : "OFFLINE • LOCAL CHANNELS", BuildConfig.TV_EAST_CATALOG_URL.isEmpty() ? ERROR : MUTED);
+                    renderChannels();
+                });
+            }
+        });
+    }
+
     private void renderChannels() {
-        if (channelList == null || store == null) return;
+        if (channelList == null) return;
         channelList.removeAllViews();
-        List<ChannelStore.Channel> channels = store.load();
-        if (channels.isEmpty()) {
-            TextView empty = label("No creator channels registered yet. When a FadCam creator publishes a TV East channel, its registration link can open this app automatically.", 13f, MUTED, false);
+        LinkedHashMap<String, ChannelStore.Channel> merged = new LinkedHashMap<>();
+        // A FadCam-local channel is always first when the creator has published it.
+        for (ChannelStore.Channel c : store.load()) {
+            if (c.featured) merged.put(c.id, c);
+        }
+        // Server catalog order is authoritative: TV East creators precede IPTV variety.
+        for (ChannelStore.Channel c : remoteChannels) merged.putIfAbsent(c.id, c);
+        // Preserve viewer-added authorized channels after the server catalog.
+        for (ChannelStore.Channel c : store.load()) merged.putIfAbsent(c.id, c);
+
+        if (merged.isEmpty()) {
+            TextView empty = label("No channels cached yet. Connect to the TV East catalog server or publish a FadCam channel.", 13f, MUTED, false);
             empty.setPadding(0, 4, 0, 12);
             channelList.addView(empty);
             return;
         }
 
-        TextView title = label("TV EAST • FADCAM CREATORS", 12f, ACCENT, true);
-        title.setPadding(0, 6, 0, 8);
-        channelList.addView(title);
-        for (ChannelStore.Channel channel : channels) {
-            LinearLayout card = new LinearLayout(this);
-            card.setGravity(Gravity.CENTER_VERTICAL);
-            card.setPadding(18, 12, 10, 12);
-            card.setBackground(surface(SURFACE, 22));
-            LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-            cardParams.bottomMargin = 8;
-            channelList.addView(card, cardParams);
-
-            LinearLayout text = new LinearLayout(this);
-            text.setOrientation(LinearLayout.VERTICAL);
-            text.addView(label(channel.name, 17f, TEXT, true));
-            text.addView(label("TV East • " + channel.owner, 12f, MUTED, false));
-            card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-
-            Button play = actionButton("WATCH");
-            play.setOnClickListener(v -> startPlayback(channel.url, channel.name));
-            card.addView(play);
+        boolean first = true;
+        for (ChannelStore.Channel channel : merged.values()) {
+            String prefix = first && channel.featured ? "FADCAM LOCAL • " : channel.owner.startsWith("TV East") ? "TV EAST • " : "";
+            addChannelCard(channel, prefix);
+            first = false;
         }
+    }
+
+    private void addChannelCard(ChannelStore.Channel channel, String prefix) {
+        LinearLayout card = new LinearLayout(this);
+        card.setGravity(Gravity.CENTER_VERTICAL);
+        card.setPadding(18, 12, 10, 12);
+        card.setBackground(surface(SURFACE, 22));
+        LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        cardParams.bottomMargin = 8;
+        channelList.addView(card, cardParams);
+
+        LinearLayout text = new LinearLayout(this);
+        text.setOrientation(LinearLayout.VERTICAL);
+        text.addView(label(prefix + channel.name, 17f, TEXT, true));
+        text.addView(label(channel.owner, 12f, MUTED, false));
+        card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        Button play = actionButton("WATCH");
+        play.setOnClickListener(v -> startPlayback(channel.url, channel.name));
+        card.addView(play);
     }
 
     private void showAddChannelDialog() {
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        int pad = 8;
-        form.setPadding(pad, pad, pad, pad);
-
+        form.setPadding(8, 8, 8, 8);
         EditText name = new EditText(this);
         name.setHint("Channel name");
         name.setSingleLine(true);
@@ -230,18 +257,15 @@ public final class MainActivity extends AppCompatActivity {
         url.setSingleLine(true);
         url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
         form.addView(url);
-
         new androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("Add TV East channel")
-                .setMessage("Only add streams you own or are authorized to watch/distribute.")
+                .setTitle("Add authorized channel")
+                .setMessage("Only add streams you own or are authorized to watch/distribute. Catalog channels should use the TV East relay.")
                 .setView(form)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
-                    String n = name.getText().toString().trim();
-                    String o = owner.getText().toString().trim();
+                    String n = safe(name.getText().toString(), "TV East Channel");
+                    String o = safe(owner.getText().toString(), "Authorized source");
                     String u = url.getText().toString().trim();
-                    if (n.isEmpty()) n = "TV East Channel";
-                    if (o.isEmpty()) o = "FadCam creator";
                     if (!isSecureUrl(u)) {
                         setStatus("HTTPS REQUIRED", ERROR);
                         return;
@@ -256,7 +280,6 @@ public final class MainActivity extends AppCompatActivity {
         if (intent == null) return;
         Uri uri = intent.getData();
         if (uri == null) return;
-
         String scheme = uri.getScheme();
         String host = uri.getHost();
         if ("fadcam".equalsIgnoreCase(scheme) && "stream".equalsIgnoreCase(host)) {
@@ -269,7 +292,6 @@ public final class MainActivity extends AppCompatActivity {
             startPlayback(mediaUrl, "FadCam Local");
             return;
         }
-
         if ("tv49east".equalsIgnoreCase(scheme) && "channel".equalsIgnoreCase(host)) {
             String mediaUrl = uri.getQueryParameter("url");
             if (!isSecureUrl(mediaUrl)) {
@@ -279,9 +301,8 @@ public final class MainActivity extends AppCompatActivity {
             String name = safe(uri.getQueryParameter("name"), "TV East Channel");
             String owner = safe(uri.getQueryParameter("owner"), "FadCam creator");
             String id = safe(uri.getQueryParameter("id"), UUID.randomUUID().toString());
-            store.upsert(new ChannelStore.Channel(id, name, owner, mediaUrl, false));
+            store.upsert(new ChannelStore.Channel(id, name, "TV East • " + owner, mediaUrl, false));
             startPlayback(mediaUrl, name);
-            setStatus("TV EAST • LIVE", GOOD);
         }
     }
 
