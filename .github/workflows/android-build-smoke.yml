@@ -86,19 +86,19 @@ jobs:
             :app:dependencyInsight \
             --dependency media3-muxer \
             --configuration defaultDebugCompileClasspath | tee /tmp/media3-muxer-dependency.txt
-          grep -Eq 'project :lib-muxer|androidx\.media3:media3-muxer.*project :lib-muxer' /tmp/media3-muxer-dependency.txt
+          grep -Eq 'project :(:media3-patched:)?lib-muxer|androidx\.media3:media3-muxer.*project :(:media3-patched:)?lib-muxer' /tmp/media3-muxer-dependency.txt
 
           ./gradlew --no-daemon --stacktrace \
             :app:dependencyInsight \
             --dependency media3-common \
             --configuration defaultDebugCompileClasspath | tee /tmp/media3-common-dependency.txt
-          grep -Eq 'project :lib-common|androidx\.media3:media3-common.*project :lib-common' /tmp/media3-common-dependency.txt
+          grep -Eq 'project :(:media3-patched:)?lib-common|androidx\.media3:media3-common.*project :(:media3-patched:)?lib-common' /tmp/media3-common-dependency.txt
 
           ./gradlew --no-daemon --stacktrace \
             :app:dependencyInsight \
             --dependency media3-container \
             --configuration defaultDebugCompileClasspath | tee /tmp/media3-container-dependency.txt
-          grep -Eq 'project :lib-container|androidx\.media3:media3-container.*project :lib-container' /tmp/media3-container-dependency.txt
+          grep -Eq 'project :(:media3-patched:)?lib-container|androidx\.media3:media3-container.*project :(:media3-patched:)?lib-container' /tmp/media3-container-dependency.txt
 
           echo 'Gradle composite substitutions verified.'
 
