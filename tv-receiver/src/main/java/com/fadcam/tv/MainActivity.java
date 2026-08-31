@@ -1,10 +1,15 @@
 package com.fadcam.tv;
 
 import android.content.Intent;
+import android.graphics.Color;
+import android.graphics.Typeface;
 import android.net.Uri;
 import android.os.Bundle;
+import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
+import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
@@ -14,15 +19,24 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
-/** TV/display destination. Camera capture is intentionally absent from this module. */
+/** TV 49 East display destination. Camera capture is intentionally absent from this module. */
 public final class MainActivity extends AppCompatActivity {
+    private static final int BG = Color.rgb(17, 17, 19);
+    private static final int SURFACE = Color.rgb(35, 25, 66);
+    private static final int ACCENT = Color.rgb(207, 186, 253);
+    private static final int TEXT = Color.WHITE;
+    private static final int MUTED = Color.rgb(190, 184, 205);
+
     private ExoPlayer player;
     private PlayerView playerView;
     private TextView status;
+    private Button stop;
 
     @Override
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        getWindow().setStatusBarColor(BG);
+        getWindow().setNavigationBarColor(Color.rgb(11, 11, 13));
         buildUi();
         handleIntent(getIntent());
     }
@@ -34,50 +48,81 @@ public final class MainActivity extends AppCompatActivity {
         handleIntent(intent);
     }
 
+    private TextView label(String text, float size, int color, boolean bold) {
+        TextView v = new TextView(this);
+        v.setText(text);
+        v.setTextSize(size);
+        v.setTextColor(color);
+        v.setTypeface(Typeface.DEFAULT, bold ? Typeface.BOLD : Typeface.NORMAL);
+        return v;
+    }
+
     private void buildUi() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(BG);
         root.setKeepScreenOn(true);
 
-        status = new TextView(this);
-        status.setText("FadCam TV • Ready");
-        status.setTextSize(18f);
-        status.setPadding(24, 16, 24, 16);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(32, 24, 32, 24);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        header.setPadding(24, 18, 24, 18);
+        header.setBackgroundColor(SURFACE);
+
+        LinearLayout titles = new LinearLayout(this);
+        titles.setOrientation(LinearLayout.VERTICAL);
+        TextView brand = label("TV 49 East", 26f, TEXT, true);
+        TextView subtitle = label("Powered by FadCam technology", 13f, MUTED, false);
+        titles.addView(brand);
+        titles.addView(subtitle);
+        header.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        status = label("READY TO CONNECT", 13f, ACCENT, true);
+        status.setGravity(Gravity.CENTER);
+        header.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(header);
 
         playerView = new PlayerView(this);
         playerView.setUseController(true);
-        playerView.setPlayer(player);
+        playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
+        playerView.setPlayer(null);
+        LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        videoParams.topMargin = 20;
+        videoParams.bottomMargin = 16;
+        content.addView(playerView, videoParams);
 
-        Button stop = new Button(this);
-        stop.setText("Stop stream");
+        LinearLayout footer = new LinearLayout(this);
+        footer.setGravity(Gravity.CENTER_VERTICAL);
+        TextView hint = label("Secure stream receiver", 13f, MUTED, false);
+        footer.addView(hint, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        stop = new Button(this);
+        stop.setText("STOP STREAM");
+        stop.setTextColor(TEXT);
+        stop.setAllCaps(false);
+        stop.setEnabled(false);
         stop.setOnClickListener(v -> stopPlayback());
+        footer.addView(stop, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        content.addView(footer);
 
-        root.addView(status, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        root.addView(playerView, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
-        root.addView(stop, new LinearLayout.LayoutParams(
-                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        FrameLayout.LayoutParams contentParams = new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT);
+        root.addView(content, contentParams);
         setContentView(root);
     }
 
     private void handleIntent(Intent intent) {
         if (intent == null) return;
         Uri uri = intent.getData();
-        if (uri == null || !"fadcam".equals(uri.getScheme()) || !"stream".equals(uri.getHost())) {
-            return;
-        }
+        if (uri == null || !"fadcam".equals(uri.getScheme()) || !"stream".equals(uri.getHost())) return;
         String mediaUrl = uri.getQueryParameter("url");
         if (mediaUrl == null || mediaUrl.isBlank()) {
-            status.setText("FadCam TV • Stream request missing URL");
+            setStatus("STREAM REQUEST INVALID", Color.rgb(244, 67, 54));
             return;
         }
-        // The URL must be an already-authorized gateway capability. This client does not
-        // manufacture credentials or bypass the secure gateway.
         Uri parsed = Uri.parse(mediaUrl);
-        String scheme = parsed.getScheme();
-        if (!"https".equalsIgnoreCase(scheme)) {
-            status.setText("FadCam TV • Secure stream required");
+        if (!"https".equalsIgnoreCase(parsed.getScheme())) {
+            setStatus("SECURE HTTPS STREAM REQUIRED", Color.rgb(244, 67, 54));
             return;
         }
         startPlayback(mediaUrl);
@@ -90,7 +135,15 @@ public final class MainActivity extends AppCompatActivity {
         player.setMediaItem(MediaItem.fromUri(url));
         player.prepare();
         player.play();
-        status.setText("FadCam TV • Connected");
+        stop.setEnabled(true);
+        setStatus("CONNECTED • LIVE", Color.rgb(119, 221, 119));
+    }
+
+    private void setStatus(String text, int color) {
+        if (status != null) {
+            status.setText(text);
+            status.setTextColor(color);
+        }
     }
 
     private void stopPlayback() {
@@ -99,7 +152,8 @@ public final class MainActivity extends AppCompatActivity {
             player = null;
         }
         if (playerView != null) playerView.setPlayer(null);
-        if (status != null) status.setText("FadCam TV • Ready");
+        if (stop != null) stop.setEnabled(false);
+        setStatus("READY TO CONNECT", ACCENT);
     }
 
     @Override
