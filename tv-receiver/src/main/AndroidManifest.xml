@@ -3,9 +3,10 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <application
         android:allowBackup="false"
-        android:label="FadCam TV"
+        android:label="TV 49 East"
         android:supportsRtl="true"
-        android:theme="@style/Theme.FadCamTV">
+        android:theme="@style/Theme.FadCamTV"
+        android:banner="@drawable/tv49east_banner">
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
