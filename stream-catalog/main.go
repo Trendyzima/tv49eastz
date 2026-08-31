@@ -17,16 +17,23 @@ type server struct {
 	refresh     time.Duration
 	timeout     time.Duration
 	maxBytes    int64
+	creator     *creatorStore
 	mu          sync.RWMutex
 	cache       Catalog
 }
 
 func main() {
+	creatorPath := env("CREATOR_REGISTRY_FILE", "./data/creators.json")
+	creators, err := newCreatorStore(creatorPath)
+	if err != nil {
+		log.Fatalf("creator registry failed closed: %v", err)
+	}
 	s := &server{
 		playlistURL: env("IPTV_ORG_PLAYLIST", defaultPlaylistURL),
 		refresh:     time.Duration(envInt("CATALOG_REFRESH_MINUTES", 30)) * time.Minute,
 		timeout:     time.Duration(envInt("CATALOG_TIMEOUT_SECONDS", 20)) * time.Second,
 		maxBytes:    int64(envInt("CATALOG_MAX_BYTES", 32 << 20)),
+		creator:     creators,
 	}
 	if s.refresh <= 0 {
 		s.refresh = 30 * time.Minute
@@ -35,7 +42,7 @@ func main() {
 		s.timeout = 20 * time.Second
 	}
 	if err := s.refreshCatalog(); err != nil {
-		log.Printf("initial catalog refresh failed: %v", err)
+		log.Printf("initial IPTV catalog refresh failed: %v", err)
 	}
 	go s.refreshLoop()
 
@@ -44,6 +51,7 @@ func main() {
 	mux.HandleFunc("/v1/catalog", s.catalog)
 	mux.HandleFunc("/v1/relay", s.relay)
 	mux.HandleFunc("/v1/relay-asset", s.relayAsset)
+	mux.HandleFunc("/v1/creators/channels", s.creatorChannels)
 
 	addr := env("CATALOG_LISTEN", ":8790")
 	log.Printf("TV 49 East channel catalog listening on %s", addr)
@@ -90,13 +98,18 @@ func (s *server) findChannel(id string) (Channel, bool) {
 			return ch, true
 		}
 	}
+	for _, ch := range s.creator.list() {
+		if ch.ID == id {
+			return Channel{ID: ch.ID, Name: ch.Name, Group: "TV East", Country: ch.Country, Language: ch.Language, Logo: ch.Logo, Stream: ch.Stream, Source: "fadcam", Relay: true}, true
+		}
+	}
 	return Channel{}, false
 }
 
 func (s *server) health(w http.ResponseWriter, _ *http.Request) {
 	c := s.snapshot()
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "channels": len(c.Channels), "updated": c.Updated})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "iptv_channels": len(c.Channels), "creator_channels": len(s.creator.list()), "updated": c.Updated})
 }
 
 func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
@@ -108,31 +121,45 @@ func (s *server) catalog(w http.ResponseWriter, r *http.Request) {
 	region := strings.TrimSpace(r.URL.Query().Get("country"))
 	group := strings.TrimSpace(r.URL.Query().Get("group"))
 	query := strings.TrimSpace(r.URL.Query().Get("q"))
-	if region != "" || group != "" || query != "" {
-		filtered := make([]Channel, 0, len(c.Channels))
-		for _, ch := range c.Channels {
-			if region != "" && !strings.EqualFold(ch.Country, region) {
-				continue
-			}
-			if group != "" && !strings.EqualFold(ch.Group, group) {
-				continue
-			}
-			if query != "" && !strings.Contains(strings.ToLower(ch.Name), strings.ToLower(query)) {
-				continue
-			}
-			// Never expose upstream URLs to the receiver. Playback always goes through TV 49 East.
-			ch.Stream = "/v1/relay?id=" + ch.ID
-			filtered = append(filtered, ch)
+
+	// FadCam creator channels are always placed before external variety channels.
+	var merged []Channel
+	for _, ch := range s.creator.list() {
+		if region != "" && !strings.EqualFold(ch.Country, region) {
+			continue
 		}
-		c.Channels = filtered
-	} else {
-		for i := range c.Channels {
-			c.Channels[i].Stream = "/v1/relay?id=" + c.Channels[i].ID
+		if query != "" && !strings.Contains(strings.ToLower(ch.Name), strings.ToLower(query)) {
+			continue
 		}
+		merged = append(merged, Channel{ID: ch.ID, Name: ch.Name, Group: "TV East", Country: ch.Country, Language: ch.Language, Logo: ch.Logo, Stream: "/v1/relay?id=" + ch.ID, Source: "fadcam", Relay: true})
 	}
+	for _, ch := range c.Channels {
+		if region != "" && !strings.EqualFold(ch.Country, region) {
+			continue
+		}
+		if group != "" && !strings.EqualFold(ch.Group, group) {
+			continue
+		}
+		if query != "" && !strings.Contains(strings.ToLower(ch.Name), strings.ToLower(query)) {
+			continue
+		}
+		ch.Stream = "/v1/relay?id=" + ch.ID
+		merged = append(merged, ch)
+	}
+	c.Channels = merged
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "public, max-age=60")
 	_ = json.NewEncoder(w).Encode(c)
+}
+
+func (s *server) creatorChannels(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"channels": s.creator.list()})
 }
 
 func securityHeaders(next http.Handler) http.Handler {
