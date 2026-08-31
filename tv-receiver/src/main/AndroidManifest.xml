@@ -16,6 +16,7 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
+            android:intentMatchingFlags="enforceIntentFilter"
             android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -33,6 +34,7 @@
         <activity
             android:name=".FadCamHandoffActivity"
             android:exported="true"
+            android:intentMatchingFlags="enforceIntentFilter"
             android:permission="com.tv49.com.permission.PUBLISH_FADCAM"
             android:theme="@style/Theme.TV49East">
             <intent-filter>
