@@ -1,0 +1,62 @@
+name: Android Dual APK Certification
+
+on:
+  push:
+    branches: [master]
+    tags: ['v*']
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-dual-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  certify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Make Gradle executable
+        run: chmod +x ./gradlew
+
+      - name: Android unit tests
+        run: ./gradlew :app:test :tv-receiver:test --no-daemon --stacktrace
+
+      - name: Build FadCam APKs
+        run: ./gradlew :app:assembleDebug :app:assembleRelease --no-daemon --stacktrace
+
+      - name: Build TV receiver APKs
+        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --stacktrace
+
+      - name: Verify APK outputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          fad=(app/build/outputs/apk/**/*.apk)
+          tv=(tv-receiver/build/outputs/apk/**/*.apk)
+          if ((${#fad[@]} == 0)); then echo 'No FadCam APK produced'; exit 1; fi
+          if ((${#tv[@]} == 0)); then echo 'No TV receiver APK produced'; exit 1; fi
+          printf '%s\n' "${fad[@]}" "${tv[@]}"
+
+      - name: Upload coordinated APK artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: android-dual-apk-${{ github.sha }}
+          if-no-files-found: error
+          path: |
+            app/build/outputs/apk/**/*.apk
+            tv-receiver/build/outputs/apk/**/*.apk
