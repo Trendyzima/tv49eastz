@@ -68,7 +68,7 @@ jobs:
             assembleNotesProRelease \
             assembleCalcProRelease \
             assembleWeatherProRelease \
-            assembleDefaultProPlus; do
+            assembleDefaultProPlusRelease; do
             grep -Fq "$task" /tmp/app-tasks.txt || {
               echo "Required Android task not exposed: $task"
               exit 1
@@ -100,7 +100,7 @@ jobs:
               exit 1
             fi
             cat "$output"
-            grep -Fq "$project" "$output" || {
+            grep -Fq "project $project" "$output" || {
               echo "FAIL: $module was not substituted by $project"
               exit 1
             }
@@ -121,7 +121,7 @@ jobs:
             assembleNotesProRelease \
             assembleCalcProRelease \
             assembleWeatherProRelease \
-            assembleDefaultProPlus
+            assembleDefaultProPlusRelease
 
       - name: Assemble TV receiver APK variants
         run: ./gradlew --no-daemon --no-watch-fs --stacktrace \
