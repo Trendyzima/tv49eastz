@@ -20,6 +20,7 @@ type server struct {
 	maxBytes    int64
 	creator     *creatorStore
 	publishKey  string
+	relaySecret string
 	mu          sync.RWMutex
 	cache       Catalog
 }
@@ -37,12 +38,16 @@ func main() {
 		maxBytes:    int64(envInt("CATALOG_MAX_BYTES", 32 << 20)),
 		creator:     creators,
 		publishKey:  strings.TrimSpace(os.Getenv("CREATOR_PUBLISH_KEY")),
+		relaySecret: strings.TrimSpace(os.Getenv("RELAY_SIGNING_SECRET")),
 	}
 	if s.refresh <= 0 {
 		s.refresh = 30 * time.Minute
 	}
 	if s.timeout <= 0 {
 		s.timeout = 20 * time.Second
+	}
+	if s.relaySecret == "" {
+		log.Fatal("RELAY_SIGNING_SECRET is required")
 	}
 	if err := s.refreshCatalog(); err != nil {
 		log.Printf("initial IPTV catalog refresh failed: %v", err)
