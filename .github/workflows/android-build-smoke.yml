@@ -54,10 +54,11 @@ jobs:
           test -d "${MEDIA3_PATCHED_PATH}/libraries/common"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/container"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/muxer"
+          test -f "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
 
-          grep -q 'include modulePrefix + '\''lib-common'\''' "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-          grep -q 'include modulePrefix + '\''lib-container'\''' "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-          grep -q 'include modulePrefix + '\''lib-muxer'\''' "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
+          grep -Fq "include modulePrefix + 'lib-common'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
+          grep -Fq "include modulePrefix + 'lib-container'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
+          grep -Fq "include modulePrefix + 'lib-muxer'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
 
           echo 'Patched Media3 invariant satisfied.'
           echo 'ProcessedSegment.java present.'
@@ -72,6 +73,7 @@ jobs:
           cache: gradle
 
       - name: Validate Gradle wrapper
+        shell: bash
         run: |
           set -euo pipefail
           test -x ./gradlew || chmod +x ./gradlew
@@ -82,28 +84,37 @@ jobs:
         run: |
           set -euo pipefail
 
-          ./gradlew --no-daemon --stacktrace \
-            :app:dependencyInsight \
-            --dependency media3-muxer \
-            --configuration defaultDebugCompileClasspath | tee /tmp/media3-muxer-dependency.txt
-          grep -Eq 'project :(:media3-patched:)?lib-muxer|androidx\.media3:media3-muxer.*project :(:media3-patched:)?lib-muxer' /tmp/media3-muxer-dependency.txt
+          verify_substitution() {
+            local module="$1"
+            local project="$2"
+            local output="/tmp/${module//:/-}-dependency.txt"
 
-          ./gradlew --no-daemon --stacktrace \
-            :app:dependencyInsight \
-            --dependency media3-common \
-            --configuration defaultDebugCompileClasspath | tee /tmp/media3-common-dependency.txt
-          grep -Eq 'project :(:media3-patched:)?lib-common|androidx\.media3:media3-common.*project :(:media3-patched:)?lib-common' /tmp/media3-common-dependency.txt
+            echo "=== Verifying ${module} -> ${project} ==="
+            ./gradlew --no-daemon --no-watch-fs --stacktrace \
+              :app:dependencyInsight \
+              --dependency "${module}" \
+              --configuration defaultDebugCompileClasspath >"${output}" 2>&1
 
-          ./gradlew --no-daemon --stacktrace \
-            :app:dependencyInsight \
-            --dependency media3-container \
-            --configuration defaultDebugCompileClasspath | tee /tmp/media3-container-dependency.txt
-          grep -Eq 'project :(:media3-patched:)?lib-container|androidx\.media3:media3-container.*project :(:media3-patched:)?lib-container' /tmp/media3-container-dependency.txt
+            if grep -Fq "${module}" "${output}" && grep -Fq "${module}:1.8.0 -> project ${project}" "${output}"; then
+              echo "PASS: ${module} resolves to composite ${project}"
+            else
+              echo "FAIL: ${module} was not proven to resolve to ${project}"
+              echo '--- Relevant dependency output ---'
+              grep -E "${module}|project .*lib-|not found|FAILED|FAILURE" "${output}" || true
+              echo '--- Full dependencyInsight output ---'
+              cat "${output}"
+              return 1
+            fi
+          }
 
-          echo 'Gradle composite substitutions verified.'
+          verify_substitution "androidx.media3:media3-muxer" ":media3-patched:lib-muxer"
+          verify_substitution "androidx.media3:media3-common" ":media3-patched:lib-common"
+          verify_substitution "androidx.media3:media3-container" ":media3-patched:lib-container"
+
+          echo 'All Media3 composite substitutions verified deterministically.'
 
       - name: Run default debug unit tests
-        run: ./gradlew --no-daemon --stacktrace testDefaultDebugUnitTest
+        run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest
 
       - name: Assemble default debug APK
-        run: ./gradlew --no-daemon --stacktrace assembleDefaultDebug
+        run: ./gradlew --no-daemon --no-watch-fs --stacktrace assembleDefaultDebug
