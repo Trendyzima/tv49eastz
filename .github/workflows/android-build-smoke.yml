@@ -13,7 +13,6 @@ permissions:
   contents: read
 
 env:
-  # Immutable Media3 build input. Do not replace this with a branch/tag.
   MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
   MEDIA3_PATCHED_SHA: 6d498560637d273dcb754727c9dcdce97548e621
   MEDIA3_PATCHED_PATH: /tmp/media3-patched
@@ -136,7 +135,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           command -v zipalign >/dev/null
           command -v readelf >/dev/null
 
@@ -151,22 +149,53 @@ jobs:
             unzip -q "$apk" 'lib/*/*.so' -d "$tmp"
             while IFS= read -r -d '' so; do
               echo "ELF: $so"
-              readelf -lW "$so" | awk '
-                /LOAD/ {
-                  found=1
-                  align=$NF
-                  if (align ~ /^0x/) {
-                    value=strtonum(align)
-                    if (value < 16384) {
-                      print "FAIL: PT_LOAD alignment below 16 KiB: " align
-                      bad=1
-                    }
-                  }
-                }
-                END {
-                  if (!found) { print "FAIL: no PT_LOAD segments found"; exit 2 }
-                  if (bad) exit 1
-                }'
+              if ! python3 - "$so" <<'PY'
+import struct
+import sys
+
+path = sys.argv[1]
+data = open(path, 'rb').read()
+if data[:4] != b'\x7fELF':
+    raise SystemExit(f'not an ELF file: {path}')
+
+klass = data[4]
+endian = '<' if data[5] == 1 else '>' if data[5] == 2 else None
+if endian is None:
+    raise SystemExit(f'unknown ELF endianness: {path}')
+
+if klass == 2:
+    e_phoff = struct.unpack_from(endian + 'Q', data, 32)[0]
+    e_phentsize = struct.unpack_from(endian + 'H', data, 54)[0]
+    e_phnum = struct.unpack_from(endian + 'H', data, 56)[0]
+    fmt = endian + 'IIQQQQQQ'
+    align_index = 7
+else:
+    e_phoff = struct.unpack_from(endian + 'I', data, 28)[0]
+    e_phentsize = struct.unpack_from(endian + 'H', data, 42)[0]
+    e_phnum = struct.unpack_from(endian + 'H', data, 44)[0]
+    fmt = endian + 'IIIIIIII'
+    align_index = 7
+
+load = []
+for i in range(e_phnum):
+    off = e_phoff + i * e_phentsize
+    fields = struct.unpack_from(fmt, data, off)
+    if fields[0] == 1:  # PT_LOAD
+        align = fields[align_index]
+        load.append(align)
+
+if not load:
+    raise SystemExit(f'no PT_LOAD segments: {path}')
+
+for align in load:
+    print(f'PT_LOAD alignment: 0x{align:x}')
+    if align < 0x4000:
+        raise SystemExit(f'PT_LOAD alignment below 16 KiB: 0x{align:x}: {path}')
+PY
+              then
+                echo "FAIL: native 16 KiB ELF alignment: $so"
+                exit 1
+              fi
             done < <(find "$tmp/lib" -type f -name '*.so' -print0)
             rm -rf "$tmp"
             apk_count=$((apk_count + 1))
