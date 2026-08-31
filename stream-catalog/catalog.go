@@ -118,26 +118,27 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 
 // parseExtInf parses an EXTINF record without confusing the numeric duration
 // with attributes. Attribute values may be quoted and may contain spaces or
-// commas. The first comma encountered after the complete attribute list is the
-// attribute/display-name delimiter, so commas in an unquoted display name are
-// preserved too.
+// commas. Once the duration token is consumed, attributes are parsed in order
+// and the first comma after the attribute list begins the display name. This
+// preserves every comma in an unquoted display name.
 func parseExtInf(line string) map[string]string {
 	m := map[string]string{}
 	attrs := strings.TrimSpace(strings.TrimPrefix(line, "#EXTINF:"))
-
-	// EXTINF starts with a duration token. It may be followed immediately by
-	// the display-name comma or by a whitespace-separated attribute list.
 	if attrs == "" {
 		return m
 	}
-	if i := strings.IndexAny(attrs, " \t"); i >= 0 {
-		attrs = strings.TrimSpace(attrs[i:])
-	} else {
-		if comma := strings.IndexByte(attrs, ','); comma >= 0 {
-			m["name"] = strings.TrimSpace(attrs[comma+1:])
-		}
+
+	// Consume the duration token. The delimiter can be either whitespace
+	// (attributes follow) or a comma (no attributes; display name follows).
+	delimiter := strings.IndexAny(attrs, " \t,")
+	if delimiter < 0 {
 		return m
 	}
+	if attrs[delimiter] == ',' {
+		m["name"] = strings.TrimSpace(attrs[delimiter+1:])
+		return m
+	}
+	attrs = strings.TrimLeft(attrs[delimiter:], " \t")
 
 	for len(attrs) > 0 {
 		attrs = strings.TrimLeft(attrs, " \t")
@@ -149,8 +150,6 @@ func parseExtInf(line string) map[string]string {
 			break
 		}
 
-		// Read an attribute key up to '='. Reject malformed tokens rather than
-		// silently treating the duration or a display-name fragment as a key.
 		eq := strings.IndexByte(attrs, '=')
 		if eq <= 0 {
 			break
@@ -166,8 +165,6 @@ func parseExtInf(line string) map[string]string {
 		}
 
 		if attrs[0] == '"' {
-			// Find the closing quote. EXTINF attribute values are quoted with
-			// double quotes; commas and spaces inside them are data.
 			end := -1
 			for i := 1; i < len(attrs); i++ {
 				if attrs[i] == '"' {
@@ -176,8 +173,6 @@ func parseExtInf(line string) map[string]string {
 				}
 			}
 			if end < 0 {
-				// Preserve the value for callers, but there is no reliable way to
-				// distinguish a missing quote from the rest of the record.
 				m[key] = attrs[1:]
 				break
 			}
