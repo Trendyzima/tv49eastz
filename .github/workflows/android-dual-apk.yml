@@ -78,9 +78,21 @@ jobs:
             local module="$1"
             local project="$2"
             local out="/tmp/dependency-${module//:/-}.txt"
-            ./gradlew --no-daemon --no-watch-fs --stacktrace :app:dependencyInsight \
-              --dependency "$module" --configuration defaultDebugCompileClasspath >"$out" 2>&1
-            grep -Fq "$module:1.8.0 -> project $project" "$out"
+            echo "=== dependencyInsight: ${module} ==="
+            if ! ./gradlew --no-daemon --no-watch-fs --stacktrace \
+              :app:dependencyInsight \
+              --dependency "$module" \
+              --configuration defaultDebugCompileClasspath >"$out" 2>&1; then
+              cat "$out"
+              echo "FAIL: dependencyInsight failed for ${module}"
+              exit 1
+            fi
+            cat "$out"
+            grep -Fq "project ${project}" "$out" || {
+              echo "FAIL: ${module} is not resolved to ${project}"
+              exit 1
+            }
+            echo "PASS: ${module} -> ${project}"
           }
           verify "androidx.media3:media3-muxer" ":lib-muxer"
           verify "androidx.media3:media3-common" ":lib-common"
@@ -108,7 +120,11 @@ jobs:
               apk_count=$((apk_count + 1))
             done < <(find "$root" -type f -name '*.apk' -print0)
           done
-          test "$apk_count" -ge 4
+          test "$apk_count" -ge 4 || {
+            echo "Expected at least 4 APKs, found $apk_count"
+            find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print || true
+            exit 1
+          }
           echo "Certified APK count: $apk_count"
 
       - name: Upload coordinated APK artifacts
