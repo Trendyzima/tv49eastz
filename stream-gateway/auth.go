@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"crypto/subtle"
 	"crypto/tls"
-	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -51,10 +50,6 @@ func authenticateWithRegistry(r *http.Request, apiKey string, registry *DeviceRe
 	if subtle.ConstantTimeCompare(a[:], b[:]) != 1 {
 		return Principal{}, errors.New("invalid credential")
 	}
-
-	// There is deliberately no header-only fallback. A session is a
-	// device-bound security object, so a verified TLS client certificate is
-	// mandatory at the session boundary.
 	if r.TLS == nil {
 		return Principal{}, errors.New("verified device TLS identity required")
 	}
@@ -89,10 +84,6 @@ func AuthenticateTLS(r *http.Request, state *tls.ConnectionState, apiKey string,
 }
 
 func authenticateTLSWithRegistry(r *http.Request, state *tls.ConnectionState, registry *DeviceRegistry) (Principal, error) {
-	// DeviceIdentityFromTLS is intentionally fed only a real, completed TLS
-	// connection state. PeerCertificates alone are insufficient here: accepting
-	// an arbitrary ConnectionState in this security-critical path would make
-	// certificate presence look equivalent to certificate verification.
 	if state == nil || !state.HandshakeComplete || len(state.PeerCertificates) == 0 || len(state.VerifiedChains) == 0 {
 		return Principal{}, errors.New("verified device TLS identity required")
 	}
