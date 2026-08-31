@@ -123,6 +123,12 @@ func parseExtInf(line string) map[string]string {
 	m := map[string]string{}
 	attrs := strings.TrimPrefix(line, "#EXTINF:")
 
+	// The first token is the EXTINF duration (normally -1). Attribute parsing
+	// starts after that token, while the display-name comma is handled below.
+	if i := strings.IndexByte(attrs, ' '); i >= 0 {
+		attrs = strings.TrimSpace(attrs[i:])
+	}
+
 	comma := -1
 	quoted := false
 	for i := 0; i < len(attrs); i++ {
