@@ -1,4 +1,4 @@
-name: Android Build Smoke Test
+name: Android Build Certification
 
 on:
   push:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: android-build-smoke-${{ github.ref }}
+  group: android-build-certification-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -21,10 +21,9 @@ env:
 jobs:
   android-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - name: Checkout
-        # actions/checkout v6.0.2
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
         with:
           persist-credentials: false
@@ -33,13 +32,11 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
           rm -rf "${MEDIA3_PATCHED_PATH}"
           git init "${MEDIA3_PATCHED_PATH}"
           git -C "${MEDIA3_PATCHED_PATH}" remote add origin "${MEDIA3_PATCHED_REPO}"
           git -C "${MEDIA3_PATCHED_PATH}" fetch --depth 1 origin "${MEDIA3_PATCHED_SHA}"
           git -C "${MEDIA3_PATCHED_PATH}" checkout --detach FETCH_HEAD
-
           actual_sha="$(git -C "${MEDIA3_PATCHED_PATH}" rev-parse HEAD)"
           test "${actual_sha}" = "${MEDIA3_PATCHED_SHA}"
           echo "Pinned Media3 commit: ${actual_sha}"
@@ -48,24 +45,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-
-          test -d "${MEDIA3_PATCHED_PATH}"
           test -f "${MEDIA3_PATCHED_PATH}/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/common"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/container"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/muxer"
           test -f "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-
           grep -Fq "include modulePrefix + 'lib-common'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
           grep -Fq "include modulePrefix + 'lib-container'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
           grep -Fq "include modulePrefix + 'lib-muxer'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-
           echo 'Patched Media3 invariant satisfied.'
-          echo 'ProcessedSegment.java present.'
-          echo 'common/container/muxer modules present.'
 
       - name: Set up Java 17
-        # actions/setup-java v5.6.0
         uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
         with:
           java-version: 17
@@ -76,45 +66,150 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -x ./gradlew || chmod +x ./gradlew
+          test -f ./gradlew
+          chmod +x ./gradlew
           ./gradlew --version
+
+      - name: Discover Android variants
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/android-tasks.txt
+          for task in \
+            testDefaultDebugUnitTest \
+            assembleDefaultDebug \
+            assembleDefaultRelease \
+            assembleNotesProRelease \
+            assembleCalcProRelease \
+            assembleWeatherProRelease \
+            assembleDefaultProPlusRelease \
+            bundleDefaultRelease \
+            bundleDefaultProPlusRelease; do
+            grep -Fq "$task" /tmp/android-tasks.txt || {
+              echo "Required Android task not exposed: $task"
+              grep -E 'test.*UnitTest|assemble.*(Debug|Release)|bundle.*Release' /tmp/android-tasks.txt || true
+              exit 1
+            }
+          done
+          echo 'Required Android certification task set is present.'
 
       - name: Verify Gradle composite substitutions
         shell: bash
         run: |
           set -euo pipefail
-
           verify_substitution() {
             local module="$1"
             local project="$2"
             local output="/tmp/${module//:/-}-dependency.txt"
-
-            echo "=== Verifying ${module} -> ${project} ==="
             ./gradlew --no-daemon --no-watch-fs --stacktrace \
               :app:dependencyInsight \
               --dependency "${module}" \
               --configuration defaultDebugCompileClasspath >"${output}" 2>&1
-
-            if grep -Fq "${module}" "${output}" && grep -Fq "${module}:1.8.0 -> project ${project}" "${output}"; then
-              echo "PASS: ${module} resolves to composite ${project}"
-            else
-              echo "FAIL: ${module} was not proven to resolve to ${project}"
-              echo '--- Relevant dependency output ---'
-              grep -E "${module}|project .*lib-|not found|FAILED|FAILURE" "${output}" || true
-              echo '--- Full dependencyInsight output ---'
-              cat "${output}"
-              return 1
-            fi
+            grep -Fq "${module}" "${output}"
+            grep -Fq "${module}:1.8.0 -> project ${project}" "${output}"
+            echo "PASS: ${module} -> ${project}"
           }
-
           verify_substitution "androidx.media3:media3-muxer" ":media3-patched:lib-muxer"
           verify_substitution "androidx.media3:media3-common" ":media3-patched:lib-common"
           verify_substitution "androidx.media3:media3-container" ":media3-patched:lib-container"
 
-          echo 'All Media3 composite substitutions verified deterministically.'
-
       - name: Run default debug unit tests
         run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest
 
-      - name: Assemble default debug APK
-        run: ./gradlew --no-daemon --no-watch-fs --stacktrace assembleDefaultDebug
+      - name: Assemble Android APK variants
+        run: |
+          ./gradlew --no-daemon --no-watch-fs --stacktrace \
+            assembleDefaultDebug \
+            assembleDefaultRelease \
+            assembleNotesProRelease \
+            assembleCalcProRelease \
+            assembleWeatherProRelease \
+            assembleDefaultProPlusRelease
+
+      - name: Assemble Android bundles
+        run: |
+          ./gradlew --no-daemon --no-watch-fs --stacktrace \
+            bundleDefaultRelease \
+            bundleDefaultProPlusRelease
+
+      - name: Verify Android artifacts and native alignment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          command -v zipalign >/dev/null
+          command -v readelf >/dev/null
+
+          apk_count=0
+          bundle_count=0
+          while IFS= read -r -d '' apk; do
+            test -s "$apk"
+            echo "APK: $apk"
+            zipalign -c -P 16 -v 4 "$apk"
+
+            tmp="$(mktemp -d)"
+            unzip -q "$apk" 'lib/*/*.so' -d "$tmp"
+            while IFS= read -r -d '' so; do
+              echo "ELF: $so"
+              readelf -lW "$so" | awk '
+                /LOAD/ {
+                  found=1
+                  align=$NF
+                  if (align ~ /^0x/) {
+                    value=strtonum(align)
+                    if (value < 16384) {
+                      print "FAIL: PT_LOAD alignment below 16 KiB: " align
+                      bad=1
+                    }
+                  }
+                }
+                END {
+                  if (!found) { print "FAIL: no PT_LOAD segments found"; exit 2 }
+                  if (bad) exit 1
+                }'
+            done < <(find "$tmp/lib" -type f -name '*.so' -print0)
+            rm -rf "$tmp"
+            apk_count=$((apk_count + 1))
+          done < <(find app/build/outputs/apk -type f -name '*.apk' -print0)
+
+          while IFS= read -r -d '' aab; do
+            test -s "$aab"
+            echo "AAB: $aab"
+            bundle_count=$((bundle_count + 1))
+          done < <(find app/build/outputs/bundle -type f -name '*.aab' -print0)
+
+          test "$apk_count" -ge 6
+          test "$bundle_count" -ge 2
+          echo "Certified artifact counts: ${apk_count} APK(s), ${bundle_count} AAB(s)."
+
+      - name: Generate artifact manifest
+        shell: bash
+        run: |
+          set -euo pipefail
+          manifest="app-build-manifest.txt"
+          {
+            echo "Commit: $GITHUB_SHA"
+            echo "Media3 commit: ${MEDIA3_PATCHED_SHA}"
+            echo "Java: $(java -version 2>&1 | head -n 1)"
+            echo "Gradle: $(./gradlew --version | grep '^Gradle ' | head -n 1)"
+            echo
+            echo 'Artifacts:'
+            find app/build/outputs/apk app/build/outputs/bundle \
+              -type f \( -name '*.apk' -o -name '*.aab' \) \
+              -printf '%p %s bytes\n' | sort
+          } > "$manifest"
+          cat "$manifest"
+          echo '## Android certification' >> "$GITHUB_STEP_SUMMARY"
+          echo 'All required variants assembled and artifact checks completed.' >> "$GITHUB_STEP_SUMMARY"
+          cat "$manifest" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload certified Android artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-certified-${{ github.sha }}
+          path: |
+            app/build/outputs/apk/**/*.apk
+            app/build/outputs/bundle/**/*.aab
+            app-build-manifest.txt
+          if-no-files-found: error
+          retention-days: 7
