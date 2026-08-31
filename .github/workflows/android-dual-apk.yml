@@ -88,15 +88,20 @@ jobs:
               exit 1
             fi
             cat "$out"
-            grep -Fq "project ${project}" "$out" || {
-              echo "FAIL: ${module} is not resolved to ${project}"
+            # Composite-build substitutions are reported with the composite
+            # build's project path (for example :media3-patched:lib-muxer),
+            # not merely the nested project name (:lib-muxer).
+            grep -Fqx "${project}" <(grep -E '^project :media3-patched:lib-' "$out") || {
+              echo "FAIL: ${module} is not resolved to expected composite project ${project}"
+              echo "--- resolved composite projects ---"
+              grep -E '^project :media3-patched:lib-' "$out" || true
               exit 1
             }
             echo "PASS: ${module} -> ${project}"
           }
-          verify "androidx.media3:media3-muxer" ":lib-muxer"
-          verify "androidx.media3:media3-common" ":lib-common"
-          verify "androidx.media3:media3-container" ":lib-container"
+          verify "androidx.media3:media3-muxer" ":media3-patched:lib-muxer"
+          verify "androidx.media3:media3-common" ":media3-patched:lib-common"
+          verify "androidx.media3:media3-container" ":media3-patched:lib-container"
 
       - name: Android unit tests
         run: ./gradlew :app:test :tv-receiver:test --no-daemon --stacktrace
