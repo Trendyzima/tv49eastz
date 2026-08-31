@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -66,6 +67,21 @@ func (r *DeviceRegistry) Register(d DeviceRecord) error {
 	return nil
 }
 
+func validateRemoteRegistryURL(raw string) (*url.URL, error) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, errors.New("invalid device registry URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" {
+		return nil, errors.New("invalid device registry URL")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return nil, errors.New("invalid device registry URL")
+	}
+	u.Path = ""
+	return u, nil
+}
+
 func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
 	deviceID = normalizeDeviceID(deviceID)
 	if deviceID == "" {
@@ -73,10 +89,12 @@ func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
 	}
 
 	if r.remoteURL != "" {
-		u, err := url.Parse(r.remoteURL + "/registry/authorize")
+		base, err := validateRemoteRegistryURL(r.remoteURL)
 		if err != nil {
 			return DeviceRecord{}, false
 		}
+		u := *base
+		u.Path = "/registry/authorize"
 		q := u.Query()
 		q.Set("device_id", deviceID)
 		u.RawQuery = q.Encode()
@@ -89,7 +107,16 @@ func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
 		if resp.StatusCode != http.StatusOK {
 			return DeviceRecord{}, false
 		}
+		contentType := strings.ToLower(resp.Header.Get("Content-Type"))
+		if !strings.HasPrefix(contentType, "application/json") {
+			return DeviceRecord{}, false
+		}
 
+		const maxRegistryResponse = 64 << 10
+		body, err := io.ReadAll(io.LimitReader(resp.Body, maxRegistryResponse+1))
+		if err != nil || len(body) > maxRegistryResponse {
+			return DeviceRecord{}, false
+		}
 		var v struct {
 			DeviceID    string          `json:"device_id"`
 			PrincipalID string          `json:"principal_id"`
@@ -97,7 +124,7 @@ func (r *DeviceRegistry) Lookup(deviceID string) (DeviceRecord, bool) {
 			Enabled     bool            `json:"enabled"`
 			Revoked     bool            `json:"revoked"`
 		}
-		if err := json.NewDecoder(resp.Body).Decode(&v); err != nil {
+		if err := json.Unmarshal(body, &v); err != nil {
 			return DeviceRecord{}, false
 		}
 		if v.Revoked || !v.Enabled || v.DeviceID != deviceID || v.PrincipalID == "" {
