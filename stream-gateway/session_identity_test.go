@@ -91,3 +91,54 @@ func TestAuthenticateRejectsForgedDeviceHeader(t *testing.T) {
 		t.Fatal("forged device header was accepted")
 	}
 }
+
+func TestSessionAuthorizationRequiresCertificateIdentity(t *testing.T) {
+	cert := newIdentityTestCert(t, "device-a")
+	fp := certificateFingerprint(cert)
+	registry := NewDeviceRegistry()
+	if err := registry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "principal-a",
+		Fingerprint: fp,
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := AuthorizationPolicy{Registry: registry}
+	principal := Principal{UserID: "principal-a", DeviceID: "device-a", Fingerprint: fp}
+
+	if err := policy.AuthorizeStream(principal, "camera", "s1"); err != nil {
+		t.Fatalf("certificate-bound session authorization failed: %v", err)
+	}
+
+	withoutFingerprint := principal
+	withoutFingerprint.Fingerprint = ""
+	if err := policy.AuthorizeStream(withoutFingerprint, "camera", "s1"); err == nil {
+		t.Fatal("session authorization accepted a principal without certificate identity")
+	}
+}
+
+func TestSessionAuthorizationCannotSwapCertificateIdentity(t *testing.T) {
+	certA := newIdentityTestCert(t, "device-a")
+	certB := newIdentityTestCert(t, "device-b")
+	fpA := certificateFingerprint(certA)
+	fpB := certificateFingerprint(certB)
+	registry := NewDeviceRegistry()
+	if err := registry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "principal-a",
+		Fingerprint: fpA,
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	policy := AuthorizationPolicy{Registry: registry}
+	principal := Principal{UserID: "principal-a", DeviceID: "device-a", Fingerprint: fpB}
+	if err := policy.AuthorizeStream(principal, "camera", "s1"); err == nil {
+		t.Fatal("session authorization accepted a certificate fingerprint not bound to the device")
+	}
+}
