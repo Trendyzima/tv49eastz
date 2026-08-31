@@ -1,8 +1,11 @@
 package main
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"testing"
 )
@@ -26,6 +29,80 @@ func TestDeviceRegistryPersistenceRoundTripAndPermissions(t *testing.T) {
 	if !ok || d.Fingerprint != "fp-a" { t.Fatalf("round trip failed: %#v %v", d, ok) }
 }
 
+func TestDeviceRegistryPersistenceProtocolIsOrderedAndAtomic(t *testing.T) {
+	r := NewDeviceRegistry()
+	r.persistencePath = filepath.Join(t.TempDir(), "registry.json")
+
+	var calls []string
+	var persisted []byte
+	tmp := &recordingRegistryTempFile{name: filepath.Join(filepath.Dir(r.persistencePath), ".device-registry-test.tmp"), calls: &calls}
+	r.persistenceOps = registryPersistenceOps{
+		createTemp: func(string, string) (registryTempFile, error) { calls = append(calls, "create-temp"); return tmp, nil },
+		removeTemp: func(string) error { calls = append(calls, "remove-temp"); return nil },
+		rename: func(oldPath, newPath string) error {
+			calls = append(calls, "rename")
+			if oldPath != tmp.name || newPath != r.persistencePath { t.Fatalf("rename paths: %q -> %q", oldPath, newPath) }
+			persisted = append([]byte(nil), tmp.body...)
+			return nil
+		},
+		syncDirectory: func(string) error { calls = append(calls, "sync-parent") ; return nil },
+	}
+
+	if err := r.Register(testDevice("device-a", "fp-a")); err != nil { t.Fatal(err) }
+	want := []string{"create-temp", "chmod", "write", "sync-temp", "close", "rename", "sync-parent", "remove-temp"}
+	if !reflect.DeepEqual(calls, want) { t.Fatalf("persistence order=%v, want %v", calls, want) }
+	if tmp.mode != 0o600 { t.Fatalf("temp permissions=%o, want 600", tmp.mode) }
+	if len(persisted) == 0 { t.Fatal("rename published an empty registry") }
+	if _, ok := r.Lookup("device-a"); !ok { t.Fatal("successful durable commit did not publish state") }
+}
+
+func TestDeviceRegistryPersistenceFailureBeforeRenameDoesNotPublish(t *testing.T) {
+	r := NewDeviceRegistry()
+	r.persistencePath = filepath.Join(t.TempDir(), "registry.json")
+	var calls []string
+	tmp := &recordingRegistryTempFile{name: filepath.Join(filepath.Dir(r.persistencePath), ".device-registry-test.tmp"), calls: &calls}
+	r.persistenceOps = registryPersistenceOps{
+		createTemp: func(string, string) (registryTempFile, error) { calls = append(calls, "create-temp"); return tmp, nil },
+		removeTemp: func(string) error { calls = append(calls, "remove-temp"); return nil },
+		rename: func(string, string) error { calls = append(calls, "rename"); return errors.New("rename failed") },
+		syncDirectory: func(string) error { calls = append(calls, "sync-parent"); return nil },
+	}
+
+	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected rename failure") }
+	if _, ok := r.Lookup("device-a"); ok { t.Fatal("failed persistence published in-memory state") }
+	if reflect.DeepEqual(calls, []string{"create-temp", "chmod", "write", "sync-temp", "close", "rename", "remove-temp"}) == false { t.Fatalf("unexpected calls=%v", calls) }
+}
+
+func TestDeviceRegistryPersistenceParentSyncFailureDoesNotPublish(t *testing.T) {
+	r := NewDeviceRegistry()
+	r.persistencePath = filepath.Join(t.TempDir(), "registry.json")
+	var calls []string
+	tmp := &recordingRegistryTempFile{name: filepath.Join(filepath.Dir(r.persistencePath), ".device-registry-test.tmp"), calls: &calls}
+	r.persistenceOps = registryPersistenceOps{
+		createTemp: func(string, string) (registryTempFile, error) { calls = append(calls, "create-temp"); return tmp, nil },
+		removeTemp: func(string) error { calls = append(calls, "remove-temp"); return nil },
+		rename: func(string, string) error { calls = append(calls, "rename"); return nil },
+		syncDirectory: func(string) error { calls = append(calls, "sync-parent"); return errors.New("parent sync failed") },
+	}
+
+	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected parent sync failure") }
+	if _, ok := r.Lookup("device-a"); ok { t.Fatal("parent-sync failure published in-memory state") }
+	if reflect.DeepEqual(calls, []string{"create-temp", "chmod", "write", "sync-temp", "close", "rename", "sync-parent", "remove-temp"}) == false { t.Fatalf("unexpected calls=%v", calls) }
+}
+
+type recordingRegistryTempFile struct {
+	name  string
+	mode  fs.FileMode
+	body  []byte
+	calls *[]string
+}
+
+func (f *recordingRegistryTempFile) Name() string { return f.name }
+func (f *recordingRegistryTempFile) Chmod(mode fs.FileMode) error { f.mode = mode; *f.calls = append(*f.calls, "chmod"); return nil }
+func (f *recordingRegistryTempFile) Write(p []byte) (int, error) { *f.calls = append(*f.calls, "write"); f.body = append(f.body[:0], p...); return len(p), nil }
+func (f *recordingRegistryTempFile) Sync() error { *f.calls = append(*f.calls, "sync-temp"); return nil }
+func (f *recordingRegistryTempFile) Close() error { *f.calls = append(*f.calls, "close"); return nil }
+
 func TestDeviceRegistryReplacementIsReplacementNotAppend(t *testing.T) {
 	r := NewDeviceRegistry()
 	d := testDevice("device-a", "fp-a")
@@ -42,14 +119,8 @@ func TestDeviceRegistryPersistenceFailureDoesNotPublish(t *testing.T) {
 	path := filepath.Join(dir, "registry.json")
 	r := NewDeviceRegistry()
 	if err := r.SetPersistencePath(path); err != nil { t.Fatal(err) }
-
-	// Configure the path while it is absent, then turn the target itself into
-	// a directory. Persistence can create its temporary file beside the target,
-	// but the final atomic rename must fail when replacing this directory. The
-	// test never changes the TempDir tree structure, so cleanup remains safe.
 	if err := os.Mkdir(path, 0o700); err != nil { t.Fatal(err) }
 	if info, err := os.Stat(path); err != nil || !info.IsDir() { t.Fatalf("failed to create rename blocker: %v", err) }
-
 	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected persistence failure") }
 	if _, ok := r.Lookup("device-a"); ok { t.Fatal("failed persistence published in-memory state") }
 }
