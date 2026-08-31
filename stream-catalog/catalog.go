@@ -91,9 +91,15 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 		}
 		name := meta["name"]
 		if name == "" {
+			name = meta["tvg-name"]
+		}
+		if name == "" {
 			name = stream
 		}
-		id := meta["id"]
+		id := meta["tvg-id"]
+		if id == "" {
+			id = meta["id"]
+		}
 		if id == "" {
 			id = slug(name + "|" + stream)
 		}
@@ -110,45 +116,64 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 	return Catalog{Channels: out, Updated: time.Now().UTC()}, nil
 }
 
+// parseExtInf parses EXTINF attributes while treating commas inside quoted
+// attribute values as data. The final comma, outside quotes, separates the
+// display name from the attribute section.
 func parseExtInf(line string) map[string]string {
 	m := map[string]string{}
-	comma := strings.LastIndex(line, ",")
 	attrs := strings.TrimPrefix(line, "#EXTINF:")
-	if comma >= 0 {
-		m["name"] = strings.TrimSpace(line[comma+1:])
-		if attrComma := strings.LastIndex(attrs, ","); attrComma >= 0 {
-			attrs = strings.TrimSpace(attrs[:attrComma])
+
+	comma := -1
+	quoted := false
+	for i := 0; i < len(attrs); i++ {
+		switch attrs[i] {
+		case '"':
+			quoted = !quoted
+		case ',':
+			if !quoted {
+				comma = i
+			}
 		}
 	}
-	if i := strings.IndexByte(attrs, ' '); i >= 0 {
-		attrs = strings.TrimSpace(attrs[i:])
-	} else {
-		return m
+	if comma >= 0 {
+		m["name"] = strings.TrimSpace(attrs[comma+1:])
+		attrs = strings.TrimSpace(attrs[:comma])
 	}
+
 	for len(attrs) > 0 {
+		attrs = strings.TrimSpace(attrs)
+		if attrs == "" {
+			break
+		}
+		space := strings.IndexByte(attrs, ' ')
 		eq := strings.IndexByte(attrs, '=')
-		if eq < 1 {
+		if eq < 1 || (space >= 0 && space < eq) {
 			break
 		}
 		key := strings.TrimSpace(attrs[:eq])
 		attrs = strings.TrimSpace(attrs[eq+1:])
-		if !strings.HasPrefix(attrs, "\"") {
-			j := strings.IndexByte(attrs, ' ')
-			if j < 0 {
+		if attrs == "" {
+			m[key] = ""
+			break
+		}
+		if attrs[0] == '"' {
+			attrs = attrs[1:]
+			end := strings.IndexByte(attrs, '"')
+			if end < 0 {
 				m[key] = attrs
 				break
 			}
-			m[key] = attrs[:j]
-			attrs = strings.TrimSpace(attrs[j:])
+			m[key] = attrs[:end]
+			attrs = attrs[end+1:]
 			continue
 		}
-		attrs = attrs[1:]
-		j := strings.IndexByte(attrs, '"')
-		if j < 0 {
+		end := strings.IndexByte(attrs, ' ')
+		if end < 0 {
+			m[key] = attrs
 			break
 		}
-		m[key] = attrs[:j]
-		attrs = strings.TrimSpace(attrs[j+1:])
+		m[key] = attrs[:end]
+		attrs = attrs[end:]
 	}
 	return m
 }
