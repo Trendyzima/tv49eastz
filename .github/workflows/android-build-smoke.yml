@@ -115,19 +115,35 @@ jobs:
         run: |
           set -euo pipefail
           sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$sdk" && test -d "$sdk"
+          test -n "$sdk" && test -d "$sdk" || { echo "ERROR: Android SDK root is unavailable"; exit 1; }
+          build_tools="$sdk/build-tools"
+          test -d "$build_tools" || { echo "ERROR: Android SDK build-tools directory is unavailable: $build_tools"; exit 1; }
+
+          # Do not assign through a while-loop fed by process substitution: that
+          # loop executes in a subshell in bash and the selected path is lost.
+          mapfile -t zipalign_candidates < <(
+            find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null \
+              | sort -t/ -k1,1 -k2,2V -r
+          )
+
           zipalign=""
-          while IFS= read -r candidate; do
-            if [[ -x "$candidate" ]]; then zipalign="$candidate"; break; fi
-          done < <(find "$sdk/build-tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 2>/dev/null | sort -V -r)
+          for candidate in "${zipalign_candidates[@]}"; do
+            if [[ -x "$candidate" ]]; then
+              zipalign="$candidate"
+              break
+            fi
+          done
+
           if [[ -z "$zipalign" ]]; then
-            echo "ERROR: no executable zipalign found under $sdk/build-tools"
-            find "$sdk/build-tools" -type f -name zipalign -print 2>/dev/null || true
+            echo "ERROR: no executable zipalign found under $build_tools"
+            find "$build_tools" -type f -name zipalign -print 2>/dev/null || true
+            ls -la "$build_tools" 2>/dev/null || true
             exit 1
           fi
-          echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
+
           echo "Using zipalign: $zipalign"
-          "$zipalign" -h >/dev/null
+          "$zipalign" version
+          echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
 
       - name: Verify APK artifacts
         shell: bash
@@ -135,7 +151,9 @@ jobs:
           ZIPALIGN: ${{ steps.android-tools.outputs.zipalign }}
         run: |
           set -euo pipefail
+          test -n "$ZIPALIGN"
           test -x "$ZIPALIGN"
+          "$ZIPALIGN" version
           apk_count=0
           while IFS= read -r -d '' apk; do
             test -s "$apk"
