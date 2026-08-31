@@ -25,7 +25,6 @@ var hlsURI = regexp.MustCompile(`URI="([^"]+)"`)
 // Catalog URLs are untrusted input even though they originate from an external M3U.
 func relayClient(timeout time.Duration) *http.Client {
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
 		DialContext: func(ctx context.Context, network, address string) (net.Conn, error) {
 			host, port, err := net.SplitHostPort(address)
 			if err != nil {
@@ -49,7 +48,7 @@ func relayClient(timeout time.Duration) *http.Client {
 		},
 	}
 	return &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
 		Transport: transport,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			if len(via) >= maxRedirects || req.URL.Scheme != "https" {
@@ -67,7 +66,6 @@ func isPublicIP(ip net.IP) bool {
 	if ip4 := ip.To4(); ip4 != nil {
 		return !(ip4[0] == 10 || ip4[0] == 127 || (ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) || (ip4[0] == 192 && ip4[1] == 168) || (ip4[0] == 169 && ip4[1] == 254))
 	}
-	// RFC4193 ULA and IPv6 loopback/link-local are not public relay targets.
 	return !(ip[0]&0xfe == 0xfc || ip.Equal(net.IPv6loopback))
 }
 
@@ -122,8 +120,6 @@ func (s *server) relayAsset(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "relay asset must be HTTPS", http.StatusBadRequest)
 		return
 	}
-	// A playlist may legitimately move media to a CDN hostname. The destination
-	// still passes the public-IP dial guard in relayClient, preventing local-target SSRF.
 	s.serveUpstream(w, r, ch, resolved.String(), false)
 }
 
@@ -202,10 +198,6 @@ func rewriteHLS(playlist string, base *url.URL, channelID string) string {
 	return strings.Join(lines, "\n")
 }
 
-type relayHeaderCopier interface {
-	Header() http.Header
-}
-
 func copyRelayHeaders(w http.ResponseWriter, resp *http.Response) {
 	for _, key := range []string{"Content-Type", "Content-Length", "Content-Range", "Accept-Ranges", "ETag", "Last-Modified"} {
 		if value := resp.Header.Get(key); value != "" {
@@ -214,6 +206,3 @@ func copyRelayHeaders(w http.ResponseWriter, resp *http.Response) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 }
-
-// Keep time imported in this file for callers that construct a server timeout in tests.
-var _ = time.Second
