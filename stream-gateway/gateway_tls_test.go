@@ -9,6 +9,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/pem"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -35,9 +36,7 @@ func TestLoadGatewayServerTLSConfigEnforcesMutualTLS(t *testing.T) {
 	clientKeyPath := writePEMFile(t, dir+"/client-key.pem", "EC PRIVATE KEY", clientKey)
 
 	cfg, err := LoadGatewayServerTLSConfig(serverCertPath, serverKeyPath, caPath)
-	if err != nil {
-		t.Fatalf("LoadGatewayServerTLSConfig: %v", err)
-	}
+	if err != nil { t.Fatalf("LoadGatewayServerTLSConfig: %v", err) }
 	if cfg.MinVersion != tls.VersionTLS13 { t.Fatalf("MinVersion = %d, want TLS 1.3", cfg.MinVersion) }
 	if cfg.ClientAuth != tls.RequireAndVerifyClientCert { t.Fatalf("ClientAuth = %v, want RequireAndVerifyClientCert", cfg.ClientAuth) }
 	if cfg.ClientCAs == nil { t.Fatal("ClientCAs is nil") }
@@ -68,7 +67,11 @@ func makeTLSFixtureCertificate(t *testing.T, commonName string, isCA bool, paren
 	if err != nil { t.Fatal(err) }
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
 	if err != nil { t.Fatal(err) }
-	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: commonName}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: isCA}
+	keyUsage := x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment
+	if isCA { keyUsage = x509.KeyUsageCertSign | x509.KeyUsageCRLSign }
+	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: commonName}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: keyUsage, BasicConstraintsValid: true, IsCA: isCA}
+	if isCA { tmpl.MaxPathLen = 1 } else { tmpl.ExtKeyUsage = []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth} }
+	if commonName == "gateway-server" { tmpl.IPAddresses = []net.IP{net.ParseIP("127.0.0.1")} }
 	var parent *x509.Certificate
 	signerKey := key
 	if len(parentDER) > 0 {
@@ -88,10 +91,7 @@ func makeTLSFixtureCertificate(t *testing.T, commonName string, isCA bool, paren
 
 func writePEMFile(t *testing.T, path, typ string, der []byte) string {
 	t.Helper()
-	if typ == "EC PRIVATE KEY" {
-		if err := os.WriteFile(path, der, 0600); err != nil { t.Fatal(err) }
-		return path
-	}
+	if typ == "EC PRIVATE KEY" { if err := os.WriteFile(path, der, 0600); err != nil { t.Fatal(err) }; return path }
 	if err := os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: typ, Bytes: der}), 0600); err != nil { t.Fatal(err) }
 	return path
 }
