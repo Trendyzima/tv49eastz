@@ -45,9 +45,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          shopt -s nullglob
-          fad=(app/build/outputs/apk/**/*.apk)
-          tv=(tv-receiver/build/outputs/apk/**/*.apk)
+          mapfile -t fad < <(find app/build/outputs/apk -type f -name '*.apk' -print)
+          mapfile -t tv < <(find tv-receiver/build/outputs/apk -type f -name '*.apk' -print)
           if ((${#fad[@]} == 0)); then echo 'No FadCam APK produced'; exit 1; fi
           if ((${#tv[@]} == 0)); then echo 'No TV receiver APK produced'; exit 1; fi
           printf '%s\n' "${fad[@]}" "${tv[@]}"
