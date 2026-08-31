@@ -94,11 +94,15 @@ func authenticateTLSWithRegistry(r *http.Request, state *tls.ConnectionState, re
 	if headerID := normalizeDeviceID(r.Header.Get("X-Device-ID")); headerID != "" && headerID != d.DeviceID {
 		return Principal{}, errors.New("device identity header does not match certificate")
 	}
-	return Principal{UserID: d.PrincipalID, DeviceID: d.DeviceID, Fingerprint: normalizeFingerprint(d.Fingerprint)}, nil
+	fingerprint := normalizeFingerprint(d.Fingerprint)
+	if fingerprint == "" {
+		return Principal{}, errors.New("certificate fingerprint unavailable")
+	}
+	return Principal{UserID: d.PrincipalID, DeviceID: d.DeviceID, Fingerprint: fingerprint}, nil
 }
 
 func newSession(principal Principal, channelID, streamID string, ttl time.Duration) (Session, error) {
-	if principal.UserID == "" || principal.DeviceID == "" || channelID == "" || streamID == "" {
+	if principal.UserID == "" || principal.DeviceID == "" || principal.Fingerprint == "" || channelID == "" || streamID == "" {
 		return Session{}, errors.New("invalid session binding")
 	}
 	if ttl <= 0 {
@@ -109,7 +113,7 @@ func newSession(principal Principal, channelID, streamID string, ttl time.Durati
 		return Session{}, err
 	}
 	now := time.Now().UTC()
-	return Session{ID: base64.RawURLEncoding.EncodeToString(id), UserID: principal.UserID, DeviceID: principal.DeviceID, ChannelID: channelID, StreamID: streamID, IssuedAt: now, Expires: now.Add(ttl)}, nil
+	return Session{ID: base64.RawURLEncoding.EncodeToString(id), UserID: principal.UserID, DeviceID: principal.DeviceID, Fingerprint: normalizeFingerprint(principal.Fingerprint), ChannelID: channelID, StreamID: streamID, IssuedAt: now, Expires: now.Add(ttl)}, nil
 }
 
 func sessionValid(s Session, now time.Time) bool {
