@@ -5,7 +5,7 @@
         android:allowBackup="false"
         android:label="TV 49 East"
         android:supportsRtl="true"
-        android:theme="@style/Theme.FadCamTV"
+        android:theme="@style/Theme.TV49East"
         android:banner="@drawable/tv49east_banner">
         <activity
             android:name=".MainActivity"
