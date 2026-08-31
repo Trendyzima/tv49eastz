@@ -61,6 +61,10 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/app-tasks.txt
+          # Pro+ is a build type, not a release build type. With the default
+          # flavor, AGP exposes the aggregate build-type task assembleProPlus.
+          # Do not manufacture an assembleDefaultProPlusRelease task: it does
+          # not exist in this project's variant/task model.
           for task in \
             testDefaultDebugUnitTest \
             assembleDefaultDebug \
@@ -68,9 +72,11 @@ jobs:
             assembleNotesProRelease \
             assembleCalcProRelease \
             assembleWeatherProRelease \
-            assembleDefaultProPlusRelease; do
+            assembleProPlus; do
             grep -Fq "$task" /tmp/app-tasks.txt || {
               echo "Required Android task not exposed: $task"
+              echo "--- matching Pro/assemble tasks ---"
+              grep -E '(^|:)assemble.*(Pro|Release|Debug)' /tmp/app-tasks.txt | head -n 120 || true
               exit 1
             }
           done
@@ -121,7 +127,7 @@ jobs:
             assembleNotesProRelease \
             assembleCalcProRelease \
             assembleWeatherProRelease \
-            assembleDefaultProPlusRelease
+            assembleProPlus
 
       - name: Assemble TV receiver APK variants
         run: ./gradlew --no-daemon --no-watch-fs --stacktrace \
