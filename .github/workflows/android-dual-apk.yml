@@ -15,12 +15,37 @@ concurrency:
   group: android-dual-apk-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
+  MEDIA3_PATCHED_SHA: 6d498560637d273dcb754727c9dcdce97548e621
+  MEDIA3_PATCHED_PATH: /tmp/media3-patched
+
 jobs:
   certify:
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Fetch pinned patched Media3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "${MEDIA3_PATCHED_PATH}"
+          git init "${MEDIA3_PATCHED_PATH}"
+          git -C "${MEDIA3_PATCHED_PATH}" remote add origin "${MEDIA3_PATCHED_REPO}"
+          git -C "${MEDIA3_PATCHED_PATH}" fetch --depth 1 origin "${MEDIA3_PATCHED_SHA}"
+          git -C "${MEDIA3_PATCHED_PATH}" checkout --detach FETCH_HEAD
+          actual_sha="$(git -C "${MEDIA3_PATCHED_PATH}" rev-parse HEAD)"
+          test "${actual_sha}" = "${MEDIA3_PATCHED_SHA}"
+          test -f "${MEDIA3_PATCHED_PATH}/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
+          test -d "${MEDIA3_PATCHED_PATH}/libraries/common"
+          test -d "${MEDIA3_PATCHED_PATH}/libraries/container"
+          test -d "${MEDIA3_PATCHED_PATH}/libraries/muxer"
+          echo "Pinned Media3 commit: ${actual_sha}"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -32,6 +57,35 @@ jobs:
       - name: Make Gradle executable
         run: chmod +x ./gradlew
 
+      - name: Verify Android task graph
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/app-tasks.txt
+          ./gradlew --no-daemon --no-watch-fs :tv-receiver:tasks --all > /tmp/tv-tasks.txt
+          for task in testDefaultDebugUnitTest assembleDefaultDebug assembleDefaultRelease; do
+            grep -Fq "$task" /tmp/app-tasks.txt || { echo "Missing app task: $task"; exit 1; }
+          done
+          for task in testDebugUnitTest assembleDebug assembleRelease; do
+            grep -Fq "$task" /tmp/tv-tasks.txt || { echo "Missing TV task: $task"; exit 1; }
+          done
+
+      - name: Verify patched Media3 substitutions
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify() {
+            local module="$1"
+            local project="$2"
+            local out="/tmp/dependency-${module//:/-}.txt"
+            ./gradlew --no-daemon --no-watch-fs --stacktrace :app:dependencyInsight \
+              --dependency "$module" --configuration defaultDebugCompileClasspath >"$out" 2>&1
+            grep -Fq "$module:1.8.0 -> project $project" "$out"
+          }
+          verify "androidx.media3:media3-muxer" ":lib-muxer"
+          verify "androidx.media3:media3-common" ":lib-common"
+          verify "androidx.media3:media3-container" ":lib-container"
+
       - name: Android unit tests
         run: ./gradlew :app:test :tv-receiver:test --no-daemon --stacktrace
 
@@ -41,21 +95,28 @@ jobs:
       - name: Build TV receiver APKs
         run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --stacktrace
 
-      - name: Verify APK outputs
+      - name: Verify APK outputs and alignment
         shell: bash
         run: |
           set -euo pipefail
-          mapfile -t fad < <(find app/build/outputs/apk -type f -name '*.apk' -print)
-          mapfile -t tv < <(find tv-receiver/build/outputs/apk -type f -name '*.apk' -print)
-          if ((${#fad[@]} == 0)); then echo 'No FadCam APK produced'; exit 1; fi
-          if ((${#tv[@]} == 0)); then echo 'No TV receiver APK produced'; exit 1; fi
-          printf '%s\n' "${fad[@]}" "${tv[@]}"
+          apk_count=0
+          for root in app/build/outputs/apk tv-receiver/build/outputs/apk; do
+            while IFS= read -r -d '' apk; do
+              test -s "$apk"
+              echo "APK: $apk"
+              zipalign -c -P 16 -v 4 "$apk"
+              apk_count=$((apk_count + 1))
+            done < <(find "$root" -type f -name '*.apk' -print0)
+          done
+          test "$apk_count" -ge 4
+          echo "Certified APK count: $apk_count"
 
       - name: Upload coordinated APK artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v4
         with:
           name: android-dual-apk-${{ github.sha }}
           if-no-files-found: error
           path: |
             app/build/outputs/apk/**/*.apk
             tv-receiver/build/outputs/apk/**/*.apk
+          retention-days: 7
