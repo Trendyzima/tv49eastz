@@ -20,6 +20,7 @@ env:
   CI_KEYSTORE_PASSWORD: changeit-ci-only
   CI_KEY_ALIAS: tv49eastz-ci
   CI_KEY_PASSWORD: changeit-ci-only
+  TV_EAST_CATALOG_URL: ${{ vars.TV_EAST_CATALOG_URL }}
 
 jobs:
   android-build:
@@ -105,9 +106,17 @@ jobs:
         shell: bash
         run: ./gradlew assembleDefaultDebug assembleDefaultRelease assembleNotesProRelease assembleCalcProRelease assembleWeatherProRelease assembleProPlus --no-daemon --no-watch-fs --stacktrace
 
-      - name: Assemble TV receiver APK variants
+      - name: Assemble standalone TV 49 East APK variants
         shell: bash
-        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --no-watch-fs --stacktrace
+        run: |
+          set -euo pipefail
+          if [[ -n "${TV_EAST_CATALOG_URL:-}" ]]; then
+            echo "Embedding configured TV East catalog endpoint: $TV_EAST_CATALOG_URL"
+            ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease -PtvEastCatalogUrl="$TV_EAST_CATALOG_URL" --no-daemon --no-watch-fs --stacktrace
+          else
+            echo "TV_EAST_CATALOG_URL repository variable is not configured; building a valid standalone APK with server configuration left empty."
+            ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --no-watch-fs --stacktrace
+          fi
 
       - name: Resolve Android SDK build-tools
         id: android-tools
@@ -118,42 +127,24 @@ jobs:
           test -n "$sdk" && test -d "$sdk" || { echo "ERROR: Android SDK root is unavailable"; exit 1; }
           build_tools="$sdk/build-tools"
           test -d "$build_tools" || { echo "ERROR: Android SDK build-tools directory is unavailable: $build_tools"; exit 1; }
-
-          mapfile -t zipalign_candidates < <(
-            find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null \
-              | sort -V -r
-          )
-
+          mapfile -t zipalign_candidates < <(find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null | sort -V -r)
           zipalign=""
           for candidate in "${zipalign_candidates[@]}"; do
-            if [[ -x "$candidate" ]]; then
-              zipalign="$candidate"
-              break
-            fi
+            if [[ -x "$candidate" ]]; then zipalign="$candidate"; break; fi
           done
-
           if [[ -z "$zipalign" ]]; then
             echo "ERROR: no executable zipalign found under $build_tools"
             find "$build_tools" -type f -name zipalign -print 2>/dev/null || true
-            ls -la "$build_tools" 2>/dev/null || true
             exit 1
           fi
-
           echo "Using zipalign: $zipalign"
           test -x "$zipalign"
-          test -f "$zipalign"
-          file "$zipalign"
-
-          # zipalign intentionally returns status 2 for its usage/help path.
-          # Validate the binary by checking its banner and accepting only the
-          # documented usage statuses rather than inventing a `version` command.
           help_output="$(mktemp)"
           help_status=0
           "$zipalign" -h >"$help_output" 2>&1 || help_status=$?
           grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; rm -f "$help_output"; exit 1; }
           [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; rm -f "$help_output"; exit 1; }
           rm -f "$help_output"
-
           echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
 
       - name: Verify APK artifacts
@@ -179,7 +170,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          { echo "Repository: $GITHUB_REPOSITORY"; echo "Commit: $GITHUB_SHA"; echo "Media3 commit: $MEDIA3_PATCHED_SHA"; echo "Java: $(java -version 2>&1 | head -n 1)"; echo "Gradle: $(./gradlew --version | grep '^Gradle ' | head -n 1)"; echo; echo "Artifacts:"; find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -printf '%p %s bytes\n' | sort; } > android-certification-manifest.txt
+          { echo "Repository: $GITHUB_REPOSITORY"; echo "Commit: $GITHUB_SHA"; echo "Media3 commit: $MEDIA3_PATCHED_SHA"; echo "TV East catalog endpoint configured: $([[ -n \"${TV_EAST_CATALOG_URL:-}\" ]] && echo yes || echo no)"; echo "Java: $(java -version 2>&1 | head -n 1)"; echo "Gradle: $(./gradlew --version | grep '^Gradle ' | head -n 1)"; echo; echo "Artifacts:"; find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -printf '%p %s bytes\n' | sort; } > android-certification-manifest.txt
           cat android-certification-manifest.txt
           cat android-certification-manifest.txt >> "$GITHUB_STEP_SUMMARY"
 
