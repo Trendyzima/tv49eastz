@@ -48,6 +48,7 @@ func TestDeviceRegistryPersistenceFailureDoesNotPublish(t *testing.T) {
 	// but the final atomic rename must fail when replacing this directory. The
 	// test never changes the TempDir tree structure, so cleanup remains safe.
 	if err := os.Mkdir(path, 0o700); err != nil { t.Fatal(err) }
+	if info, err := os.Stat(path); err != nil || !info.IsDir() { t.Fatalf("failed to create rename blocker: %v", err) }
 
 	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected persistence failure") }
 	if _, ok := r.Lookup("device-a"); ok { t.Fatal("failed persistence published in-memory state") }
