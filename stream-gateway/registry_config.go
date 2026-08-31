@@ -12,9 +12,13 @@ var defaultDeviceRegistry = NewDeviceRegistry()
 
 // DEVICE_REGISTRY_JSON is an array of DeviceRecord objects. Keeping the
 // registry outside request data prevents a client from self-registering a
-// device. For production this loader can be replaced by a database-backed
-// registry without changing authorization call sites.
+// device. DEVICE_REGISTRY_FILE enables crash-durable local registry state.
 func init() {
+	if path := strings.TrimSpace(os.Getenv("DEVICE_REGISTRY_FILE")); path != "" {
+		if err := defaultDeviceRegistry.SetPersistencePath(path); err != nil {
+			log.Fatalf("invalid DEVICE_REGISTRY_FILE: %v", err)
+		}
+	}
 	raw := strings.TrimSpace(os.Getenv("DEVICE_REGISTRY_JSON"))
 	if raw == "" {
 		return
