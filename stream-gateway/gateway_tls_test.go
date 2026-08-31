@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -70,6 +71,10 @@ func TestLoadGatewayServerTLSConfigEnforcesMutualTLS(t *testing.T) {
 	// for gateway-server, while the dial target remains the ephemeral test
 	// listener. This proves certificate verification independently of address
 	// selection and avoids a false failure when the test listener is 127.0.0.1.
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		var d net.Dialer
+		return d.DialContext(ctx, "tcp", server.Listener.Addr().String())
+	}
 	clientTLS := &tls.Config{
 		MinVersion:   tls.VersionTLS13,
 		RootCAs:      pool,
@@ -78,9 +83,7 @@ func TestLoadGatewayServerTLSConfigEnforcesMutualTLS(t *testing.T) {
 	}
 	client := &http.Client{Transport: &http.Transport{
 		TLSClientConfig: clientTLS,
-		DialContext: func(_ net.Context, _, _ string) (net.Conn, error) {
-			return net.Dial("tcp", server.Listener.Addr().String())
-		},
+		DialContext:     dial,
 	}}
 	resp, err := client.Get("https://gateway-server/")
 	if err != nil {
@@ -97,9 +100,7 @@ func TestLoadGatewayServerTLSConfigEnforcesMutualTLS(t *testing.T) {
 			RootCAs:    pool,
 			ServerName: "gateway-server",
 		},
-		DialContext: func(_ net.Context, _, _ string) (net.Conn, error) {
-			return net.Dial("tcp", server.Listener.Addr().String())
-		},
+		DialContext: dial,
 	}}
 	resp, err = noCertClient.Get("https://gateway-server/")
 	if err == nil {
