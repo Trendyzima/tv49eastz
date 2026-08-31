@@ -43,6 +43,9 @@ jobs:
           actual_sha="$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)"
           test "$actual_sha" = "$MEDIA3_PATCHED_SHA"
           test -f "$MEDIA3_PATCHED_PATH/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/common"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/container"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
           echo "Pinned Media3: $actual_sha"
 
       - name: Set up Java 17
@@ -87,14 +90,7 @@ jobs:
         run: |
           set -euo pipefail
           ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/app-tasks.txt
-          for task in \
-            testDefaultDebugUnitTest \
-            assembleDefaultDebug \
-            assembleDefaultRelease \
-            assembleNotesProRelease \
-            assembleCalcProRelease \
-            assembleWeatherProRelease \
-            assembleProPlus; do
+          for task in testDefaultDebugUnitTest assembleDefaultDebug assembleDefaultRelease assembleNotesProRelease assembleCalcProRelease assembleWeatherProRelease assembleProPlus; do
             grep -Fq "$task" /tmp/app-tasks.txt || {
               echo "Required Android task not exposed: $task"
               grep -E '(^|:)assemble|test.*UnitTest' /tmp/app-tasks.txt | head -n 160 || true
@@ -145,27 +141,34 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --no-watch-fs --stacktrace \
+          ./gradlew \
             assembleDefaultDebug \
             assembleDefaultRelease \
             assembleNotesProRelease \
             assembleCalcProRelease \
             assembleWeatherProRelease \
-            assembleProPlus
+            assembleProPlus \
+            --no-daemon --no-watch-fs --stacktrace
 
       - name: Assemble TV receiver APK variants
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --no-watch-fs --stacktrace \
+          ./gradlew \
             :tv-receiver:assembleDebug \
-            :tv-receiver:assembleRelease
+            :tv-receiver:assembleRelease \
+            --no-daemon --no-watch-fs --stacktrace
 
       - name: Verify APK artifacts
         shell: bash
         run: |
           set -euo pipefail
-          command -v zipalign >/dev/null || { echo "zipalign not installed"; exit 1; }
+          command -v zipalign >/dev/null 2>&1 || {
+            echo "ERROR: zipalign is required for APK certification but is not on PATH"
+            echo "Searching installed Android SDK for zipalign..."
+            find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" -type f -name zipalign -perm -111 2>/dev/null | head -n 20 || true
+            exit 1
+          }
           apk_count=0
           while IFS= read -r -d '' apk; do
             test -s "$apk"
