@@ -1,11 +1,13 @@
 name: Android Dual APK Certification
 
 on:
-  push:
-    branches: [master]
-    tags: ['v*']
+  # The master push path is owned by android-build-smoke.yml. Keep this
+  # workflow for PR/tag/manual certification so Android does not execute the
+  # same expensive build twice on every master commit.
   pull_request:
     branches: [master]
+  push:
+    tags: ['v*']
   workflow_dispatch:
 
 permissions:
@@ -122,43 +124,24 @@ jobs:
           test -n "$sdk" && test -d "$sdk" || { echo "ERROR: Android SDK root is unavailable"; exit 1; }
           build_tools="$sdk/build-tools"
           test -d "$build_tools" || { echo "ERROR: Android SDK build-tools directory is unavailable: $build_tools"; exit 1; }
-
-          mapfile -t zipalign_candidates < <(
-            find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null \
-              | sort -V -r
-          )
-
+          mapfile -t zipalign_candidates < <(find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null | sort -V -r)
           zipalign=""
           for candidate in "${zipalign_candidates[@]}"; do
-            if [[ -x "$candidate" ]]; then
-              zipalign="$candidate"
-              break
-            fi
+            if [[ -x "$candidate" ]]; then zipalign="$candidate"; break; fi
           done
-
           if [[ -z "$zipalign" ]]; then
             echo "ERROR: no executable zipalign found under $build_tools"
             find "$build_tools" -type f -name zipalign -print 2>/dev/null || true
-            ls -la "$build_tools" 2>/dev/null || true
             exit 1
           fi
-
           echo "Using zipalign: $zipalign"
           test -x "$zipalign"
-          test -f "$zipalign"
-          file "$zipalign"
-
-          # zipalign intentionally returns status 2 for its usage/help path.
-          # Validate the binary by checking its banner and accepting only the
-          # documented usage statuses; do not invoke an unsupported `version`
-          # subcommand (zipalign has no such command).
           help_output="$(mktemp)"
           help_status=0
           "$zipalign" -h >"$help_output" 2>&1 || help_status=$?
           grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; rm -f "$help_output"; exit 1; }
           [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; rm -f "$help_output"; exit 1; }
           rm -f "$help_output"
-
           echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
 
       - name: Verify APK outputs and alignment
