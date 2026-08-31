@@ -39,10 +39,20 @@ jobs:
             exit 1
           fi
 
-          changed="$(git diff --name-only "$BASELINE"...HEAD -- 'app/src/main/java/com/fadcam/**' 'app/src/main/res/**' 'app/src/main/AndroidManifest.xml')"
+          echo "Protected baseline: $BASELINE"
+          echo "Current revision:    $(git rev-parse HEAD)"
+
+          # Compare the actual protected tree at the approved baseline with the
+          # actual protected tree at HEAD. This intentionally evaluates the
+          # current tree, not the history of intermediate commits: a protected
+          # file that was added and subsequently removed is therefore clean.
+          changed="$(git diff --name-only --no-renames "$BASELINE" HEAD -- \
+            'app/src/main/java/com/fadcam/**' \
+            'app/src/main/res/**' \
+            'app/src/main/AndroidManifest.xml')"
 
           if [ -n "$changed" ]; then
-            echo "Protected FadCam server/application files changed since the approved baseline:"
+            echo "Protected FadCam server/application files differ from the approved baseline:"
             printf '%s\n' "$changed"
             echo
             echo "The streaming bridge must be implemented in server-tap/ and stream-gateway/."
@@ -50,7 +60,7 @@ jobs:
             exit 1
           fi
 
-          echo "Protected server/application boundary unchanged."
+          echo "Protected server/application boundary unchanged in the current tree."
 
       - name: Verify bridge separation
         shell: bash
