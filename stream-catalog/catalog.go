@@ -117,14 +117,15 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 }
 
 // parseExtInf parses EXTINF attributes while treating commas inside quoted
-// attribute values as data. The final comma, outside quotes, separates the
-// display name from the attribute section.
+// attribute values as data. The first comma outside quotes separates the
+// attribute section from the display name; commas in the display name are
+// therefore preserved verbatim.
 func parseExtInf(line string) map[string]string {
 	m := map[string]string{}
 	attrs := strings.TrimPrefix(line, "#EXTINF:")
 
 	// The first token is the EXTINF duration (normally -1). Attribute parsing
-	// starts after that token, while the display-name comma is handled below.
+	// starts after that token.
 	if i := strings.IndexByte(attrs, ' '); i >= 0 {
 		attrs = strings.TrimSpace(attrs[i:])
 	}
@@ -138,6 +139,7 @@ func parseExtInf(line string) map[string]string {
 		case ',':
 			if !quoted {
 				comma = i
+				i = len(attrs)
 			}
 		}
 	}
