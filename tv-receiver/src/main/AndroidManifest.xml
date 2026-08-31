@@ -1,6 +1,11 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+
+    <permission
+        android:name="com.tv49.com.permission.PUBLISH_FADCAM"
+        android:protectionLevel="signature" />
+
     <application
         android:allowBackup="false"
         android:label="TV 49 East"
@@ -11,6 +16,7 @@
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
+            android:permission="com.tv49.com.permission.PUBLISH_FADCAM"
             android:screenOrientation="landscape">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
