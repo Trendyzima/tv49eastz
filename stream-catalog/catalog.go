@@ -116,66 +116,77 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 	return Catalog{Channels: out, Updated: time.Now().UTC()}, nil
 }
 
-// parseExtInf parses EXTINF attributes while treating commas inside quoted
-// attribute values as data. The first comma outside quotes separates the
-// attribute section from the display name; commas in the display name are
-// therefore preserved verbatim.
+// parseExtInf parses an EXTINF record without confusing the numeric duration
+// with attributes. Attribute values may be quoted and may contain spaces or
+// commas. The first comma encountered after the complete attribute list is the
+// attribute/display-name delimiter, so commas in an unquoted display name are
+// preserved too.
 func parseExtInf(line string) map[string]string {
 	m := map[string]string{}
-	attrs := strings.TrimPrefix(line, "#EXTINF:")
+	attrs := strings.TrimSpace(strings.TrimPrefix(line, "#EXTINF:"))
 
-	// The first token is the EXTINF duration (normally -1). Attribute parsing
-	// starts after that token.
-	if i := strings.IndexByte(attrs, ' '); i >= 0 {
+	// EXTINF starts with a duration token. It may be followed immediately by
+	// the display-name comma or by a whitespace-separated attribute list.
+	if attrs == "" {
+		return m
+	}
+	if i := strings.IndexAny(attrs, " \t"); i >= 0 {
 		attrs = strings.TrimSpace(attrs[i:])
-	}
-
-	comma := -1
-	quoted := false
-	for i := 0; i < len(attrs); i++ {
-		switch attrs[i] {
-		case '"':
-			quoted = !quoted
-		case ',':
-			if !quoted {
-				comma = i
-				i = len(attrs)
-			}
+	} else {
+		if comma := strings.IndexByte(attrs, ','); comma >= 0 {
+			m["name"] = strings.TrimSpace(attrs[comma+1:])
 		}
-	}
-	if comma >= 0 {
-		m["name"] = strings.TrimSpace(attrs[comma+1:])
-		attrs = strings.TrimSpace(attrs[:comma])
+		return m
 	}
 
 	for len(attrs) > 0 {
-		attrs = strings.TrimSpace(attrs)
+		attrs = strings.TrimLeft(attrs, " \t")
 		if attrs == "" {
 			break
 		}
-		space := strings.IndexByte(attrs, ' ')
+		if attrs[0] == ',' {
+			m["name"] = strings.TrimSpace(attrs[1:])
+			break
+		}
+
+		// Read an attribute key up to '='. Reject malformed tokens rather than
+		// silently treating the duration or a display-name fragment as a key.
 		eq := strings.IndexByte(attrs, '=')
-		if eq < 1 || (space >= 0 && space < eq) {
+		if eq <= 0 {
 			break
 		}
 		key := strings.TrimSpace(attrs[:eq])
-		attrs = strings.TrimSpace(attrs[eq+1:])
+		if key == "" || strings.ContainsAny(key, " \t,") {
+			break
+		}
+		attrs = strings.TrimLeft(attrs[eq+1:], " \t")
 		if attrs == "" {
 			m[key] = ""
 			break
 		}
+
 		if attrs[0] == '"' {
-			attrs = attrs[1:]
-			end := strings.IndexByte(attrs, '"')
+			// Find the closing quote. EXTINF attribute values are quoted with
+			// double quotes; commas and spaces inside them are data.
+			end := -1
+			for i := 1; i < len(attrs); i++ {
+				if attrs[i] == '"' {
+					end = i
+					break
+				}
+			}
 			if end < 0 {
-				m[key] = attrs
+				// Preserve the value for callers, but there is no reliable way to
+				// distinguish a missing quote from the rest of the record.
+				m[key] = attrs[1:]
 				break
 			}
-			m[key] = attrs[:end]
+			m[key] = attrs[1:end]
 			attrs = attrs[end+1:]
 			continue
 		}
-		end := strings.IndexByte(attrs, ' ')
+
+		end := strings.IndexAny(attrs, " \t,")
 		if end < 0 {
 			m[key] = attrs
 			break
