@@ -38,18 +38,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf "${MEDIA3_PATCHED_PATH}"
-          git init "${MEDIA3_PATCHED_PATH}"
-          git -C "${MEDIA3_PATCHED_PATH}" remote add origin "${MEDIA3_PATCHED_REPO}"
-          git -C "${MEDIA3_PATCHED_PATH}" fetch --depth 1 origin "${MEDIA3_PATCHED_SHA}"
-          git -C "${MEDIA3_PATCHED_PATH}" checkout --detach FETCH_HEAD
-          actual_sha="$(git -C "${MEDIA3_PATCHED_PATH}" rev-parse HEAD)"
-          test "${actual_sha}" = "${MEDIA3_PATCHED_SHA}"
-          test -f "${MEDIA3_PATCHED_PATH}/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
-          test -d "${MEDIA3_PATCHED_PATH}/libraries/common"
-          test -d "${MEDIA3_PATCHED_PATH}/libraries/container"
-          test -d "${MEDIA3_PATCHED_PATH}/libraries/muxer"
-          echo "Pinned Media3 commit: ${actual_sha}"
+          rm -rf "$MEDIA3_PATCHED_PATH"
+          git init "$MEDIA3_PATCHED_PATH"
+          git -C "$MEDIA3_PATCHED_PATH" remote add origin "$MEDIA3_PATCHED_REPO"
+          git -C "$MEDIA3_PATCHED_PATH" fetch --depth 1 origin "$MEDIA3_PATCHED_SHA"
+          git -C "$MEDIA3_PATCHED_PATH" checkout --detach FETCH_HEAD
+          actual_sha="$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)"
+          test "$actual_sha" = "$MEDIA3_PATCHED_SHA"
+          test -f "$MEDIA3_PATCHED_PATH/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/common"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/container"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
+          echo "Pinned Media3 commit: $actual_sha"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -81,11 +81,7 @@ jobs:
           test -s local.properties
 
       - name: Make Gradle executable
-        shell: bash
-        run: |
-          set -euo pipefail
-          test -f ./gradlew
-          chmod +x ./gradlew
+        run: chmod +x ./gradlew
 
       - name: Verify Android task graph
         shell: bash
@@ -137,7 +133,10 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
+          ./gradlew \
+            :app:test \
+            :tv-receiver:test \
+            --no-daemon --no-watch-fs --stacktrace
 
       - name: Build FadCam APKs
         shell: bash
@@ -162,7 +161,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          command -v zipalign >/dev/null || { echo "zipalign not installed"; exit 1; }
+          command -v zipalign >/dev/null 2>&1 || {
+            echo "ERROR: zipalign is required for APK certification but is not on PATH"
+            echo "Searching installed Android SDK for zipalign..."
+            find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" -type f -name zipalign -perm -111 2>/dev/null | head -n 20 || true
+            exit 1
+          }
           apk_count=0
           for root in app/build/outputs/apk tv-receiver/build/outputs/apk; do
             while IFS= read -r -d '' apk; do
