@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- TV 49 East keeps FadCam's signature lavender accent and deep midnight surfaces. -->
-    <style name="Theme.FadCamTV" parent="android:style/Theme.Material.NoActionBar">
+    <style name="Theme.TV49East" parent="android:style/Theme.Material.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#111113</item>
