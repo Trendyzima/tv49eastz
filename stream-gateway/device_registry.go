@@ -38,8 +38,8 @@ func NewDeviceRegistry() *DeviceRegistry {
 }
 
 func (r *DeviceRegistry) Register(d DeviceRecord) error {
-	if err := validateDeviceRecord(d); err != nil { return err }
 	if d.Channels == nil { d.Channels = make(map[string]bool) }
+	if err := validateDeviceRecord(d); err != nil { return err }
 	r.mu.Lock(); defer r.mu.Unlock()
 	if old, ok := r.byID[d.DeviceID]; ok && old.Fingerprint != d.Fingerprint { return errors.New("device identity already bound to another certificate") }
 	if old, ok := r.byFP[d.Fingerprint]; ok && old != d.DeviceID { return errors.New("certificate already bound to another device") }
@@ -47,14 +47,12 @@ func (r *DeviceRegistry) Register(d DeviceRecord) error {
 	for id, record := range r.byID { next[id] = record }
 	next[d.DeviceID] = d
 	if err := r.persistLocked(next); err != nil { return err }
-	newFP := make(map[string]string, len(next))
-	for id, record := range next { newFP[record.Fingerprint] = id }
+	newFP := make(map[string]string, len(next)); for id, record := range next { newFP[record.Fingerprint] = id }
 	r.byID, r.byFP = next, newFP
 	return nil
 }
 
 func (r *DeviceRegistry) Replace(d DeviceRecord) error { return r.Register(d) }
-
 func (r *DeviceRegistry) RevokeDevice(deviceID string) error { return r.mutateDevice(deviceID, func(d *DeviceRecord) { d.Revoked = true; d.Enabled = false }) }
 func (r *DeviceRegistry) EnableDevice(deviceID string) error { return r.mutateDevice(deviceID, func(d *DeviceRecord) { d.Revoked = false; d.Enabled = true }) }
 
@@ -62,22 +60,17 @@ func (r *DeviceRegistry) DeleteDevice(deviceID string) error {
 	deviceID = normalizeDeviceID(deviceID); if deviceID == "" { return errors.New("device identity required") }
 	r.mu.Lock(); defer r.mu.Unlock()
 	if _, ok := r.byID[deviceID]; !ok { return errors.New("device not found") }
-	next := make(map[string]DeviceRecord, len(r.byID)-1)
-	for id, record := range r.byID { if id != deviceID { next[id] = record } }
+	next := make(map[string]DeviceRecord, len(r.byID)-1); for id, record := range r.byID { if id != deviceID { next[id] = record } }
 	if err := r.persistLocked(next); err != nil { return err }
-	newFP := make(map[string]string, len(next)); for id, record := range next { newFP[record.Fingerprint] = id }
-	r.byID, r.byFP = next, newFP; return nil
+	newFP := make(map[string]string, len(next)); for id, record := range next { newFP[record.Fingerprint] = id }; r.byID, r.byFP = next, newFP; return nil
 }
 
 func (r *DeviceRegistry) mutateDevice(deviceID string, mutate func(*DeviceRecord)) error {
 	deviceID = normalizeDeviceID(deviceID); if deviceID == "" { return errors.New("device identity required") }
-	r.mu.Lock(); defer r.mu.Unlock()
-	d, ok := r.byID[deviceID]; if !ok { return errors.New("device not found") }
-	mutate(&d)
+	r.mu.Lock(); defer r.mu.Unlock(); d, ok := r.byID[deviceID]; if !ok { return errors.New("device not found") }; mutate(&d)
 	next := make(map[string]DeviceRecord, len(r.byID)); for id, record := range r.byID { next[id] = record }; next[deviceID] = d
 	if err := r.persistLocked(next); err != nil { return err }
-	newFP := make(map[string]string, len(next)); for id, record := range next { newFP[record.Fingerprint] = id }
-	r.byID, r.byFP = next, newFP; return nil
+	newFP := make(map[string]string, len(next)); for id, record := range next { newFP[record.Fingerprint] = id }; r.byID, r.byFP = next, newFP; return nil
 }
 
 func validateRemoteRegistryURL(raw string) (*url.URL, error) {
