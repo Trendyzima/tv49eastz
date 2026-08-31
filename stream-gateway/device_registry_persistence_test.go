@@ -39,11 +39,16 @@ func TestDeviceRegistryReplacementIsReplacementNotAppend(t *testing.T) {
 
 func TestDeviceRegistryPersistenceFailureDoesNotPublish(t *testing.T) {
 	dir := t.TempDir()
-	blocker := filepath.Join(dir, "registry-parent")
-	path := filepath.Join(blocker, "registry.json")
-	if err := os.WriteFile(blocker, []byte("not a directory"), 0o600); err != nil { t.Fatal(err) }
+	path := filepath.Join(dir, "registry.json")
 	r := NewDeviceRegistry()
 	if err := r.SetPersistencePath(path); err != nil { t.Fatal(err) }
+
+	// Configure the path while it is absent, then turn the target itself into
+	// a directory. Persistence can create its temporary file beside the target,
+	// but the final atomic rename must fail when replacing this directory. The
+	// test never changes the TempDir tree structure, so cleanup remains safe.
+	if err := os.Mkdir(path, 0o700); err != nil { t.Fatal(err) }
+
 	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected persistence failure") }
 	if _, ok := r.Lookup("device-a"); ok { t.Fatal("failed persistence published in-memory state") }
 }
