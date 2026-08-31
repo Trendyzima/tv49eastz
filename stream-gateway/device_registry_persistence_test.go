@@ -17,10 +17,9 @@ func TestDeviceRegistryPersistenceRoundTripAndPermissions(t *testing.T) {
 	r := NewDeviceRegistry()
 	if err := r.SetPersistencePath(path); err != nil { t.Fatal(err) }
 	if err := r.Register(testDevice("device-a", "fp-a")); err != nil { t.Fatal(err) }
-
-	info, err := os.Stat(path); if err != nil { t.Fatal(err) }
+	info, err := os.Stat(path)
+	if err != nil { t.Fatal(err) }
 	if info.Mode().Perm() != 0o600 { t.Fatalf("registry permissions=%o, want 600", info.Mode().Perm()) }
-
 	reloaded := NewDeviceRegistry()
 	if err := reloaded.SetPersistencePath(path); err != nil { t.Fatal(err) }
 	d, ok := reloaded.Lookup("device-a")
@@ -40,8 +39,9 @@ func TestDeviceRegistryReplacementIsReplacementNotAppend(t *testing.T) {
 
 func TestDeviceRegistryPersistenceFailureDoesNotPublish(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "registry-target")
-	if err := os.Mkdir(path, 0o700); err != nil { t.Fatal(err) }
+	parentFile := filepath.Join(dir, "not-a-directory")
+	if err := os.WriteFile(parentFile, []byte("x"), 0o600); err != nil { t.Fatal(err) }
+	path := filepath.Join(parentFile, "registry.json")
 	r := NewDeviceRegistry()
 	if err := r.SetPersistencePath(path); err != nil { t.Fatal(err) }
 	if err := r.Register(testDevice("device-a", "fp-a")); err == nil { t.Fatal("expected persistence failure") }
@@ -49,8 +49,10 @@ func TestDeviceRegistryPersistenceFailureDoesNotPublish(t *testing.T) {
 }
 
 func TestDeviceRegistryMalformedStateFailsClosed(t *testing.T) {
-	dir := t.TempDir(); path := filepath.Join(dir, "registry.json")
-	if err := os.WriteFile(path, []byte(`{"version":1,"devices":[{"device_id":"device-a","principal_id":"p","fingerprint":"fp","channels":null,"enabled":true}]}`), 0o600); err != nil { t.Fatal(err) }
+	dir := t.TempDir()
+	path := filepath.Join(dir, "registry.json")
+	bad := `{"version":1,"devices":[{"device_id":"device-a","principal_id":"p","fingerprint":"fp","channels":null,"enabled":true}]}`
+	if err := os.WriteFile(path, []byte(bad), 0o600); err != nil { t.Fatal(err) }
 	r := NewDeviceRegistry()
 	if err := r.SetPersistencePath(path); err == nil { t.Fatal("accepted malformed registry state") }
 	if _, ok := r.Lookup("device-a"); ok { t.Fatal("malformed state populated registry") }
