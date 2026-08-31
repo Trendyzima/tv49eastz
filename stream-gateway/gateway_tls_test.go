@@ -24,105 +24,61 @@ func TestLoadGatewayServerTLSConfigRequiresAllInputs(t *testing.T) {
 
 func TestLoadGatewayServerTLSConfigEnforcesMutualTLS(t *testing.T) {
 	dir := t.TempDir()
-	caCert, caKey := testCertificate(t, "gateway-ca", true, nil, nil)
-	serverCert, serverKey := testCertificate(t, "gateway-server", false, caCert, caKey)
-	clientCert, clientKey := testCertificate(t, "device-a", false, caCert, caKey)
+	caCert, caKey := makeTLSFixtureCertificate(t, "gateway-ca", true, nil, nil)
+	serverCert, serverKey := makeTLSFixtureCertificate(t, "gateway-server", false, caCert, caKey)
+	clientCert, clientKey := makeTLSFixtureCertificate(t, "device-a", false, caCert, caKey)
 
 	caPath := writePEMFile(t, dir+"/ca.pem", "CERTIFICATE", caCert)
 	serverCertPath := writePEMFile(t, dir+"/server.pem", "CERTIFICATE", serverCert)
-	serverKeyPath := writePEMFile(t, dir+"/server-key.pem", "EC PRIVATE KEY", clientKey)
-	_ = serverKeyPath
-	// Replace the intentionally separate key file with the actual server key.
-	writePEMFile(t, dir+"/server-key.pem", "EC PRIVATE KEY", serverKey)
+	serverKeyPath := writePEMFile(t, dir+"/server-key.pem", "EC PRIVATE KEY", serverKey)
 	clientCertPath := writePEMFile(t, dir+"/client.pem", "CERTIFICATE", clientCert)
 	clientKeyPath := writePEMFile(t, dir+"/client-key.pem", "EC PRIVATE KEY", clientKey)
-	_ = clientCertPath
-	_ = clientKeyPath
 
 	cfg, err := LoadGatewayServerTLSConfig(serverCertPath, serverKeyPath, caPath)
 	if err != nil {
 		t.Fatalf("LoadGatewayServerTLSConfig: %v", err)
 	}
-	if cfg.MinVersion != tls.VersionTLS13 {
-		t.Fatalf("MinVersion = %d, want TLS 1.3", cfg.MinVersion)
-	}
-	if cfg.ClientAuth != tls.RequireAndVerifyClientCert {
-		t.Fatalf("ClientAuth = %v, want RequireAndVerifyClientCert", cfg.ClientAuth)
-	}
-	if cfg.ClientCAs == nil {
-		t.Fatal("ClientCAs is nil")
-	}
+	if cfg.MinVersion != tls.VersionTLS13 { t.Fatalf("MinVersion = %d, want TLS 1.3", cfg.MinVersion) }
+	if cfg.ClientAuth != tls.RequireAndVerifyClientCert { t.Fatalf("ClientAuth = %v, want RequireAndVerifyClientCert", cfg.ClientAuth) }
+	if cfg.ClientCAs == nil { t.Fatal("ClientCAs is nil") }
 
-	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNoContent)
-	}))
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(http.StatusNoContent) }))
 	server.TLS = cfg.Clone()
 	server.StartTLS()
 	defer server.Close()
 
 	clientKeyPair, err := tls.LoadX509KeyPair(clientCertPath, clientKeyPath)
-	if err != nil {
-		t.Fatalf("load client key pair: %v", err)
-	}
+	if err != nil { t.Fatalf("load client key pair: %v", err) }
 	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(mustReadFile(t, caPath)) {
-		t.Fatal("failed to load test CA")
-	}
-	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		MinVersion:   tls.VersionTLS13,
-		RootCAs:      pool,
-		Certificates: []tls.Certificate{clientKeyPair},
-	}}}
+	if !pool.AppendCertsFromPEM(mustReadFile(t, caPath)) { t.Fatal("failed to load test CA") }
+	client := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool, Certificates: []tls.Certificate{clientKeyPair}}}}
 	resp, err := client.Get(server.URL)
-	if err != nil {
-		t.Fatalf("mTLS request failed: %v", err)
-	}
+	if err != nil { t.Fatalf("mTLS request failed: %v", err) }
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusNoContent {
-		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent)
-	}
+	if resp.StatusCode != http.StatusNoContent { t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusNoContent) }
 
-	noCertClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{
-		MinVersion: tls.VersionTLS13,
-		RootCAs:    pool,
-	}}}
+	noCertClient := &http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS13, RootCAs: pool}}}
 	resp, err = noCertClient.Get(server.URL)
-	if err == nil {
-		resp.Body.Close()
-		t.Fatal("expected client without certificate to be rejected")
-	}
+	if err == nil { resp.Body.Close(); t.Fatal("expected client without certificate to be rejected") }
 }
 
-func testCertificate(t *testing.T, commonName string, isCA bool, parentDER, parentKeyPEM []byte) ([]byte, []byte) {
+func makeTLSFixtureCertificate(t *testing.T, commonName string, isCA bool, parentDER, parentKeyPEM []byte) ([]byte, []byte) {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil { t.Fatal(err) }
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
 	if err != nil { t.Fatal(err) }
-	tmpl := &x509.Certificate{
-		SerialNumber: serial,
-		Subject: pkix.Name{CommonName: commonName},
-		NotBefore: time.Now().Add(-time.Minute),
-		NotAfter: time.Now().Add(time.Hour),
-		KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
-		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		BasicConstraintsValid: true,
-		IsCA: isCA,
-	}
+	tmpl := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: commonName}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}, BasicConstraintsValid: true, IsCA: isCA}
 	var parent *x509.Certificate
-	var signerKey *ecdsa.PrivateKey = key
+	signerKey := key
 	if len(parentDER) > 0 {
-		var err error
 		parent, err = x509.ParseCertificate(parentDER)
 		if err != nil { t.Fatal(err) }
 		block, _ := pem.Decode(parentKeyPEM)
 		if block == nil { t.Fatal("invalid parent key PEM") }
-		signerKeyAny, err := x509.ParseECPrivateKey(block.Bytes)
+		signerKey, err = x509.ParseECPrivateKey(block.Bytes)
 		if err != nil { t.Fatal(err) }
-		signerKey = signerKeyAny
-	} else {
-		parent = tmpl
-	}
+	} else { parent = tmpl }
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, parent, &key.PublicKey, signerKey)
 	if err != nil { t.Fatal(err) }
 	keyDER, err := x509.MarshalECPrivateKey(key)
