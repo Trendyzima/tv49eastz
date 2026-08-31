@@ -2,8 +2,8 @@ package com.fadcam.tv;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.os.Bundle;
 import android.net.Uri;
+import android.os.Bundle;
 
 /** Signature-protected bridge from the FadCam publisher into the receiver UI. */
 public final class FadCamHandoffActivity extends Activity {
@@ -16,10 +16,14 @@ public final class FadCamHandoffActivity extends Activity {
             finish();
             return;
         }
-        Intent playback = new Intent(this, MainActivity.class);
-        playback.putExtra("tv49east_verified_fadcam_url", result.streamUrl);
-        playback.putExtra("tv49east_verified_fadcam_name", result.name);
-        playback.putExtra("tv49east_verified_fadcam_owner", result.owner);
+        Uri playbackUri = Uri.parse("tv49east://channel").buildUpon()
+                .appendQueryParameter("url", result.streamUrl)
+                .appendQueryParameter("name", result.name)
+                .appendQueryParameter("owner", result.owner)
+                .appendQueryParameter("id", "fadcam-local")
+                .build();
+        Intent playback = new Intent(Intent.ACTION_VIEW, playbackUri);
+        playback.setClass(this, MainActivity.class);
         playback.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(playback);
         finish();
