@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -16,22 +17,22 @@ import (
 )
 
 type DeviceRecord struct {
-	DeviceID string
-	PrincipalID string
+	DeviceID    string
+	PrincipalID  string
 	Fingerprint string
-	Channels map[string]bool
-	Enabled bool
-	Revoked bool
+	Channels    map[string]bool
+	Enabled     bool
+	Revoked     bool
 }
 
 type DeviceRegistry struct {
-	mu sync.RWMutex
-	byID map[string]DeviceRecord
-	byFP map[string]string
-	remoteURL string
-	client *http.Client
-	persistencePath string
-	persistenceOps registryPersistenceOps
+	mu               sync.RWMutex
+	byID             map[string]DeviceRecord
+	byFP             map[string]string
+	remoteURL        string
+	client           *http.Client
+	persistencePath  string
+	persistenceOps   registryPersistenceOps
 }
 
 func NewDeviceRegistry() *DeviceRegistry {
@@ -75,8 +76,28 @@ func (r *DeviceRegistry) mutateDevice(deviceID string, mutate func(*DeviceRecord
 }
 
 func validateRemoteRegistryURL(raw string) (*url.URL, error) {
-	u, err := url.Parse(strings.TrimSpace(raw)); if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") { return nil, errors.New("invalid device registry URL") }
-	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" { return nil, errors.New("invalid device registry URL") }; if u.Path != "" && u.Path != "/" { return nil, errors.New("invalid device registry URL") }; u.Path = ""; return u, nil
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
+		return nil, errors.New("invalid device registry URL")
+	}
+	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" {
+		return nil, errors.New("invalid device registry URL")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return nil, errors.New("invalid device registry URL")
+	}
+	// The registry is part of the authorization trust boundary. Plain HTTP is
+	// acceptable only for a loopback development endpoint; a remote registry
+	// must use TLS so an active network attacker cannot alter authorization.
+	if u.Scheme == "http" {
+		host := u.Hostname()
+		ip := net.ParseIP(host)
+		if ip == nil || !ip.IsLoopback() {
+			return nil, errors.New("remote device registry must use HTTPS")
+		}
+	}
+	u.Path = ""
+	return u, nil
 }
 
 // Lookup returns an authorization record by device ID. It is retained for
