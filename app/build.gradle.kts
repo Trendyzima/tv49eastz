@@ -35,7 +35,7 @@ android {
         versionCode = 52
         versionName = "4.0.0"
         vectorDrawables.useSupportLibrary = true
-        
+
         // Fix 16KB native library alignment for Android 15
         // Generate full native debug symbols so they can be uploaded to Play Console
         ndk {
@@ -59,7 +59,7 @@ android {
             }
         }
     }
-    
+
     // Helper: check if release signing config is valid
     val releaseSigningConfigValid = signingConfigs.getByName("release").storeFile != null
 
@@ -70,7 +70,7 @@ android {
             versionNameSuffix = "-beta10.6" // Increment the beta version suffix for each release. Use `beta1` for the first beta release, then `beta2`, etc.
             resValue("string", "app_name", "FadCam Beta")
         }
-        
+
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -81,7 +81,7 @@ android {
             isDebuggable = false
             signingConfig = signingConfigs.getByName("release")
         }
-        
+
         create("pro") {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -95,8 +95,12 @@ android {
                 signingConfig = signingConfigs.getByName("release")
             }
             versionNameSuffix = "-Pro"
+            // Media3 composite libraries expose debug/release variants, not a
+            // product-specific `pro` build type. Keep this app build type while
+            // allowing dependencies to select their compatible release variant.
+            matchingFallbacks += listOf("release")
         }
-        
+
         create("proPlus") {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -113,6 +117,11 @@ android {
             // Custom app name via gradle property
             val customAppName = project.findProperty("customAppName")?.toString() ?: "FadCam Pro+"
             resValue("string", "app_name", customAppName)
+            // The patched Media3 composite build intentionally publishes the
+            // standard debug/release Android variants. `proPlus` is an app-only
+            // build type, so dependency resolution must fall back to release
+            // rather than requiring a nonexistent Media3 proPlus variant.
+            matchingFallbacks += listOf("release")
         }
     }
 
@@ -143,7 +152,7 @@ android {
 // ./gradlew assembleNotesProRelease - Notes Pro variant
 // ./gradlew assembleCalcProRelease - Calculator Pro variant
 // ./gradlew assembleWeatherProRelease - Weather Pro variant
-// ./gradlew assembleDefaultProPlusRelease -PcustomAppName="Custom Name" - Pro+ custom build (standalone)
+// ./gradlew assembleDefaultProPlus -PcustomAppName="Custom Name" - Pro+ custom build (standalone)
 
     // Variant filter: only build specific variants (modern API — the old
     // variantFilter{} is deprecated since AGP 8.x).
@@ -207,7 +216,7 @@ android {
         // NOTE: Removed setSrcDirs(emptyList()) to enable test source detection
         // getByName("test").java.setSrcDirs(emptyList<String>())
         // getByName("androidTest").java.setSrcDirs(emptyList<String>())
-        
+
         // Flavor-specific resources (icons override main icons)
         getByName("notesPro") {
             res.srcDir("src/notesPro/res")
@@ -308,15 +317,15 @@ dependencies {
     implementation(libs.documentfile)
     implementation(libs.localbroadcastmanager)
     implementation(libs.room.runtime)
-    
+
     // Media3 for fragmented MP4 muxing (patched for live streaming via composite build)
     implementation(libs.media3.muxer)
     implementation(libs.media3.common)
     implementation(libs.media3.container)
-    
+
     // NanoHTTPD for HTTP streaming server
     implementation(libs.nanohttpd.core)
-    
+
     // MP4Parser for reliable MP4 box structure parsing
     implementation("com.googlecode.mp4parser:isoparser:1.1.22")
 
