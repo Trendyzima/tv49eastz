@@ -26,7 +26,6 @@ public final class FadCamHandoffVerifier {
         if (!"fadcam".equalsIgnoreCase(uri.getScheme()) || !"stream".equalsIgnoreCase(uri.getHost())) {
             return Result.reject("wrong scheme");
         }
-
         String version = uri.getQueryParameter("v");
         String nonce = uri.getQueryParameter("nonce");
         String iatRaw = uri.getQueryParameter("iat");
@@ -46,7 +45,6 @@ public final class FadCamHandoffVerifier {
             return Result.reject("unexpected publisher package");
         }
         if (!isHttps(streamUrl)) return Result.reject("stream must be HTTPS");
-
         long issuedAt;
         long expiresAt;
         try {
@@ -59,28 +57,20 @@ public final class FadCamHandoffVerifier {
         if (issuedAt > now + MAX_CLOCK_SKEW_MS || expiresAt <= now || expiresAt - issuedAt > 60_000L) {
             return Result.reject("expired or invalid lifetime");
         }
-
-        if (!isSameSigningCertificate(context, packageName)) {
-            return Result.reject("publisher signature mismatch");
-        }
-
+        if (!isSameSigningCertificate(context, packageName)) return Result.reject("publisher signature mismatch");
         synchronized (LOCK) {
             if (USED_NONCES.contains(nonce)) return Result.reject("replayed nonce");
         }
-
         try {
             byte[] publicKeyBytes = Base64.decode(publicKeyRaw, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
             byte[] signatureBytes = Base64.decode(signatureRaw, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
-            KeyFactory factory = KeyFactory.getInstance("EC");
-            PublicKey publicKey = factory.generatePublic(new X509EncodedKeySpec(publicKeyBytes));
-            String canonical = com.fadcam.tv.FadCamTvPublisher.canonical(
-                    1, nonce, issuedAt, expiresAt, packageName, streamUrl,
+            PublicKey publicKey = KeyFactory.getInstance("EC").generatePublic(new X509EncodedKeySpec(publicKeyBytes));
+            String canonical = canonical(1, nonce, issuedAt, expiresAt, packageName, streamUrl,
                     name == null ? "" : name, owner == null ? "" : owner);
             Signature verifier = Signature.getInstance("SHA256withECDSA");
             verifier.initVerify(publicKey);
             verifier.update(canonical.getBytes(StandardCharsets.UTF_8));
             if (!verifier.verify(signatureBytes)) return Result.reject("invalid signature");
-
             synchronized (LOCK) {
                 USED_NONCES.add(nonce);
                 if (USED_NONCES.size() > 1024) USED_NONCES.clear();
@@ -91,11 +81,16 @@ public final class FadCamHandoffVerifier {
         }
     }
 
+    static String canonical(int version, String nonce, long issuedAt, long expiresAt,
+                            String packageName, String streamUrl, String name, String owner) {
+        return version + "|" + nonce + "|" + issuedAt + "|" + expiresAt + "|"
+                + packageName + "|" + streamUrl + "|" + name + "|" + owner;
+    }
+
     private static boolean isSameSigningCertificate(Context context, String packageName) {
         try {
-            int result = context.getPackageManager().checkSignatures(
-                    context.getPackageName(), packageName);
-            return result == PackageManager.SIGNATURE_MATCH;
+            return context.getPackageManager().checkSignatures(context.getPackageName(), packageName)
+                    == PackageManager.SIGNATURE_MATCH;
         } catch (Exception ignored) {
             return false;
         }
@@ -110,9 +105,7 @@ public final class FadCamHandoffVerifier {
         }
     }
 
-    private static boolean empty(String value) {
-        return value == null || value.trim().isEmpty();
-    }
+    private static boolean empty(String value) { return value == null || value.trim().isEmpty(); }
 
     public static final class Result {
         public final boolean accepted;
@@ -120,21 +113,10 @@ public final class FadCamHandoffVerifier {
         public final String streamUrl;
         public final String name;
         public final String owner;
-
         private Result(boolean accepted, String reason, String streamUrl, String name, String owner) {
-            this.accepted = accepted;
-            this.reason = reason;
-            this.streamUrl = streamUrl;
-            this.name = name;
-            this.owner = owner;
+            this.accepted = accepted; this.reason = reason; this.streamUrl = streamUrl; this.name = name; this.owner = owner;
         }
-
-        static Result accept(String url, String name, String owner) {
-            return new Result(true, "", url, name, owner);
-        }
-
-        static Result reject(String reason) {
-            return new Result(false, reason, null, null, null);
-        }
+        static Result accept(String url, String name, String owner) { return new Result(true, "", url, name, owner); }
+        static Result reject(String reason) { return new Result(false, reason, null, null, null); }
     }
 }
