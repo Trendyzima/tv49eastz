@@ -50,6 +50,88 @@ func TestAuthenticateRejectsWrongCredential(t *testing.T) {
 	}
 }
 
+func TestAuthenticateRequiresVerifiedCertificateAndUsesCertificateIdentity(t *testing.T) {
+	cert := testCertificate(t)
+	registry := NewDeviceRegistry()
+	if err := registry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "principal-a",
+		Fingerprint: certificateFingerprint(cert),
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/v1/session", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	r.TLS = verifiedTLSState(cert)
+
+	p, err := authenticateWithRegistry(r, "secret", registry)
+	if err != nil {
+		t.Fatalf("certificate-bound authentication failed: %v", err)
+	}
+	if p.DeviceID != "device-a" || p.UserID != "principal-a" || p.Fingerprint != certificateFingerprint(cert) {
+		t.Fatalf("identity was not derived from certificate-bound registry record: %#v", p)
+	}
+}
+
+func TestAuthenticateRejectsHeaderIdentityMismatch(t *testing.T) {
+	cert := testCertificate(t)
+	registry := NewDeviceRegistry()
+	if err := registry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "principal-a",
+		Fingerprint: certificateFingerprint(cert),
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/v1/session", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	r.Header.Set("X-Device-ID", "device-b")
+	r.TLS = verifiedTLSState(cert)
+
+	if _, err := authenticateWithRegistry(r, "secret", registry); err == nil {
+		t.Fatal("certificate A with forged device-B header was accepted")
+	}
+}
+
+func TestAuthenticateRejectsHeaderOnlyIdentity(t *testing.T) {
+	registry := NewDeviceRegistry()
+	r := httptest.NewRequest("GET", "/v1/session", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	r.Header.Set("X-Device-ID", "device-a")
+
+	if _, err := authenticateWithRegistry(r, "secret", registry); err == nil {
+		t.Fatal("header-only device identity was accepted")
+	}
+}
+
+func TestAuthenticateRejectsRevokedCertificate(t *testing.T) {
+	cert := testCertificate(t)
+	registry := NewDeviceRegistry()
+	if err := registry.Register(DeviceRecord{
+		DeviceID:    "device-a",
+		PrincipalID: "principal-a",
+		Fingerprint: certificateFingerprint(cert),
+		Channels:    map[string]bool{"camera": true},
+		Enabled:     false,
+		Revoked:     true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/v1/session", nil)
+	r.Header.Set("Authorization", "Bearer secret")
+	r.TLS = verifiedTLSState(cert)
+	if _, err := authenticateWithRegistry(r, "secret", registry); err == nil {
+		t.Fatal("revoked certificate was accepted")
+	}
+}
+
 func TestCapabilityTamperingRejected(t *testing.T) {
 	g := &Gateway{cfg: Config{CapabilityKey: "test-secret"}}
 	now := time.Now().UTC().Add(5 * time.Minute)
