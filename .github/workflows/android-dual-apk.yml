@@ -49,7 +49,6 @@ jobs:
           test -d "$MEDIA3_PATCHED_PATH/libraries/common"
           test -d "$MEDIA3_PATCHED_PATH/libraries/container"
           test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
-          echo "Pinned Media3 commit: $actual_sha"
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -63,25 +62,18 @@ jobs:
         run: |
           set -euo pipefail
           rm -f "$CI_KEYSTORE_PATH"
-          keytool -genkeypair -noprompt \
-            -keystore "$CI_KEYSTORE_PATH" \
-            -storepass "$CI_KEYSTORE_PASSWORD" \
-            -keypass "$CI_KEY_PASSWORD" \
-            -alias "$CI_KEY_ALIAS" \
-            -keyalg RSA -keysize 2048 -validity 2 \
-            -dname "CN=tv49eastz CI,O=tv49eastz,C=XX"
+          keytool -genkeypair -noprompt -keystore "$CI_KEYSTORE_PATH" -storepass "$CI_KEYSTORE_PASSWORD" -keypass "$CI_KEY_PASSWORD" -alias "$CI_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname "CN=tv49eastz CI,O=tv49eastz,C=XX"
           chmod 600 "$CI_KEYSTORE_PATH"
-          printf '%s\n' \
-            "KEYSTORE_FILE=$CI_KEYSTORE_PATH" \
-            "KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD" \
-            "KEY_ALIAS=$CI_KEY_ALIAS" \
-            "KEY_PASSWORD=$CI_KEY_PASSWORD" > local.properties
+          printf '%s\n' "KEYSTORE_FILE=$CI_KEYSTORE_PATH" "KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD" "KEY_ALIAS=$CI_KEY_ALIAS" "KEY_PASSWORD=$CI_KEY_PASSWORD" > local.properties
           chmod 600 local.properties
-          test -s "$CI_KEYSTORE_PATH"
-          test -s local.properties
 
-      - name: Make Gradle executable
-        run: chmod +x ./gradlew
+      - name: Prepare Gradle
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ./gradlew
+          chmod +x ./gradlew
+          ./gradlew --version
 
       - name: Verify Android task graph
         shell: bash
@@ -90,11 +82,7 @@ jobs:
           ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/app-tasks.txt
           ./gradlew --no-daemon --no-watch-fs :tv-receiver:tasks --all > /tmp/tv-tasks.txt
           for task in testDefaultDebugUnitTest assembleDefaultDebug assembleDefaultRelease assembleProPlus; do
-            grep -Fq "$task" /tmp/app-tasks.txt || {
-              echo "Missing app task: $task"
-              grep -E '(^|:)assemble|test.*UnitTest' /tmp/app-tasks.txt | head -n 160 || true
-              exit 1
-            }
+            grep -Fq "$task" /tmp/app-tasks.txt || { echo "Missing app task: $task"; exit 1; }
           done
           for task in testDebugUnitTest assembleDebug assembleRelease; do
             grep -Fq "$task" /tmp/tv-tasks.txt || { echo "Missing TV task: $task"; exit 1; }
@@ -105,25 +93,9 @@ jobs:
         run: |
           set -euo pipefail
           verify() {
-            local module="$1"
-            local project="$2"
-            local out="/tmp/dependency-${module//:/-}.txt"
-            echo "=== dependencyInsight: ${module} ==="
-            if ! ./gradlew --no-daemon --no-watch-fs --stacktrace \
-              :app:dependencyInsight \
-              --dependency "$module" \
-              --configuration defaultDebugCompileClasspath >"$out" 2>&1; then
-              cat "$out"
-              echo "FAIL: dependencyInsight failed for ${module}"
-              exit 1
-            fi
-            cat "$out"
-            grep -Fq "project ${project}" "$out" || {
-              echo "FAIL: ${module} is not resolved to expected composite project ${project}"
-              grep -E '^project :media3-patched:lib-' "$out" || true
-              exit 1
-            }
-            echo "PASS: ${module} -> ${project}"
+            local module="$1" project="$2" out="/tmp/dependency-${1//:/-}.txt"
+            ./gradlew --no-daemon --no-watch-fs --stacktrace :app:dependencyInsight --dependency "$module" --configuration defaultDebugCompileClasspath >"$out" 2>&1 || { cat "$out"; exit 1; }
+            grep -Fq "project $project" "$out" || { cat "$out"; echo "FAIL: $module -> $project"; exit 1; }
           }
           verify "androidx.media3:media3-muxer" ":media3-patched:lib-muxer"
           verify "androidx.media3:media3-common" ":media3-patched:lib-common"
@@ -131,56 +103,57 @@ jobs:
 
       - name: Android unit tests
         shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew \
-            :app:test \
-            :tv-receiver:test \
-            --no-daemon --no-watch-fs --stacktrace
+        run: ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
       - name: Build FadCam APKs
         shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew \
-            :app:assembleDebug \
-            :app:assembleRelease \
-            :app:assembleProPlus \
-            --no-daemon --no-watch-fs --stacktrace
+        run: ./gradlew :app:assembleDebug :app:assembleRelease :app:assembleProPlus --no-daemon --no-watch-fs --stacktrace
 
       - name: Build TV receiver APKs
         shell: bash
-        run: |
-          set -euo pipefail
-          ./gradlew \
-            :tv-receiver:assembleDebug \
-            :tv-receiver:assembleRelease \
-            --no-daemon --no-watch-fs --stacktrace
+        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --no-watch-fs --stacktrace
 
-      - name: Verify APK outputs and alignment
+      - name: Resolve Android SDK build-tools
+        id: android-tools
         shell: bash
         run: |
           set -euo pipefail
-          command -v zipalign >/dev/null 2>&1 || {
-            echo "ERROR: zipalign is required for APK certification but is not on PATH"
-            echo "Searching installed Android SDK for zipalign..."
-            find "$ANDROID_HOME" "$ANDROID_SDK_ROOT" -type f -name zipalign -perm -111 2>/dev/null | head -n 20 || true
+          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          test -n "$sdk" && test -d "$sdk"
+          zipalign=""
+          while IFS= read -r candidate; do
+            if [[ -x "$candidate" ]]; then
+              zipalign="$candidate"
+              break
+            fi
+          done < <(find "$sdk/build-tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 2>/dev/null | sort -V -r)
+          if [[ -z "$zipalign" ]]; then
+            echo "ERROR: no executable zipalign found under $sdk/build-tools"
+            find "$sdk/build-tools" -type f -name zipalign -print 2>/dev/null || true
             exit 1
-          }
+          fi
+          echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
+          echo "Using zipalign: $zipalign"
+          "$zipalign" -h >/dev/null
+
+      - name: Verify APK outputs and alignment
+        shell: bash
+        env:
+          ZIPALIGN: ${{ steps.android-tools.outputs.zipalign }}
+        run: |
+          set -euo pipefail
+          test -x "$ZIPALIGN"
           apk_count=0
           for root in app/build/outputs/apk tv-receiver/build/outputs/apk; do
+            [[ -d "$root" ]] || continue
             while IFS= read -r -d '' apk; do
               test -s "$apk"
               echo "APK: $apk"
-              zipalign -c -P 16 -v 4 "$apk"
+              "$ZIPALIGN" -c -P 16 -v 4 "$apk"
               apk_count=$((apk_count + 1))
             done < <(find "$root" -type f -name '*.apk' -print0)
           done
-          test "$apk_count" -ge 6 || {
-            echo "Expected at least 6 APKs, found $apk_count"
-            find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print || true
-            exit 1
-          }
+          test "$apk_count" -ge 6 || { echo "Expected at least 6 APKs, found $apk_count"; find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print || true; exit 1; }
           echo "Certified APK count: $apk_count"
 
       - name: Upload coordinated APK artifacts
