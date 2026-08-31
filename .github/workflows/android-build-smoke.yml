@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
@@ -157,6 +157,43 @@ jobs:
             echo "Commit: $GITHUB_SHA"
           } | tee dist/PAIR-MANIFEST.txt
           cat dist/PAIR-MANIFEST.txt >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update README with paired APK instructions
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          marker="<!-- TV49EAST-APK-PAIR -->"
+          if ! grep -Fq "$marker" README.md; then
+            cat >> README.md <<'EOF'
+
+<!-- TV49EAST-APK-PAIR -->
+## TV 49 East / FadCam paired APKs
+
+The Android integration is shipped as a coordinated pair:
+
+| APK | Application ID | Purpose |
+|---|---|---|
+| `FadCam.apk` | `com.fadcam` | FadCam publisher/source application |
+| `TV49East.apk` | `com.tv49.com` | TV 49 East receiver application |
+
+The pair is built and release-signed with the **same CI certificate** so the TV receiver's signature-level `com.tv49.com.permission.PUBLISH_FADCAM` can authenticate the FadCam publisher. The exact SHA-256 certificate fingerprint is emitted in the `PAIR-MANIFEST.txt` and `signing-certificate.txt` artifacts for every build.
+
+The FadCam handoff uses versioned `fadcam://stream` capability messages containing a nonce, issue time, expiry, publisher package, HTTPS stream URL, creator metadata, public key, and ECDSA signature. The receiver rejects unsigned/forged, expired, replayed, non-HTTPS, or wrong-package handoffs.
+
+### Download
+
+Open the latest **[Android Build Certification](./actions/workflows/android-build-smoke.yml)** run and download the `tv49east-apk-pair-*` artifact. It contains exactly `FadCam.apk`, `TV49East.apk`, and the certificate/pair manifest.
+
+> Production release signing keys are not stored in the repository. The CI pair uses an ephemeral certificate for coordinated certification. For local production signing, sign both APKs with the same release keystore.
+EOF
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add README.md
+            git commit -m "docs(android): document paired FadCam and TV APKs" || exit 0
+            git push "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:master
+          fi
 
       - name: Upload exactly two downloadable APKs
         uses: actions/upload-artifact@v4
