@@ -142,7 +142,9 @@ jobs:
         run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest :tv-receiver:test
 
       - name: Assemble FadCam APK variants
+        shell: bash
         run: |
+          set -euo pipefail
           ./gradlew --no-daemon --no-watch-fs --stacktrace \
             assembleDefaultDebug \
             assembleDefaultRelease \
@@ -152,8 +154,12 @@ jobs:
             assembleProPlus
 
       - name: Assemble TV receiver APK variants
-        run: ./gradlew --no-daemon --no-watch-fs --stacktrace \
-          :tv-receiver:assembleDebug :tv-receiver:assembleRelease
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --no-watch-fs --stacktrace \
+            :tv-receiver:assembleDebug \
+            :tv-receiver:assembleRelease
 
       - name: Verify APK artifacts
         shell: bash
