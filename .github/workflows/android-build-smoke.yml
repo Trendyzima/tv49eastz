@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 60
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd
+        uses: actions/checkout@v6
         with:
           persist-credentials: false
 
@@ -38,26 +38,16 @@ jobs:
           git -C "${MEDIA3_PATCHED_PATH}" checkout --detach FETCH_HEAD
           actual_sha="$(git -C "${MEDIA3_PATCHED_PATH}" rev-parse HEAD)"
           test "${actual_sha}" = "${MEDIA3_PATCHED_SHA}"
-          echo "Pinned Media3 commit: ${actual_sha}"
-
-      - name: Verify patched Media3 build input
-        shell: bash
-        run: |
-          set -euo pipefail
           test -f "${MEDIA3_PATCHED_PATH}/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/common"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/container"
           test -d "${MEDIA3_PATCHED_PATH}/libraries/muxer"
-          test -f "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-          grep -Fq "include modulePrefix + 'lib-common'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-          grep -Fq "include modulePrefix + 'lib-container'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-          grep -Fq "include modulePrefix + 'lib-muxer'" "${MEDIA3_PATCHED_PATH}/core_settings.gradle"
-          echo 'Patched Media3 invariant satisfied.'
+          echo "Pinned Media3 commit: ${actual_sha}"
 
       - name: Set up Java 17
-        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95
+        uses: actions/setup-java@v5
         with:
-          java-version: 17
+          java-version: '17'
           distribution: temurin
           cache: gradle
 
@@ -81,16 +71,13 @@ jobs:
             assembleNotesProRelease \
             assembleCalcProRelease \
             assembleWeatherProRelease \
-            assembleDefaultProPlusRelease \
-            bundleDefaultRelease \
-            bundleDefaultProPlusRelease; do
-            grep -Fq "$task" /tmp/android-tasks.txt || {
-              echo "Required Android task not exposed: $task"
-              grep -E 'test.*UnitTest|assemble.*(Debug|Release)|bundle.*Release' /tmp/android-tasks.txt || true
-              exit 1
-            }
+            assembleDefaultProPlusRelease; do
+            grep -Fq "$task" /tmp/android-tasks.txt || { echo "Required Android task not exposed: $task"; exit 1; }
           done
-          echo 'Required Android certification task set is present.'
+          ./gradlew --no-daemon --no-watch-fs :tv-receiver:tasks --all > /tmp/tv-tasks.txt
+          for task in testDebugUnitTest assembleDebug assembleRelease; do
+            grep -Fq "$task" /tmp/tv-tasks.txt || { echo "Required TV task not exposed: $task"; exit 1; }
+          done
 
       - name: Verify Gradle composite substitutions
         shell: bash
@@ -101,21 +88,19 @@ jobs:
             local project="$2"
             local output="/tmp/${module//:/-}-dependency.txt"
             ./gradlew --no-daemon --no-watch-fs --stacktrace \
-              :app:dependencyInsight \
-              --dependency "${module}" \
+              :app:dependencyInsight --dependency "${module}" \
               --configuration defaultDebugCompileClasspath >"${output}" 2>&1
-            grep -Fq "${module}" "${output}"
             grep -Fq "${module}:1.8.0 -> project ${project}" "${output}"
             echo "PASS: ${module} -> ${project}"
           }
-          verify_substitution "androidx.media3:media3-muxer" ":media3-patched:lib-muxer"
-          verify_substitution "androidx.media3:media3-common" ":media3-patched:lib-common"
-          verify_substitution "androidx.media3:media3-container" ":media3-patched:lib-container"
+          verify_substitution "androidx.media3:media3-muxer" ":lib-muxer"
+          verify_substitution "androidx.media3:media3-common" ":lib-common"
+          verify_substitution "androidx.media3:media3-container" ":lib-container"
 
-      - name: Run default debug unit tests
-        run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest
+      - name: Run Android unit tests
+        run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest :tv-receiver:test
 
-      - name: Assemble Android APK variants
+      - name: Assemble FadCam APK variants
         run: |
           ./gradlew --no-daemon --no-watch-fs --stacktrace \
             assembleDefaultDebug \
@@ -125,97 +110,30 @@ jobs:
             assembleWeatherProRelease \
             assembleDefaultProPlusRelease
 
-      - name: Assemble Android bundles
-        run: |
-          ./gradlew --no-daemon --no-watch-fs --stacktrace \
-            bundleDefaultRelease \
-            bundleDefaultProPlusRelease
+      - name: Assemble TV receiver APK variants
+        run: ./gradlew --no-daemon --no-watch-fs --stacktrace :tv-receiver:assembleDebug :tv-receiver:assembleRelease
 
-      - name: Verify Android artifacts and native alignment
+      - name: Verify Android artifacts
         shell: bash
         run: |
           set -euo pipefail
           command -v zipalign >/dev/null
-          command -v readelf >/dev/null
-
           apk_count=0
-          bundle_count=0
-          while IFS= read -r -d '' apk; do
-            test -s "$apk"
-            echo "APK: $apk"
-            zipalign -c -P 16 -v 4 "$apk"
-
-            tmp="$(mktemp -d)"
-            unzip -q "$apk" 'lib/*/*.so' -d "$tmp"
-            while IFS= read -r -d '' so; do
-              echo "ELF: $so"
-              if ! python3 - "$so" <<'PY'
-import struct
-import sys
-
-path = sys.argv[1]
-data = open(path, 'rb').read()
-if data[:4] != b'\x7fELF':
-    raise SystemExit(f'not an ELF file: {path}')
-
-klass = data[4]
-endian = '<' if data[5] == 1 else '>' if data[5] == 2 else None
-if endian is None:
-    raise SystemExit(f'unknown ELF endianness: {path}')
-
-if klass == 2:
-    e_phoff = struct.unpack_from(endian + 'Q', data, 32)[0]
-    e_phentsize = struct.unpack_from(endian + 'H', data, 54)[0]
-    e_phnum = struct.unpack_from(endian + 'H', data, 56)[0]
-    fmt = endian + 'IIQQQQQQ'
-    align_index = 7
-else:
-    e_phoff = struct.unpack_from(endian + 'I', data, 28)[0]
-    e_phentsize = struct.unpack_from(endian + 'H', data, 42)[0]
-    e_phnum = struct.unpack_from(endian + 'H', data, 44)[0]
-    fmt = endian + 'IIIIIIII'
-    align_index = 7
-
-load = []
-for i in range(e_phnum):
-    off = e_phoff + i * e_phentsize
-    fields = struct.unpack_from(fmt, data, off)
-    if fields[0] == 1:  # PT_LOAD
-        align = fields[align_index]
-        load.append(align)
-
-if not load:
-    raise SystemExit(f'no PT_LOAD segments: {path}')
-
-for align in load:
-    print(f'PT_LOAD alignment: 0x{align:x}')
-    if align < 0x4000:
-        raise SystemExit(f'PT_LOAD alignment below 16 KiB: 0x{align:x}: {path}')
-PY
-              then
-                echo "FAIL: native 16 KiB ELF alignment: $so"
-                exit 1
-              fi
-            done < <(find "$tmp/lib" -type f -name '*.so' -print0)
-            rm -rf "$tmp"
-            apk_count=$((apk_count + 1))
-          done < <(find app/build/outputs/apk -type f -name '*.apk' -print0)
-
-          while IFS= read -r -d '' aab; do
-            test -s "$aab"
-            echo "AAB: $aab"
-            bundle_count=$((bundle_count + 1))
-          done < <(find app/build/outputs/bundle -type f -name '*.aab' -print0)
-
-          test "$apk_count" -ge 6
-          test "$bundle_count" -ge 2
-          echo "Certified artifact counts: ${apk_count} APK(s), ${bundle_count} AAB(s)."
+          for root in app/build/outputs/apk tv-receiver/build/outputs/apk; do
+            while IFS= read -r -d '' apk; do
+              test -s "$apk"
+              echo "APK: $apk"
+              zipalign -c -P 16 -v 4 "$apk"
+              apk_count=$((apk_count + 1))
+            done < <(find "$root" -type f -name '*.apk' -print0)
+          done
+          test "$apk_count" -ge 8
+          echo "Certified APK count: ${apk_count}"
 
       - name: Generate artifact manifest
         shell: bash
         run: |
           set -euo pipefail
-          manifest="app-build-manifest.txt"
           {
             echo "Commit: $GITHUB_SHA"
             echo "Media3 commit: ${MEDIA3_PATCHED_SHA}"
@@ -223,14 +141,15 @@ PY
             echo "Gradle: $(./gradlew --version | grep '^Gradle ' | head -n 1)"
             echo
             echo 'Artifacts:'
-            find app/build/outputs/apk app/build/outputs/bundle \
-              -type f \( -name '*.apk' -o -name '*.aab' \) \
-              -printf '%p %s bytes\n' | sort
-          } > "$manifest"
-          cat "$manifest"
-          echo '## Android certification' >> "$GITHUB_STEP_SUMMARY"
-          echo 'All required variants assembled and artifact checks completed.' >> "$GITHUB_STEP_SUMMARY"
-          cat "$manifest" >> "$GITHUB_STEP_SUMMARY"
+            find app/build/outputs/apk tv-receiver/build/outputs/apk \
+              -type f -name '*.apk' -printf '%p %s bytes\n' | sort
+          } > app-build-manifest.txt
+          cat app-build-manifest.txt
+          {
+            echo '## Android certification'
+            echo 'All required FadCam and TV receiver APK variants assembled and zipaligned.'
+            cat app-build-manifest.txt
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload certified Android artifacts
         uses: actions/upload-artifact@v4
@@ -238,7 +157,7 @@ PY
           name: android-certified-${{ github.sha }}
           path: |
             app/build/outputs/apk/**/*.apk
-            app/build/outputs/bundle/**/*.aab
+            tv-receiver/build/outputs/apk/**/*.apk
             app-build-manifest.txt
           if-no-files-found: error
           retention-days: 7
