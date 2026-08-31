@@ -81,7 +81,11 @@ jobs:
           test -s local.properties
 
       - name: Make Gradle executable
-        run: chmod +x ./gradlew
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f ./gradlew
+          chmod +x ./gradlew
 
       - name: Verify Android task graph
         shell: bash
@@ -118,7 +122,7 @@ jobs:
               exit 1
             fi
             cat "$out"
-            grep -Fq "project ${project} " "$out" || {
+            grep -Fq "project ${project}" "$out" || {
               echo "FAIL: ${module} is not resolved to expected composite project ${project}"
               grep -E '^project :media3-patched:lib-' "$out" || true
               exit 1
@@ -130,18 +134,35 @@ jobs:
           verify "androidx.media3:media3-container" ":media3-patched:lib-container"
 
       - name: Android unit tests
-        run: ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
       - name: Build FadCam APKs
-        run: ./gradlew :app:assembleDebug :app:assembleRelease :app:assembleProPlus --no-daemon --no-watch-fs --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            :app:assembleDebug \
+            :app:assembleRelease \
+            :app:assembleProPlus \
+            --no-daemon --no-watch-fs --stacktrace
 
       - name: Build TV receiver APKs
-        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --no-watch-fs --stacktrace
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
+            :tv-receiver:assembleDebug \
+            :tv-receiver:assembleRelease \
+            --no-daemon --no-watch-fs --stacktrace
 
       - name: Verify APK outputs and alignment
         shell: bash
         run: |
           set -euo pipefail
+          command -v zipalign >/dev/null || { echo "zipalign not installed"; exit 1; }
           apk_count=0
           for root in app/build/outputs/apk tv-receiver/build/outputs/apk; do
             while IFS= read -r -d '' apk; do
