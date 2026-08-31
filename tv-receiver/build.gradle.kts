@@ -1,20 +1,40 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.androidApplication)
 }
 
 android {
-    namespace = "com.tv49east"
+    namespace = "com.tv49.com"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.tv49east"
+        applicationId = "com.tv49.com"
         minSdk = 24
         targetSdk = 36
-        versionCode = 2
-        versionName = "2.0.0"
+        versionCode = 3
+        versionName = "2.1.0"
         val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim().orEmpty()
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
+
+    signingConfigs {
+        create("release") {
+            val props = Properties()
+            rootProject.file("local.properties").takeIf { it.exists() }?.inputStream().use { stream ->
+                stream?.let { props.load(it) }
+            }
+            val keystoreFile = props.getProperty("KEYSTORE_FILE", "")
+            if (keystoreFile.isNotEmpty() && file(keystoreFile).exists()) {
+                storeFile = file(keystoreFile)
+                storePassword = props.getProperty("KEYSTORE_PASSWORD", "")
+                keyAlias = props.getProperty("KEY_ALIAS", "")
+                keyPassword = props.getProperty("KEY_PASSWORD", "")
+            }
+        }
+    }
+
+    val releaseSigningConfigValid = signingConfigs.getByName("release").storeFile != null
 
     buildTypes {
         debug {
@@ -28,6 +48,7 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
+            if (releaseSigningConfigValid) signingConfig = signingConfigs.getByName("release")
         }
     }
 
