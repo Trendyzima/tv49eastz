@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.net.Uri;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
+import android.util.Base64;
 
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPairGenerator;
@@ -12,14 +13,9 @@ import java.security.KeyStore;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.cert.Certificate;
-import java.util.Base64;
 import java.util.UUID;
 
-/**
- * Single integration point for publishing a FadCam stream to the TV receiver.
- * The receiver is protected by a signature permission; the handoff payload is
- * additionally signed by a per-install Android Keystore key.
- */
+/** Single integration point for authenticated FadCam → TV publishing. */
 public final class FadCamTvPublisher {
     public static final String RECEIVER_PACKAGE = "com.tv49.com";
     public static final String ACTION_HANDOFF = Intent.ACTION_VIEW;
@@ -42,7 +38,6 @@ public final class FadCamTvPublisher {
             String packageName = context.getPackageName();
             String canonical = canonical(PROTOCOL_VERSION, nonce, issuedAt, expiresAt,
                     packageName, streamUrl, safe(name), safe(owner));
-
             KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
             ks.load(null);
             PrivateKey privateKey = (PrivateKey) ks.getKey(KEY_ALIAS, null);
@@ -53,8 +48,7 @@ public final class FadCamTvPublisher {
             Certificate cert = ks.getCertificate(KEY_ALIAS);
             String publicKey = b64(cert.getPublicKey().getEncoded());
 
-            Uri uri = Uri.parse("fadcam://stream")
-                    .buildUpon()
+            Uri uri = Uri.parse("fadcam://stream").buildUpon()
                     .appendQueryParameter("v", Integer.toString(PROTOCOL_VERSION))
                     .appendQueryParameter("nonce", nonce)
                     .appendQueryParameter("iat", Long.toString(issuedAt))
@@ -66,7 +60,6 @@ public final class FadCamTvPublisher {
                     .appendQueryParameter("pub", publicKey)
                     .appendQueryParameter("sig", signature)
                     .build();
-
             Intent intent = new Intent(ACTION_HANDOFF, uri);
             intent.setPackage(RECEIVER_PACKAGE);
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
@@ -87,12 +80,9 @@ public final class FadCamTvPublisher {
         KeyStore ks = KeyStore.getInstance("AndroidKeyStore");
         ks.load(null);
         if (ks.containsAlias(KEY_ALIAS)) return;
-        KeyPairGenerator generator = KeyPairGenerator.getInstance(
-                KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore");
-        generator.initialize(new KeyGenParameterSpec.Builder(
-                KEY_ALIAS, KeyProperties.PURPOSE_SIGN)
-                .setDigests(KeyProperties.DIGEST_SHA256)
-                .build());
+        KeyPairGenerator generator = KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_EC, "AndroidKeyStore");
+        generator.initialize(new KeyGenParameterSpec.Builder(KEY_ALIAS, KeyProperties.PURPOSE_SIGN)
+                .setDigests(KeyProperties.DIGEST_SHA256).build());
         generator.generateKeyPair();
     }
 
@@ -100,16 +90,12 @@ public final class FadCamTvPublisher {
         try {
             Uri uri = Uri.parse(value == null ? "" : value.trim());
             return "https".equalsIgnoreCase(uri.getScheme()) && uri.getHost() != null;
-        } catch (Exception ignored) {
-            return false;
-        }
+        } catch (Exception ignored) { return false; }
     }
 
-    private static String safe(String value) {
-        return value == null ? "" : value.trim();
-    }
+    private static String safe(String value) { return value == null ? "" : value.trim(); }
 
     private static String b64(byte[] value) {
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(value);
+        return Base64.encodeToString(value, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
     }
 }
