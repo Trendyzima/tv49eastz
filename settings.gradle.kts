@@ -25,7 +25,11 @@ rootProject.name = "FadCam"
 include(":app")
 include(":tv-receiver")
 
-// Include patched Media3 as composite build for live streaming support.
+// Include the pinned patched Media3 composite build. The streaming path relies
+// on the patched muxer/common/container artifacts, so silently falling back to
+// upstream Media3 would produce a binary that is buildable but functionally
+// different from the certified system. Fail closed when the required checkout
+// is absent.
 val media3PatchedPath = if (file("local.properties").exists()) {
     val props = java.util.Properties()
     file("local.properties").inputStream().use { props.load(it) }
@@ -34,14 +38,17 @@ val media3PatchedPath = if (file("local.properties").exists()) {
     "/tmp/media3-patched"
 }
 
-if (file(media3PatchedPath).exists()) {
-    includeBuild(media3PatchedPath) {
-        dependencySubstitution {
-            substitute(module("androidx.media3:media3-muxer")).using(project(":lib-muxer"))
-            substitute(module("androidx.media3:media3-common")).using(project(":lib-common"))
-            substitute(module("androidx.media3:media3-container")).using(project(":lib-container"))
-        }
+if (!file(media3PatchedPath).isDirectory) {
+    throw GradleException(
+        "Pinned patched Media3 checkout is required at '$media3PatchedPath'. " +
+            "Fetch the certified Media3 revision before building."
+    )
+}
+
+includeBuild(media3PatchedPath) {
+    dependencySubstitution {
+        substitute(module("androidx.media3:media3-muxer")).using(project(":lib-muxer"))
+        substitute(module("androidx.media3:media3-common")).using(project(":lib-common"))
+        substitute(module("androidx.media3:media3-container")).using(project(":lib-container"))
     }
-} else {
-    logger.warn("Patched Media3 not found at: $media3PatchedPath")
 }
