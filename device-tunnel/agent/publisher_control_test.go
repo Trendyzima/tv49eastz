@@ -8,6 +8,10 @@ import (
 	"crypto/x509"
 	"encoding/base64"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -48,4 +52,34 @@ func TestPublisherControlLoopbackAddress(t *testing.T) {
 	for _, addr := range invalid {
 		if isLoopbackListenAddress(addr) { t.Errorf("expected non-loopback address rejected: %s", addr) }
 	}
+}
+
+func TestPublisherEnrollmentPinsAndroidKey(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil { t.Fatal(err) }
+	der, err := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	if err != nil { t.Fatal(err) }
+	path := filepath.Join(t.TempDir(), "publisher-key.der")
+	p := &publisherControl{
+		deviceID:       "device-1",
+		publicKeyPath:  path,
+		enrollToken:    "one-time-token",
+		nonces:         make(map[string]time.Time),
+	}
+	body := fmt.Sprintf(`{"token":"one-time-token","device_id":"device-1","pub":"%s"}`,
+		base64.RawURLEncoding.EncodeToString(der))
+	req := httptest.NewRequest(http.MethodPost, publisherEnrollPath, strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	p.handleEnroll(rec, req)
+	if rec.Code != http.StatusOK { t.Fatalf("enrollment failed: %d %s", rec.Code, rec.Body.String()) }
+	if p.enrollToken != "" { t.Fatal("enrollment token was not cleared") }
+	persisted, err := os.ReadFile(path)
+	if err != nil { t.Fatal(err) }
+	if string(persisted) != string(der) { t.Fatal("persisted publisher key differs from enrolled key") }
+	if p.publicKey == nil || !p.publicKey.Equal(&key.PublicKey) { t.Fatal("enrolled public key not pinned") }
+
+	req = httptest.NewRequest(http.MethodPost, publisherEnrollPath, strings.NewReader(body))
+	rec = httptest.NewRecorder()
+	p.handleEnroll(rec, req)
+	if rec.Code != http.StatusNotFound { t.Fatalf("expected one-shot enrollment to be disabled, got %d", rec.Code) }
 }
