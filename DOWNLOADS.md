@@ -4,16 +4,16 @@ This is the canonical download page for the Android builds produced by TV 49 Eas
 
 ## 📱 Latest APKs
 
-The `master` Android CI workflow now builds both applications and publishes a **Latest CI Build** GitHub Release containing real APK assets. That means these links point to actual files rather than an empty/nonexistent release:
+The `master` Android certification workflow now builds both applications and publishes a **Latest Verified CI Build** GitHub Release containing real APK assets. That means these links point to actual files rather than an empty/nonexistent release:
 
 | App | Package | Download |
 |---|---|---|
 | **FadCam** | `com.fadcam` | [Download latest FadCam APK](https://github.com/Trendyzima/tv49eastz/releases/download/latest/FadCam.apk) |
 | **TV 49 East** | `com.tv49.com` | [Download latest TV 49 East APK](https://github.com/Trendyzima/tv49eastz/releases/download/latest/TV49East.apk) |
 
-**Latest CI release:** https://github.com/Trendyzima/tv49eastz/releases/tag/latest
+**Latest verified CI release:** https://github.com/Trendyzima/tv49eastz/releases/tag/latest
 
-These `latest` APKs are **CI-signed testing builds**, not production-signed builds. They are generated from the current `master` commit after the Android tests and APK build succeed.
+These `latest` APKs are **CI-signed testing builds**, not production-signed builds. They are generated from the current `master` commit only after the Android unit tests, APK alignment, package-ID checks, and shared-signing-certificate verification pass.
 
 ## 🔐 Production APKs
 
@@ -33,16 +33,14 @@ Once a production versioned release exists, its `FadCam.apk` and `TV49East.apk` 
 
 ## What CI generates
 
-Every successful Android CI build also uploads a workflow artifact containing:
+Every successful Android certification build also uploads a workflow artifact containing:
 
-- `FadCam-debug.apk`
-- `FadCam-release-ci.apk`
-- `TV49East-debug.apk`
-- `TV49East-release-ci.apk`
-- `SHA256SUMS.txt`
-- `BUILD-INFO.txt`
+- `FadCam.apk`
+- `TV49East.apk`
+- `PAIR-MANIFEST.txt`
+- `signing-certificate.txt`
 
-The GitHub Release additionally exposes stable asset names `FadCam.apk` and `TV49East.apk` for the latest CI build so users do not need to open the Actions artifact ZIP.
+The GitHub Release exposes the same `FadCam.apk` and `TV49East.apk` assets directly, so users do not need to open the Actions artifact ZIP.
 
 ## Build wiring
 
@@ -53,16 +51,14 @@ The repository contains two Android application modules:
 :tv-receiver  → TV 49 East APK (`com.tv49.com`)
 ```
 
-The Android CI workflow explicitly runs:
+The Android certification workflow explicitly runs:
 
 ```text
-:app:assembleDefaultDebug
 :app:assembleDefaultRelease
-:tv-receiver:assembleDebug
 :tv-receiver:assembleRelease
 ```
 
-It then fails closed if any of the four expected APKs is missing or empty before publishing the CI release assets.
+It then fails closed if either APK is missing, empty, misaligned, has the wrong package ID, or does not use the expected shared CI signing certificate before publishing the download assets.
 
 The production release workflow explicitly runs:
 
@@ -76,4 +72,4 @@ and validates the resulting production APK/AAB files before publishing them.
 
 ## Verification policy
 
-An APK being downloadable proves that the build pipeline produced a file; it does **not** by itself certify FadCam → TV end-to-end playback. Runtime certification still requires the physical-device Gate 1 sequence documented in the README.
+An APK being downloadable proves that the build pipeline produced a verified file; it does **not** by itself certify FadCam → TV end-to-end playback. Runtime certification still requires the physical-device Gate 1 sequence documented in the README.
