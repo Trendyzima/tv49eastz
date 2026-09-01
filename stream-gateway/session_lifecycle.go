@@ -5,7 +5,6 @@ import (
     "errors"
     "net/http"
     "strings"
-    "sync/atomic"
 )
 
 // reserveSessionSlot atomically enforces the configured concurrent-session cap.
@@ -60,9 +59,8 @@ func (g *Gateway) revokeSession(id string) bool {
     return true
 }
 
-// revokeSessionHandler is deliberately authenticated with the same verified
-// API + mTLS device identity as session creation. The caller can only revoke
-// its own device's session, preventing one device from terminating another.
+// revokeSessionHandler is authenticated with the same verified API + mTLS
+// device identity as session creation. A device can only revoke its own session.
 func (g *Gateway) revokeSessionHandler(w http.ResponseWriter, r *http.Request) {
     principal, err := authenticate(r, g.cfg.APIKey)
     if err != nil {
@@ -95,8 +93,6 @@ func (g *Gateway) revokeSessionHandler(w http.ResponseWriter, r *http.Request) {
     w.WriteHeader(http.StatusNoContent)
 }
 
-// decodeSessionRequest accepts only a small JSON object for POST session
-// creation. Keeping this separate makes the mutation contract explicit.
 type sessionRequest struct {
     ChannelID string `json:"channel_id"`
     StreamID  string `json:"stream_id"`
@@ -120,5 +116,3 @@ func decodeSessionRequest(r *http.Request) (string, string, error) {
     }
     return channelID, streamID, nil
 }
-
-var _ atomic.Int64
