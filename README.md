@@ -6,20 +6,29 @@
 
 ### Android APKs
 
-Once a versioned production tag (`v*`) passes the production verification job, GitHub Actions publishes the signed binaries as a GitHub Release.
+Production APKs are **release-backed**. They are published only after a versioned `v*` tag passes the production verification and signed-release workflow. The repository currently has **no published GitHub Releases**, so production APK download URLs are not live yet.
 
-| Application | Direct APK |
+**Current status:** 🟡 No production release published yet.
+
+| Application | Production download |
 |---|---|
-| **FadCam** | [Download FadCam.apk](https://github.com/Trendyzima/tv49eastz/releases/latest/download/FadCam.apk) |
-| **TV 49 East** | [Download TV49East.apk](https://github.com/Trendyzima/tv49eastz/releases/latest/download/TV49East.apk) |
+| **FadCam** | Not published yet — use the [Latest build downloads](#latest-build-downloads) for a test APK |
+| **TV 49 East** | Not published yet — use the [Latest build downloads](#latest-build-downloads) for a test APK |
+
+When the first production release is published, this section will point to the release-backed APKs:
+
+```text
+https://github.com/Trendyzima/tv49eastz/releases/latest/download/FadCam.apk
+https://github.com/Trendyzima/tv49eastz/releases/latest/download/TV49East.apk
+```
 
 The production release also publishes the FadCam AAB, SHA-256 checksums, and release-certificate information.
 
-> **Production download status:** these URLs are intentionally release-backed. They become live only after a successful versioned production release is published. Do not treat a missing `latest` release as a valid APK.
+> **Important:** Do not use a `releases/latest/download/...` URL until a release exists. GitHub currently reports zero published releases for this repository, so those URLs cannot resolve to APK files yet.
 
 ## Latest build downloads
 
-Every push to `master` now runs the Android APK build workflow. It builds both applications and uploads a coordinated artifact containing:
+Every push to `master` runs the Android APK build workflow. It builds both applications and uploads a coordinated artifact containing:
 
 - `FadCam-debug.apk` — debug/test build
 - `FadCam-release-ci.apk` — CI-signed release variant for testing
@@ -28,11 +37,17 @@ Every push to `master` now runs the Android APK build workflow. It builds both a
 - `SHA256SUMS.txt` — checksums for all APKs
 - `BUILD-INFO.txt` — exact source commit and patched Media3 commit used
 
-**Easy download:** open the latest successful Android APK workflow run, then download the `tv49east-android-apks-*` artifact.
+### How to get the current APKs
 
-[Open Android APK builds](https://github.com/Trendyzima/tv49eastz/actions/workflows/android-dual-apk.yml)
+1. Open **[Android APK Builds](https://github.com/Trendyzima/tv49eastz/actions/workflows/android-dual-apk.yml)**.
+2. Open the newest **successful** workflow run.
+3. Scroll to **Artifacts**.
+4. Download `tv49east-android-apks-<commit-sha>`.
+5. Extract the ZIP and install the APK appropriate for your device.
 
-> **Important:** CI release APKs are test artifacts signed with an ephemeral CI key. They are not the production release signing identity. Use the Production downloads above for production-distributed binaries.
+The workflow itself is the authoritative source for these test APKs; there is intentionally no fake or unstable `latest` artifact URL in this README.
+
+> **Important:** CI release APKs are test artifacts signed with an ephemeral CI key. They are not the production release signing identity. Use a published GitHub Release for production-distributed binaries.
 
 ## Production release process
 
@@ -57,7 +72,7 @@ GitHub artifact upload
         ↓
 GitHub Release publication
         ↓
-README direct-download links
+README release-backed downloads become live
 ```
 
 The production release workflow requires the repository's Android release-signing secrets and fails closed if they are absent. It also pins the certified patched Media3 checkout before building.
