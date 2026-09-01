@@ -107,6 +107,9 @@ jobs:
 
       - name: Collect release artifacts
         shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -122,7 +125,7 @@ jobs:
           sha256sum dist/FadCam.aab dist/FadCam.apk dist/TV49East.apk | tee dist/SHA256SUMS.txt
           keytool -list -v -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | grep -E 'Owner:|SHA256:' > dist/RELEASE-CERTIFICATE.txt
 
-      - name: Generate release provenance
+      - name: Generate FadCam AAB provenance
         uses: actions/attest@v4
         with:
           subject-path: 'dist/FadCam.aab'
