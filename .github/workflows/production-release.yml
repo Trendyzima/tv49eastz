@@ -11,7 +11,7 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
   attestations: write
 
@@ -112,6 +112,8 @@ jobs:
           git -C "$MEDIA3_PATCHED_PATH" checkout --detach FETCH_HEAD
           test "$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)" = "$MEDIA3_PATCHED_SHA"
           test -f "$MEDIA3_PATCHED_PATH/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
+          printf '%s\n' "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
+          chmod 600 local.properties
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -197,3 +199,20 @@ jobs:
             dist/TV49East.apk
             dist/SHA256SUMS.txt
             dist/RELEASE-CERTIFICATE.txt
+
+      - name: Publish GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" \
+            dist/FadCam.apk \
+            dist/TV49East.apk \
+            dist/FadCam.aab \
+            dist/SHA256SUMS.txt \
+            dist/RELEASE-CERTIFICATE.txt \
+            --verify-tag \
+            --title "TV 49 East $GITHUB_REF_NAME" \
+            --generate-notes
