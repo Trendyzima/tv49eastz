@@ -138,7 +138,7 @@ func (r *DeviceRegistry) subscribe(buffer int) (<-chan DeviceEvent, func()) {
 	r.mu.Unlock()
 	return ch, func() {
 		r.mu.Lock()
-		if _, ok := r.subscribers[ch]; ok {
+	if _, ok := r.subscribers[ch]; ok {
 			delete(r.subscribers, ch)
 			close(ch)
 		}
@@ -477,7 +477,7 @@ func (b *broker) registryAuthorize(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"device_id": d.DeviceID, "principal_id": d.PrincipalID, "enabled": d.Enabled, "revoked": d.RevokedAt != nil, "channels": d.Channels})
+	_ = json.NewEncoder(w).Encode(map[string]any{"device_id": d.DeviceID, "principal_id": d.PrincipalID, "fingerprint": d.Fingerprint, "enabled": d.Enabled, "revoked": d.RevokedAt != nil, "channels": d.Channels})
 }
 
 func (b *broker) health(w http.ResponseWriter, r *http.Request) {
