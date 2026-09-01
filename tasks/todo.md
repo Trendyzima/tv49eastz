@@ -1,14 +1,14 @@
-# Forensic Android Build Repair
+# APK download and build integration
 
-- [x] Reproduce and identify the malformed Gradle task invocation from CI logs.
-- [x] Verify Android SDK `zipalign` exists on the runner and distinguish discovery from execution.
-- [x] Trace the certification failure to the unsupported `zipalign version` invocation.
-- [x] Replace the unsupported health check with banner/status validation that accepts the tool's expected usage status.
-- [x] Apply the fix to both Android certification workflows.
-- [x] Preserve real APK certification with `zipalign -c -P 16 -v 4`.
-- [x] Record the failure pattern in `tasks/lessons.md`.
-- [ ] Verify the next clean GitHub Actions runs end-to-end; treat any subsequent failure as a new root-cause defect.
+- [x] Audit the Android modules and existing APK workflows.
+- [x] Confirm the FadCam module and TV receiver module have APK-producing Gradle tasks.
+- [x] Confirm the TV receiver application ID is `com.tv49.com`.
+- [x] Add a dedicated APK download page/documentation with stable release links.
+- [x] Add README navigation to the APK download page and direct latest-release APK links.
+- [x] Keep CI APK artifacts and production release APK assets aligned with the documented filenames.
+- [ ] Verify a GitHub Actions APK build passes on the resulting commit.
+- [ ] Verify a tagged production release publishes both signed APKs.
 
 ## Review
 
-The repository was inspected against the failing CI evidence before changing the certification command. The current build logs show Gradle progressing through APK compilation/packaging; the reported `zipalign not installed` and later usage output were certification-layer defects, not evidence that the APK builds themselves failed. The final verification remains intentionally strict: real APKs must pass zipalign's check mode and the expected artifact count must be present.
+The repository already had the core APK build machinery. The missing piece was discoverability: README did not expose a user-facing download page, while production release publishing was already prepared to attach `FadCam.apk` and `TV49East.apk`. This change makes the release surface explicit without bypassing the existing test/signing gates.
