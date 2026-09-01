@@ -4,8 +4,10 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"encoding/base64"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -18,9 +20,9 @@ func TestPublisherRequestSignatureAndReplay(t *testing.T) {
 	p := &publisherControl{deviceID: "device-1", publicKey: &key.PublicKey, publicKeyBytes: der, nonces: make(map[string]time.Time)}
 	issued := time.Now().Unix()
 	nonce := "nonce-1"
-	canonical := "1|" + nonce + "|" + formatInt(issued) + "|device-1|fadcam-local|camera"
-	digest := sha256Bytes(canonical)
-	sig, err := ecdsa.SignASN1(rand.Reader, key, digest)
+	canonical := fmt.Sprintf("1|%s|%d|device-1|fadcam-local|camera", nonce, issued)
+	digest := sha256.Sum256([]byte(canonical))
+	sig, err := ecdsa.SignASN1(rand.Reader, key, digest[:])
 	if err != nil { t.Fatal(err) }
 	req := publisherRequest{Version:1, Nonce:nonce, IssuedAt:issued, DeviceID:"device-1", ChannelID:"fadcam-local", StreamID:"camera", PublicKey:base64.RawURLEncoding.EncodeToString(der), Signature:base64.RawURLEncoding.EncodeToString(sig)}
 	if err := p.verifyRequest(req); err != nil { t.Fatalf("valid request rejected: %v", err) }
