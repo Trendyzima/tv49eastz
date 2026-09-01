@@ -2,22 +2,38 @@
 
 This is the canonical download page for the Android builds produced by TV 49 East.
 
-## Stable APKs
+## 📱 Latest APKs
 
-The production release workflow publishes these two signed APKs to every versioned GitHub Release:
+The `master` Android CI workflow now builds both applications and publishes a **Latest CI Build** GitHub Release containing real APK assets. That means these links point to actual files rather than an empty/nonexistent release:
 
 | App | Package | Download |
 |---|---|---|
-| **FadCam** | `com.fadcam` | [Download FadCam.apk](https://github.com/Trendyzima/tv49eastz/releases/latest/download/FadCam.apk) |
-| **TV 49 East** | `com.tv49.com` | [Download TV49East.apk](https://github.com/Trendyzima/tv49eastz/releases/latest/download/TV49East.apk) |
+| **FadCam** | `com.fadcam` | [Download latest FadCam APK](https://github.com/Trendyzima/tv49eastz/releases/download/latest/FadCam.apk) |
+| **TV 49 East** | `com.tv49.com` | [Download latest TV 49 East APK](https://github.com/Trendyzima/tv49eastz/releases/download/latest/TV49East.apk) |
 
-**Latest release page:** https://github.com/Trendyzima/tv49eastz/releases/latest
+**Latest CI release:** https://github.com/Trendyzima/tv49eastz/releases/tag/latest
 
-If no release has been published yet, the stable download links will remain unavailable until the first `v*` tag completes the production release workflow.
+These `latest` APKs are **CI-signed testing builds**, not production-signed builds. They are generated from the current `master` commit after the Android tests and APK build succeed.
+
+## 🔐 Production APKs
+
+Versioned `v*` releases are produced by the separate production-release workflow. That workflow requires the repository's production signing secrets, runs its verification gates, signs the APKs, generates provenance/checksums, and publishes:
+
+```text
+dist/FadCam.apk
+dist/TV49East.apk
+dist/FadCam.aab
+dist/SHA256SUMS.txt
+dist/RELEASE-CERTIFICATE.txt
+```
+
+Once a production versioned release exists, its `FadCam.apk` and `TV49East.apk` are the production downloads. The `/releases/latest` page will then point to the newest eligible release according to GitHub's release ordering.
+
+**Production releases:** https://github.com/Trendyzima/tv49eastz/releases
 
 ## What CI generates
 
-The Android build workflow builds and uploads these test artifacts on successful CI runs:
+Every successful Android CI build also uploads a workflow artifact containing:
 
 - `FadCam-debug.apk`
 - `FadCam-release-ci.apk`
@@ -26,18 +42,29 @@ The Android build workflow builds and uploads these test artifacts on successful
 - `SHA256SUMS.txt`
 - `BUILD-INFO.txt`
 
-These are CI/test artifacts and are not substitutes for the signed production APKs.
+The GitHub Release additionally exposes stable asset names `FadCam.apk` and `TV49East.apk` for the latest CI build so users do not need to open the Actions artifact ZIP.
 
 ## Build wiring
 
 The repository contains two Android application modules:
 
 ```text
-:app          → FadCam APK
-:tv-receiver  → TV 49 East APK
+:app          → FadCam APK (`com.fadcam`)
+:tv-receiver  → TV 49 East APK (`com.tv49.com`)
 ```
 
-The production release workflow builds:
+The Android CI workflow explicitly runs:
+
+```text
+:app:assembleDefaultDebug
+:app:assembleDefaultRelease
+:tv-receiver:assembleDebug
+:tv-receiver:assembleRelease
+```
+
+It then fails closed if any of the four expected APKs is missing or empty before publishing the CI release assets.
+
+The production release workflow explicitly runs:
 
 ```text
 :app:bundleDefaultRelease
@@ -45,20 +72,8 @@ The production release workflow builds:
 :tv-receiver:assembleRelease
 ```
 
-and publishes the resulting files as:
-
-```text
-dist/FadCam.aab
-dist/FadCam.apk
-dist/TV49East.apk
-dist/SHA256SUMS.txt
-dist/RELEASE-CERTIFICATE.txt
-```
-
-The TV receiver application ID is `com.tv49.com`.
+and validates the resulting production APK/AAB files before publishing them.
 
 ## Verification policy
 
-APK generation remains behind the existing Android tests, patched Media3 substitution checks, release signing checks, and production verification gates. The download page does not claim an APK is runtime-certified merely because it was built.
-
-For FadCam → TV streaming, the repository still requires the physical-device Gate 1 sequence documented in the README before claiming end-to-end playback certification.
+An APK being downloadable proves that the build pipeline produced a file; it does **not** by itself certify FadCam → TV end-to-end playback. Runtime certification still requires the physical-device Gate 1 sequence documented in the README.
