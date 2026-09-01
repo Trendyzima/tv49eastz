@@ -77,7 +77,9 @@ func TestPublisherEnrollmentPinsAndroidKey(t *testing.T) {
 	persisted, err := os.ReadFile(path)
 	if err != nil { t.Fatal(err) }
 	if string(persisted) != string(der) { t.Fatal("persisted publisher key differs from enrolled key") }
-	if p.publicKey == nil || !p.publicKey.Equal(&key.PublicKey) { t.Fatal("enrolled public key not pinned") }
+	if p.publicKey == nil || p.publicKey.X.Cmp(key.PublicKey.X) != 0 || p.publicKey.Y.Cmp(key.PublicKey.Y) != 0 {
+		t.Fatal("enrolled public key not pinned")
+	}
 
 	req = httptest.NewRequest(http.MethodPost, publisherEnrollPath, strings.NewReader(body))
 	rec = httptest.NewRecorder()
