@@ -86,6 +86,7 @@ func main() {
 	mux.HandleFunc("/health", g.health)
 	mux.HandleFunc("/metrics", g.metrics)
 	mux.HandleFunc("/v1/session", g.createSession)
+	mux.HandleFunc("/v1/session/", g.revokeSessionHandler)
 	mux.HandleFunc("/stream/", g.stream)
 	srv := &http.Server{Addr: cfg.Listen, Handler: g.middleware(mux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	tlsConfig, e := LoadGatewayServerTLSConfig(cfg.TLSCertFile, cfg.TLSKeyFile, cfg.ClientCAFile)
@@ -109,7 +110,13 @@ func (g *Gateway) middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r); return
 		}
 		if r.URL.Path == "/v1/session" {
-			if r.Method != http.MethodGet { g.denied.Add(1); http.Error(w, "method not allowed", 405); return }
+			if r.Method != http.MethodPost { g.denied.Add(1); http.Error(w, "method not allowed", 405); return }
+			if !g.auth(r) { g.denied.Add(1); http.Error(w, "unauthorized", 401); return }
+			if !g.allowRate(r.RemoteAddr) { g.denied.Add(1); http.Error(w, "rate limit exceeded", 429); return }
+			next.ServeHTTP(w, r); return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/session/") {
+			if r.Method != http.MethodDelete { g.denied.Add(1); http.Error(w, "method not allowed", 405); return }
 			if !g.auth(r) { g.denied.Add(1); http.Error(w, "unauthorized", 401); return }
 			if !g.allowRate(r.RemoteAddr) { g.denied.Add(1); http.Error(w, "rate limit exceeded", 429); return }
 			next.ServeHTTP(w, r); return
@@ -143,8 +150,8 @@ func (g *Gateway) allowRate(addr string) bool {
 func (g *Gateway) createSession(w http.ResponseWriter, r *http.Request) {
 	p, e := authenticate(r, g.cfg.APIKey)
 	if e != nil { http.Error(w, "unauthorized", 401); return }
-	channelID := strings.TrimSpace(r.URL.Query().Get("channel_id")); streamID := strings.TrimSpace(r.URL.Query().Get("stream_id"))
-	if channelID == "" || streamID == "" { http.Error(w, "channel_id and stream_id are required", 400); return }
+	channelID, streamID, e := decodeSessionRequest(r)
+	if e != nil { http.Error(w, e.Error(), 400); return }
 	if e = g.policy.AuthorizeStream(p, channelID, streamID); e != nil { http.Error(w, "forbidden", 403); return }
 	if _, ok := g.tunnels.Get(p.DeviceID); !ok { http.Error(w, "device tunnel unavailable", 503); return }
 	if !g.reserveSessionSlot() { http.Error(w, "session limit reached", 429); return }
