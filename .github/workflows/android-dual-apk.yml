@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -151,5 +151,24 @@ jobs:
             dist/FadCam-release-ci.apk
             dist/TV49East-debug.apk
             dist/TV49East-release-ci.apk
+            dist/SHA256SUMS.txt
+            dist/BUILD-INFO.txt
+
+      - name: Publish latest verified APK release
+        if: github.ref == 'refs/heads/master' && github.event_name != 'pull_request'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: Latest Verified CI APKs
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          body: |
+            Automated verified CI APKs from `${{ github.sha }}`.
+
+            These APKs are for testing. They are not production-signed releases.
+          files: |
+            dist/FadCam.apk
+            dist/TV49East.apk
             dist/SHA256SUMS.txt
             dist/BUILD-INFO.txt
