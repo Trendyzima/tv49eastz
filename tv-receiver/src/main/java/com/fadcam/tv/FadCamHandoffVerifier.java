@@ -88,10 +88,17 @@ public final class FadCamHandoffVerifier {
             verifier.update(canonical.getBytes(StandardCharsets.UTF_8));
             if (!verifier.verify(signatureBytes)) return Result.reject("invalid signature");
 
+            // Commit the nonce only after the signature is valid, but re-check while
+            // holding the same lock used by the initial lookup. This closes the TOCTOU
+            // window where two concurrent handoffs with the same nonce could both pass.
             synchronized (LOCK) {
+                if (USED_NONCES.contains(nonce)) return Result.reject("replayed nonce");
                 USED_NONCES.add(nonce);
                 trimNoncesLocked();
-                persistNoncesLocked(context);
+                if (!persistNoncesLocked(context)) {
+                    USED_NONCES.remove(nonce);
+                    return Result.reject("nonce persistence failed");
+                }
             }
             return Result.accept(streamUrl, name == null ? "FadCam Local" : name,
                     owner == null ? "FadCam" : owner);
@@ -116,11 +123,11 @@ public final class FadCamHandoffVerifier {
         noncesLoaded = true;
     }
 
-    private static void persistNoncesLocked(Context context) {
-        context.getSharedPreferences(NONCE_PREFS, Context.MODE_PRIVATE)
+    private static boolean persistNoncesLocked(Context context) {
+        return context.getSharedPreferences(NONCE_PREFS, Context.MODE_PRIVATE)
                 .edit()
                 .putStringSet(USED_NONCES_KEY, new HashSet<>(USED_NONCES))
-                .apply();
+                .commit();
     }
 
     private static void trimNoncesLocked() {
