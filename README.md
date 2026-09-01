@@ -10,16 +10,22 @@ The project now has a dedicated APK download page:
 
 **[→ APK Downloads](DOWNLOADS.md)**
 
-### Latest stable APKs
+### Latest CI APKs
+
+These links point directly at the APK assets published by the Android build workflow after a successful `master` build:
 
 | App | Package | Download |
 |---|---|---|
-| **FadCam** | `com.fadcam` | [Download latest FadCam APK](https://github.com/Trendyzima/tv49eastz/releases/latest/download/FadCam.apk) |
-| **TV 49 East** | `com.tv49.com` | [Download latest TV 49 East APK](https://github.com/Trendyzima/tv49eastz/releases/latest/download/TV49East.apk) |
+| **FadCam** | `com.fadcam` | [Download latest FadCam APK](https://github.com/Trendyzima/tv49eastz/releases/download/latest/FadCam.apk) |
+| **TV 49 East** | `com.tv49.com` | [Download latest TV 49 East APK](https://github.com/Trendyzima/tv49eastz/releases/download/latest/TV49East.apk) |
 
-The production release workflow builds both Android applications, signs the release APKs, generates checksums/provenance, and attaches the APKs to versioned GitHub Releases. The first stable links become live after the first `v*` production release is published.
+These are **CI-signed testing builds**. They are deliberately separate from production-signed `v*` releases.
 
-For CI/testing builds, the Android APK workflow also produces downloadable debug and CI-release artifacts from successful builds.
+### Production APKs
+
+The production release workflow builds and signs both Android applications, generates checksums/provenance, and attaches `FadCam.apk` and `TV49East.apk` to versioned GitHub Releases. Production APKs become available when the first `v*` release passes all production verification gates.
+
+For CI/testing builds, the Android APK workflow also uploads a GitHub Actions artifact containing debug and CI-release APKs.
 
 ## What this repository actually contains
 
@@ -49,14 +55,7 @@ There are two first-class Android application modules:
 :tv-receiver  → TV 49 East APK (`com.tv49.com` release)
 ```
 
-The CI build workflow explicitly assembles both modules. The production release workflow explicitly builds the signed FadCam APK and TV 49 East APK and publishes them as release assets:
-
-```text
-dist/FadCam.apk
-dist/TV49East.apk
-```
-
-This means APK generation is part of the repository's build/release contract rather than an undocumented manual step.
+The CI build workflow explicitly assembles both modules. The production release workflow explicitly builds the signed FadCam APK and TV 49 East APK and publishes them as release assets.
 
 ## Architecture
 
