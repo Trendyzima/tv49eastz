@@ -2,7 +2,48 @@
 
 **Secure TV streaming platform connecting FadCam-originated live video and authorized IPTV sources to an Android TV receiver.**
 
-> **Certification status:** the repository contains the FadCam integration layer, `server-tap`, `device-tunnel`, `stream-gateway`, `stream-catalog`, and a standalone `tv-receiver` Android application. The receiver is explicitly wired to Media3/ExoPlayer and `PlayerView`. The source code demonstrates the application-side playback chain. A physical-TV runtime test is still required before claiming that the complete FadCam → TV screen path has been operationally certified.
+## Production downloads
+
+### Android APKs
+
+Once a versioned production tag (`v*`) passes the production verification job, GitHub Actions publishes the signed binaries as a GitHub Release.
+
+| Application | Direct APK |
+|---|---|
+| **FadCam** | [Download FadCam.apk](https://github.com/Trendyzima/tv49eastz/releases/latest/download/FadCam.apk) |
+| **TV 49 East** | [Download TV49East.apk](https://github.com/Trendyzima/tv49eastz/releases/latest/download/TV49East.apk) |
+
+The production release also publishes the FadCam AAB, SHA-256 checksums, and release-certificate information.
+
+> **Download status:** these URLs are intentionally release-backed. They become live only after the first successful versioned production release is published. Do not treat a missing `latest` release as a valid APK.
+
+## Production release process
+
+```text
+version tag vX.Y.Z
+        ↓
+Production verification
+        ├── Go race tests
+        ├── Go vet
+        ├── Android unit tests
+        ├── patched Media3 substitution check
+        └── Android release lint
+                ↓
+Signed release build
+        ├── FadCam.apk
+        ├── TV49East.apk
+        └── FadCam.aab
+                ↓
+SHA-256 checksums
+        ↓
+GitHub artifact upload
+        ↓
+GitHub Release publication
+        ↓
+README direct-download links
+```
+
+The release workflow requires the repository's Android release-signing secrets and fails closed if they are absent. It also pins the certified patched Media3 checkout before building.
 
 ## Architecture
 
@@ -51,13 +92,11 @@
         ┌────────┴─────────┐
         │  stream-catalog  │
         │ IPTV discovery   │
-        │ + creator data  │
+        │ + creator data   │
         └──────────────────┘
 ```
 
-The existing FadCam server is a protected source system. TV 49 East is designed to integrate around it rather than replace its server, routes, storage, recording behavior, or control endpoints.
-
-The TV client is not supposed to connect directly to a private address such as `192.168.x.x:8080`. The tunnel and gateway provide the controlled path that hides the private source address.
+The existing FadCam server is a protected source system. TV 49 East integrates around it rather than replacing its server, routes, storage, recording behavior, or control endpoints.
 
 ## Repository components
 
@@ -69,24 +108,15 @@ The FadCam Android application/source. FadCam remains the source publisher for F
 
 Go adapter for the existing FadCam HTTP/HLS source. It is a narrow integration boundary rather than a replacement server or remote-control interface.
 
-Important files:
-
-```text
-server-tap/main.go
-server-tap/main_test.go
-server-tap/contract.md
-server-tap/README.md
-```
-
 ### `device-tunnel/`
 
-Authenticated device-to-gateway transport. The repository contains separate `agent`, `gateway`, and `protocol` areas plus example configuration.
+Authenticated device-to-gateway transport containing the device agent, gateway, and protocol layers.
 
 ### `stream-gateway/`
 
-Secure public streaming boundary. It handles viewer authentication, authorization, stream resolution, private-upstream isolation, HLS manifest rewriting, and proxying of HLS initialization data and segments.
+Secure public streaming boundary handling viewer authentication, authorization, stream resolution, private-upstream isolation, HLS manifest rewriting, and HLS resource proxying.
 
-Documented routes:
+Documented streaming routes include:
 
 ```text
 GET /stream/{id}/index.m3u8
@@ -95,50 +125,17 @@ GET /stream/{id}/segment/{name}
 GET /health
 ```
 
-Gateway viewer flow:
-
-```text
-authenticate
-   ↓
-request stable stream URL
-   ↓
-resolve authorized stream to tap
-   ↓
-tap reads existing FadCam server
-   ↓
-return client-safe HLS manifest
-   ↓
-proxy subsequent HLS resources
-```
-
 ### `stream-catalog/`
 
-Discovery and catalog service. It normalizes channel metadata and keeps discovery separate from authorization. Public IPTV entries are not automatically authorized for redistribution.
+Discovery and catalog service. Discovery is kept separate from authorization; public IPTV entries are not automatically authorized for redistribution.
 
 ### `tv-receiver/`
 
-Standalone Android TV application with its own manifest, source, tests, Media3 dependencies, and build configuration.
+Standalone Android TV application with Media3/ExoPlayer playback and a video surface.
 
-```text
-tv-receiver/
-├── build.gradle.kts
-├── proguard-rules.pro
-└── src/
-    ├── main/
-    │   ├── AndroidManifest.xml
-    │   └── java/com/fadcam/tv/
-    │       ├── MainActivity.java
-    │       ├── CatalogClient.java
-    │       ├── ChannelStore.java
-    │       ├── FadCamHandoffActivity.java
-    │       └── FadCamHandoffVerifier.java
-    ├── test/
-    └── androidTest/
-```
+## TV playback chain
 
-## TV playback: source-level proof
-
-`MainActivity` contains the actual receiver-to-player chain:
+The receiver's application-side playback path is:
 
 ```text
 MainActivity.onCreate()
@@ -147,7 +144,7 @@ buildUi()
         ↓
 PlayerView created
         ↓
-channel selected / handoff received
+channel / handoff selected
         ↓
 startPlayback(url, channelName)
         ↓
@@ -166,9 +163,9 @@ player.play()
 Android video surface / TV display
 ```
 
-The receiver also calls `setKeepScreenOn(true)` for the playback UI.
+The receiver also keeps the playback screen awake.
 
-### HLS URL provenance
+## HLS URL provenance
 
 The normal catalog path is server-side:
 
@@ -177,26 +174,20 @@ TV receiver
     ↓
 CatalogClient
     ↓
-GET {configured HTTPS catalog}/v1/catalog
+configured HTTPS catalog
     ↓
 server-side channel metadata
     ↓
 relay=true entries only
-    ↓
-/v1/relay?id=...
     ↓
 configured TV East origin
     ↓
 Media3
 ```
 
-`CatalogClient` rejects non-HTTPS catalog origins and ignores catalog entries that are not marked `relay=true`. It therefore does not directly feed arbitrary upstream IPTV URLs into the normal receiver catalog path.
+The receiver supports explicit FadCam and TV East handoffs, but production playback URLs must point at the authorized TV East/gateway surface, never at a private FadCam LAN address.
 
-The receiver also supports explicit `fadcam://stream?...` and `tv49east://channel?...` handoffs. These require HTTPS playback URLs. Production handoffs should point at the authorized TV East/gateway surface, never a private FadCam LAN address.
-
-## FadCam → TV streaming path
-
-The target end-to-end route is:
+## Target end-to-end streaming path
 
 ```text
 FadCam HTTP server
@@ -220,31 +211,7 @@ TV video surface
 physical TV
 ```
 
-This is deliberately different from a direct connection such as:
-
-```text
-TV → http://192.168.x.x:8080/...
-```
-
-The direct private-address path bypasses the intended security boundary and is not the target architecture.
-
-## IPTV path
-
-```text
-IPTV discovery source
-       ↓
-stream-catalog
-       ↓
-normalized metadata
-       ↓
-explicitly authorized relay
-       ↓
-stream-gateway
-       ↓
-TV receiver
-```
-
-A public playlist is discovery data, not blanket permission to redistribute every listed stream.
+A direct path such as `TV → http://192.168.x.x:8080/...` is not the production architecture because it bypasses the security boundary.
 
 ## Security boundaries
 
@@ -252,14 +219,12 @@ A public playlist is discovery data, not blanket permission to redistribute ever
 - Private FadCam addressing stays behind the tunnel/gateway boundary.
 - Viewers are authenticated before protected playback.
 - Requested streams are authorized before proxying.
-- HLS manifests and subsequent media resources remain behind the streaming boundary.
+- HLS manifests and media resources remain behind the streaming boundary.
 - Catalog discovery is separate from redistribution authorization.
-- Client-facing catalog configuration must use HTTPS.
+- Client-facing catalog configuration uses HTTPS.
 - The TV receiver rejects non-HTTPS playback URLs.
 - Device identity and stream authorization are separate from catalog discovery.
-- Required certified Media3 dependencies are fail-closed at build time.
-
-The gateway tree contains TLS, device-registry, persistence, capability-security, and related tests.
+- Certified Media3 dependencies are required at build time.
 
 ## Build structure
 
@@ -270,8 +235,6 @@ Root Gradle modules:
 :tv-receiver
 ```
 
-The TV receiver targets Android API 36, supports API 24+, targets API 36, and uses Java 17. It depends on Media3 ExoPlayer/UI/session components.
-
 Go modules:
 
 ```text
@@ -281,49 +244,23 @@ stream-catalog/go.mod
 stream-gateway/go.mod
 ```
 
-### Patched Media3 requirement
+The TV receiver supports API 24+ and targets API 36 with Java 17.
 
-The root `settings.gradle.kts` requires the pinned patched Media3 checkout before the Android build can proceed. Default:
+### Patched Media3
 
-```text
-/tmp/media3-patched
-```
-
-Override with:
+The Android build requires the pinned patched Media3 checkout:
 
 ```properties
-media3.patched.path=/path/to/media3-patched
+media3.patched.path=/tmp/media3-patched
 ```
 
-The build intentionally fails closed if that checkout is absent, preventing a silent fallback to unqualified upstream Media3 artifacts.
+The production workflow fetches the pinned commit and fails closed if the expected patched Media3 sources are absent or dependency substitution is not proven.
 
-## End-to-end certification standard
+## Production certification
 
-The repository distinguishes **source-level wiring** from **runtime certification**.
+Source-level wiring is not the same as physical-TV runtime certification.
 
-Source-level evidence establishes:
-
-```text
-TV receiver
- → MainActivity
- → PlayerView
- → ExoPlayer
- → MediaItem.fromUri(HLS URL)
- → prepare()
- → play()
-```
-
-and the server-side architecture establishes:
-
-```text
-FadCam
- → server-tap
- → device-tunnel
- → stream-gateway
- → authorized HLS
-```
-
-A real physical-TV certification must prove all edges:
+The production runtime certification must prove:
 
 ```text
 [01] FadCam produces live video
@@ -332,7 +269,7 @@ A real physical-TV certification must prove all edges:
 [04] gateway authenticates the viewer
 [05] gateway authorizes the stream
 [06] gateway emits a valid HLS manifest
-[07] init data and segments are retrievable through gateway
+[07] HLS init data and segments work through the gateway
 [08] TV receiver obtains the gateway URL
 [09] Media3 prepares the HLS source
 [10] ExoPlayer reaches a playing state
@@ -341,7 +278,7 @@ A real physical-TV certification must prove all edges:
 [13] video is visibly rendered on the physical TV
 ```
 
-Until that runtime test is executed, the accurate status is **source-level wired and ready for end-to-end certification**, not “physically proven on a TV.”
+Until those runtime checks are executed against a real TV/device, the accurate status is **source-level wired and production-build capable**, not physically certified.
 
 ## Repository map
 
@@ -355,7 +292,7 @@ Until that runtime test is executed, the accurate status is **source-level wired
 ├── stream-catalog/         # catalog/discovery service
 ├── ARCHITECTURE.md         # system boundaries
 ├── settings.gradle.kts     # Android modules + pinned Media3 build
-└── README.md               # project architecture and certification status
+└── README.md               # project architecture, releases, certification
 ```
 
 ## Design rules
