@@ -50,11 +50,28 @@ func main() {
 		panic(err)
 	}
 
-	// The media tunnel and publisher-control channel intentionally share the
-	// same device mTLS identity, but use separate transports. The control
-	// channel is what lets FadCam ask for a short-lived gateway session without
-	// ever receiving the gateway master API key.
-	if strings.TrimSpace(os.Getenv("GATEWAY_CONTROL_URL")) != "" && strings.TrimSpace(os.Getenv("GATEWAY_API_KEY")) != "" && strings.TrimSpace(os.Getenv("PUBLISHER_PUBLIC_KEY_FILE")) != "" {
+	// Publisher control is optional for tunnel-only deployments, but when any
+	// publisher-control setting is supplied the complete security boundary must
+	// be configured. Never silently disable publisher control because one
+	// credential or key setting is missing.
+	publisherConfig := []string{
+		strings.TrimSpace(os.Getenv("GATEWAY_CONTROL_URL")),
+		strings.TrimSpace(os.Getenv("GATEWAY_API_KEY")),
+		strings.TrimSpace(os.Getenv("PUBLISHER_PUBLIC_KEY_FILE")),
+	}
+	publisherConfigured := false
+	for _, value := range publisherConfig {
+		if value != "" {
+			publisherConfigured = true
+			break
+		}
+	}
+	if publisherConfigured {
+		for _, value := range publisherConfig {
+			if value == "" {
+				panic("publisher control requires GATEWAY_CONTROL_URL, GATEWAY_API_KEY, and PUBLISHER_PUBLIC_KEY_FILE")
+			}
+		}
 		publisher, publisherErr := newPublisherControl(deviceID, cfg)
 		if publisherErr != nil {
 			panic(fmt.Sprintf("publisher control configuration: %v", publisherErr))
