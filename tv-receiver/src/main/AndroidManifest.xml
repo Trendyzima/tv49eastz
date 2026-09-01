@@ -12,12 +12,14 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.TV49East"
         android:banner="@drawable/tv49east_banner">
+
         <activity
-            android:name="com.fadcam.tv.MainActivity"
-            android:configChanges="orientation|screenSize|keyboardHidden"
+            android:name="com.fadcam.tv.TvReelsActivity"
             android:exported="true"
-            android:intentMatchingFlags="enforceIntentFilter"
-            android:screenOrientation="landscape">
+            android:screenOrientation="unspecified"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize"
+            android:intentMatchingFlags="enforceIntentFilter">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -30,6 +32,11 @@
                 <data android:scheme="tv49east" android:host="channel" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name="com.fadcam.tv.MainActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TV49East" />
 
         <activity
             android:name="com.fadcam.tv.FadCamHandoffActivity"
