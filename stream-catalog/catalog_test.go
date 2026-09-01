@@ -25,8 +25,8 @@ http://example.com/live.m3u8
 	if ch.ID != "demo" || ch.Name != "Demo News" || ch.Country != "KE" || ch.Group != "News" {
 		t.Fatalf("unexpected metadata: %+v", ch)
 	}
-	if ch.Stream != "https://example.com/live/demo.m3u8" || !ch.Relay {
-		t.Fatalf("unexpected stream: %+v", ch)
+	if ch.Stream != "https://example.com/live/demo.m3u8" || ch.Relay {
+		t.Fatalf("public catalog entry must not be implicitly relayable: %+v", ch)
 	}
 }
 
@@ -96,7 +96,7 @@ func TestParseExtInfPrefersTVGMetadataAndAliases(t *testing.T) {
 		t.Fatalf("got %d channels, want 1", len(c.Channels))
 	}
 	ch := c.Channels[0]
-	if ch.ID != "canonical-id" || ch.Name != "Canonical Name" || ch.Group != "Sports" || ch.Country != "KE" || ch.Language != "en" || ch.Logo != "https://example.com/logo.png" {
+	if ch.ID != "canonical-id" || ch.Name != "Canonical Name" || ch.Group != "Sports" || ch.Country != "KE" || ch.Language != "en" || ch.Logo != "https://example.com/logo.png" || ch.Relay {
 		t.Fatalf("unexpected channel metadata: %+v", ch)
 	}
 }
