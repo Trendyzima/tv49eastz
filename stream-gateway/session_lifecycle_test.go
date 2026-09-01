@@ -1,6 +1,8 @@
 package main
 
 import (
+    "net/http"
+    "net/http/httptest"
     "strings"
     "testing"
     "time"
@@ -16,58 +18,34 @@ func TestSessionSlotAccountingAndRevoke(t *testing.T) {
     }
 
     s := Session{
-        ID:          "session-1",
-        UserID:      "user-1",
-        DeviceID:    "device-1",
-        Fingerprint: "fingerprint-1",
-        ChannelID:   "camera",
-        StreamID:    "stream-1",
-        IssuedAt:    time.Now().UTC(),
-        Expires:     time.Now().UTC().Add(time.Minute),
+        ID: "session-1", UserID: "user-1", DeviceID: "device-1", Fingerprint: "fingerprint-1",
+        ChannelID: "camera", StreamID: "stream-1", IssuedAt: time.Now().UTC(), Expires: time.Now().UTC().Add(time.Minute),
     }
     g.sessions.Store(s.ID, s)
-
-    if !g.revokeSession(s.ID) {
-        t.Fatal("session was not revoked")
-    }
-    if _, ok := g.sessions.Load(s.ID); ok {
-        t.Fatal("revoked session still present")
-    }
-    if g.sessionCount.Load() != 0 {
-        t.Fatalf("session count=%d, want 0", g.sessionCount.Load())
-    }
-    if g.revokeSession(s.ID) {
-        t.Fatal("second revoke should be idempotent/no-op")
-    }
+    if !g.revokeSession(s.ID) { t.Fatal("session was not revoked") }
+    if _, ok := g.sessions.Load(s.ID); ok { t.Fatal("revoked session still present") }
+    if g.sessionCount.Load() != 0 { t.Fatalf("session count=%d, want 0", g.sessionCount.Load()) }
+    if g.revokeSession(s.ID) { t.Fatal("second revoke should be idempotent/no-op") }
 }
 
 func TestDecodeSessionRequest(t *testing.T) {
-    r := strings.NewReader(`{"channel_id":"camera","stream_id":"abc"}`)
-    req := newRequestWithBody(r)
+    req := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(`{"channel_id":"camera","stream_id":"abc"}`))
     channel, stream, err := decodeSessionRequest(req)
-    if err != nil || channel != "camera" || stream != "abc" {
-        t.Fatalf("decode=%q,%q,%v", channel, stream, err)
-    }
+    if err != nil || channel != "camera" || stream != "abc" { t.Fatalf("decode=%q,%q,%v", channel, stream, err) }
 }
 
 func TestSessionMiddlewareRequiresMutationMethods(t *testing.T) {
     g := &Gateway{cfg: Config{APIKey: "test", MaxSessions: 1}}
-    h := g.middleware(nil)
-    for _, tc := range []struct {
-        method string
-        path   string
-        want   int
-    }{
-        {"GET", "/v1/session", 405},
-        {"POST", "/v1/session/abc", 405},
-        {"POST", "/v1/session", 401},
-        {"DELETE", "/v1/session/abc", 401},
+    h := g.middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+    for _, tc := range []struct{ method, path string; want int }{
+        {http.MethodGet, "/v1/session", http.StatusMethodNotAllowed},
+        {http.MethodPost, "/v1/session/abc", http.StatusMethodNotAllowed},
+        {http.MethodPost, "/v1/session", http.StatusUnauthorized},
+        {http.MethodDelete, "/v1/session/abc", http.StatusUnauthorized},
     } {
-        r := newRequest(methodPath(tc.method, tc.path), nil)
-        w := newRecorder()
+        r := httptest.NewRequest(tc.method, tc.path, nil)
+        w := httptest.NewRecorder()
         h.ServeHTTP(w, r)
-        if w.code != tc.want {
-            t.Fatalf("%s %s=%d, want %d", tc.method, tc.path, w.code, tc.want)
-        }
+        if w.Code != tc.want { t.Fatalf("%s %s=%d, want %d", tc.method, tc.path, w.Code, tc.want) }
     }
 }
