@@ -41,7 +41,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 
-/** Full-screen TikTok-style live TV feed with autoplay, look-ahead preload and resilient recovery. */
+/** Full-screen vertical live-TV feed with autoplay, look-ahead preload and recovery. */
 public final class TvReelsActivity extends AppCompatActivity {
     private static final int BG = Color.rgb(5, 5, 7);
     private static final int PANEL = Color.rgb(18, 18, 23);
@@ -74,7 +74,6 @@ public final class TvReelsActivity extends AppCompatActivity {
         Window w = getWindow();
         w.setStatusBarColor(Color.BLACK);
         w.setNavigationBarColor(Color.BLACK);
-        w.getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
         buildUi();
         loadFeed(true);
     }
@@ -114,7 +113,6 @@ public final class TvReelsActivity extends AppCompatActivity {
         adapter = new ReelAdapter(this);
         pager.setAdapter(adapter);
         root.addView(pager, new FrameLayout.LayoutParams(-1, -1));
-
         root.addView(buildTopBar(), new FrameLayout.LayoutParams(-1, dp(78), Gravity.TOP));
         root.addView(buildBottomBar(), new FrameLayout.LayoutParams(-1, dp(78), Gravity.BOTTOM));
         root.addView(buildFeedState(), new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
@@ -136,11 +134,9 @@ public final class TvReelsActivity extends AppCompatActivity {
         box.setGravity(Gravity.CENTER);
         box.setPadding(dp(24), dp(18), dp(24), dp(18));
         box.setBackground(bg(Color.argb(225, 18, 18, 23), 22));
-
         feedMessage = text("Loading live channels…", 15, WHITE, true);
         feedMessage.setGravity(Gravity.CENTER);
         box.addView(feedMessage);
-
         retry = text("Retry", 13, WHITE, true);
         retry.setGravity(Gravity.CENTER);
         retry.setPadding(dp(18), dp(10), dp(18), dp(10));
@@ -151,24 +147,6 @@ public final class TvReelsActivity extends AppCompatActivity {
         box.addView(retry, rp);
         retry.setVisibility(View.GONE);
         return box;
-    }
-
-    private void handleIntent(@Nullable Intent intent) {
-        if (intent == null) return;
-        Uri uri = intent.getData();
-        if (uri == null) return;
-        if ("tv49east".equalsIgnoreCase(uri.getScheme()) && "channel".equalsIgnoreCase(uri.getHost())) {
-            String url = uri.getQueryParameter("url");
-            if (!IptvFeedClientV2.isPlayableHls(url)) {
-                setStatus("CHANNEL REJECTED");
-                return;
-            }
-            String name = uri.getQueryParameter("name");
-            IptvReel reel = new IptvReel("handoff-" + url.hashCode(), "FadCam",
-                    name == null || name.trim().isEmpty() ? "FadCam Live" : name.trim(),
-                    url, "Live", "", "", "FadCam");
-            addIfNew(reel, true);
-        }
     }
 
     private LinearLayout buildTopBar() {
@@ -220,6 +198,21 @@ public final class TvReelsActivity extends AppCompatActivity {
         return item;
     }
 
+    private void handleIntent(@Nullable Intent intent) {
+        if (intent == null || intent.getData() == null) return;
+        Uri uri = intent.getData();
+        if (!"tv49east".equalsIgnoreCase(uri.getScheme()) || !"channel".equalsIgnoreCase(uri.getHost())) return;
+        String url = uri.getQueryParameter("url");
+        if (!IptvFeedClientV2.isPlayableHls(url)) {
+            setStatus("CHANNEL REJECTED");
+            return;
+        }
+        String name = uri.getQueryParameter("name");
+        addIfNew(new IptvReel("handoff-" + url.hashCode(), "FadCam",
+                name == null || name.trim().isEmpty() ? "FadCam Live" : name.trim(),
+                url, "Live", "", "", "FadCam"), true);
+    }
+
     private void loadFeed(boolean force) {
         long now = android.os.SystemClock.elapsedRealtime();
         if (loading || (!force && now - lastLoadAt < 8000)) return;
@@ -227,7 +220,6 @@ public final class TvReelsActivity extends AppCompatActivity {
         loading = true;
         lastLoadAt = now;
         if (visible.isEmpty()) showFeedState("Loading live channels…", false);
-
         feedClient.load(new IptvFeedClientV2.Listener() {
             @Override public void onSuccess(List<IptvReel> result) {
                 runOnUiThread(() -> {
@@ -242,7 +234,6 @@ public final class TvReelsActivity extends AppCompatActivity {
                     }
                 });
             }
-
             @Override public void onError(Exception error) {
                 runOnUiThread(() -> {
                     loading = false;
@@ -270,16 +261,15 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private IptvReel itemForPosition(int position) {
-        if (visible.isEmpty()) return null;
-        return visible.get(Math.floorMod(position, visible.size()));
+        return visible.isEmpty() ? null : visible.get(Math.floorMod(position, visible.size()));
     }
 
     private void activatePosition(int position) {
         IptvReel item = itemForPosition(position);
-        if (item == null) return;
+        if (item == null || pager == null || pager.getChildCount() == 0) return;
         ReelAdapter.Holder holder = findHolder(position);
         if (holder == null) {
-            pager.postDelayed(() -> activatePosition(position), 100);
+            pager.postDelayed(() -> activatePosition(position), 120);
             return;
         }
         releaseExcept(position, position + 1, position - 1);
@@ -293,29 +283,35 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private void preload(int position) {
-        if (position < 0) return;
+        if (position < 0 || visible.isEmpty() || players.containsKey(position)) return;
         IptvReel item = itemForPosition(position);
-        if (item == null || players.containsKey(position)) return;
-        ExoPlayer p = buildPlayer(false);
-        p.setMediaSource(sourceFor(item));
-        p.prepare();
-        p.setPlayWhenReady(false);
-        players.put(position, p);
+        if (item == null) return;
+        try {
+            ExoPlayer p = buildPlayer();
+            p.setMediaSource(sourceFor(item));
+            p.prepare();
+            p.setPlayWhenReady(false);
+            players.put(position, p);
+        } catch (RuntimeException error) {
+            // Preloading is an optimization; never let it crash the feed.
+        }
     }
 
     private ExoPlayer playerFor(int position, IptvReel item) {
         ExoPlayer p = players.get(position);
         if (p != null) return p;
-        p = buildPlayer(true);
+        p = buildPlayer();
         p.setMediaSource(sourceFor(item));
         p.prepare();
         players.put(position, p);
         return p;
     }
 
-    private ExoPlayer buildPlayer(boolean active) {
+    private ExoPlayer buildPlayer() {
+        // All four values satisfy Media3's required ordering:
+        // min >= playback-after-rebuffer >= 0 and max >= min.
         DefaultLoadControl loadControl = new DefaultLoadControl.Builder()
-                .setBufferDurationsMs(active ? 1800 : 900, active ? 14000 : 5000, 700, 1200)
+                .setBufferDurationsMs(2000, 14000, 800, 1500)
                 .setPrioritizeTimeOverSizeThresholds(true)
                 .build();
         ExoPlayer p = new ExoPlayer.Builder(this).setLoadControl(loadControl).build();
@@ -323,10 +319,10 @@ public final class TvReelsActivity extends AppCompatActivity {
         p.addListener(new Player.Listener() {
             @Override public void onPlayerError(@NonNull PlaybackException error) {
                 int position = findPlayerPosition(p);
-                if (position == currentPosition) {
+                if (position == currentPosition && visible.size() > 1) {
                     setStatus("STREAM ERROR • NEXT");
                     pager.postDelayed(() -> {
-                        if (visible.size() > 1 && currentPosition == pager.getCurrentItem()) {
+                        if (!isFinishing() && !isDestroyed() && currentPosition == pager.getCurrentItem()) {
                             pager.setCurrentItem(currentPosition + 1, true);
                         }
                     }, 250);
@@ -361,16 +357,12 @@ public final class TvReelsActivity extends AppCompatActivity {
                 .setMimeType(MimeTypes.APPLICATION_M3U8)
                 .setLiveConfiguration(live)
                 .build();
-        return new DefaultMediaSourceFactory(this)
-                .setDataSourceFactory(http)
-                .createMediaSource(media);
+        return new DefaultMediaSourceFactory(this).setDataSourceFactory(http).createMediaSource(media);
     }
 
     private void releaseExcept(int keepA, int keepB, int keepC) {
         ArrayList<Integer> remove = new ArrayList<>();
-        for (Integer key : players.keySet()) {
-            if (key != keepA && key != keepB && key != keepC) remove.add(key);
-        }
+        for (Integer key : players.keySet()) if (key != keepA && key != keepB && key != keepC) remove.add(key);
         for (Integer key : remove) {
             ExoPlayer p = players.remove(key);
             if (p != null) p.release();
@@ -388,12 +380,11 @@ public final class TvReelsActivity extends AppCompatActivity {
     private void showFeedState(String message, boolean canRetry) {
         if (feedMessage != null) feedMessage.setText(message);
         if (retry != null) retry.setVisibility(canRetry ? View.VISIBLE : View.GONE);
-        if (feedMessage != null) feedMessage.getParent();
-        if (feedMessage != null) ((View) feedMessage.getParent()).setVisibility(View.VISIBLE);
+        if (feedMessage != null && feedMessage.getParent() instanceof View) ((View) feedMessage.getParent()).setVisibility(View.VISIBLE);
     }
 
     private void hideFeedState() {
-        if (feedMessage != null) ((View) feedMessage.getParent()).setVisibility(View.GONE);
+        if (feedMessage != null && feedMessage.getParent() instanceof View) ((View) feedMessage.getParent()).setVisibility(View.GONE);
     }
 
     private void setStatus(String value) { if (status != null) status.setText("● " + value); }
@@ -433,7 +424,7 @@ public final class TvReelsActivity extends AppCompatActivity {
         input.setTextColor(WHITE);
         input.setHintTextColor(MUTED);
         new AlertDialog.Builder(this).setTitle("Add authorized IPTV source")
-                .setMessage("Add a public or authorized M3U/M3U8 source. Streams are played directly on this device.")
+                .setMessage("Add a public or authorized M3U/M3U8 source. Streams play directly on this device.")
                 .setView(input)
                 .setPositiveButton("Add", (d, w) -> {
                     String url = input.getText().toString().trim();
@@ -451,7 +442,6 @@ public final class TvReelsActivity extends AppCompatActivity {
                                 adapter.notifyDataSetChanged();
                                 hideFeedState();
                                 if (!visible.isEmpty()) pager.setCurrentItem(0, false);
-                                Toast.makeText(TvReelsActivity.this, result.size() + " channels added", Toast.LENGTH_SHORT).show();
                             });
                         }
                         @Override public void onError(Exception error) {
@@ -507,7 +497,8 @@ public final class TvReelsActivity extends AppCompatActivity {
         @NonNull @Override public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) { return new Holder(new ReelPage(context)); }
         @Override public void onBindViewHolder(@NonNull Holder holder, int position) { holder.bind(itemForPosition(position)); }
         final class Holder extends androidx.recyclerview.widget.RecyclerView.ViewHolder {
-            final ReelPage page; final PlayerView playerView;
+            final ReelPage page;
+            final PlayerView playerView;
             Holder(ReelPage page) { super(page); this.page = page; this.playerView = page.playerView; }
             void bind(IptvReel item) { page.bind(item); }
         }
@@ -573,7 +564,6 @@ public final class TvReelsActivity extends AppCompatActivity {
             follow.setOnClickListener(v -> { toggleFollow(item); bind(item); });
             creator.addView(follow, new LinearLayout.LayoutParams(-2, dp(38)));
             content.addView(creator);
-
             title = text("Live channel", 18, WHITE, true);
             title.setPadding(0, dp(8), 0, dp(3));
             content.addView(title);
@@ -615,7 +605,7 @@ public final class TvReelsActivity extends AppCompatActivity {
 
     @Override protected void onResume() {
         super.onResume();
-        if (!players.isEmpty()) pager.post(() -> activatePosition(currentPosition));
+        if (!players.isEmpty() && !visible.isEmpty()) pager.post(() -> activatePosition(currentPosition));
     }
 
     @Override protected void onDestroy() {
