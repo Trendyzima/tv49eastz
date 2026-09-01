@@ -63,7 +63,6 @@ lifecycle-viewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel", versi
 lifecycle-livedata = { module = "androidx.lifecycle:lifecycle-livedata", version.ref = "lifecycleViewModel" }
 localbroadcastmanager = { module = "androidx.localbroadcastmanager:localbroadcastmanager", version.ref = "localbroadcastmanager" }
 lottie = { module = "com.airbnb.android:lottie", version.ref = "lottie" }
-material = { group = "com.google.android.material", name = "material", version.ref = "material" }
 media = { module = "androidx.media:media", version = "1.7.0" }
 activity = { group = "androidx.activity", name = "activity", version.ref = "activity" }
 constraintlayout = { group = "androidx.constraintlayout", name = "constraintlayout", version.ref = "constraintlayout" }
@@ -80,6 +79,7 @@ media3-muxer = { module = "androidx.media3:media3-muxer", version.ref = "media3"
 media3-common = { module = "androidx.media3:media3-common", version.ref = "media3" }
 media3-container = { module = "androidx.media3:media3-container", version.ref = "media3" }
 media3-exoplayer = { module = "androidx.media3:media3-exoplayer", version.ref = "media3" }
+media3-exoplayer-hls = { module = "androidx.media3:media3-exoplayer-hls", version.ref = "media3" }
 media3-ui = { module = "androidx.media3:media3-ui", version.ref = "media3" }
 media3-session = { module = "androidx.media3:media3-session", version.ref = "media3" }
 media3-transformer = { module = "androidx.media3:media3-transformer", version.ref = "media3" }
