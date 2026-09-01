@@ -1,6 +1,7 @@
 package com.fadcam.tv;
 
 import android.content.Intent;
+import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
@@ -49,6 +50,8 @@ public final class MainActivity extends AppCompatActivity {
     private TextView status;
     private Button stop;
     private LinearLayout channelList;
+    private LinearLayout channelSection;
+    private ScrollView pageScroll;
     private ChannelStore store;
     private CatalogClient catalogClient;
     private final List<ChannelStore.Channel> remoteChannels = new ArrayList<>();
@@ -103,26 +106,100 @@ public final class MainActivity extends AppCompatActivity {
         return v;
     }
 
+    private boolean isLandscape() {
+        return getResources().getConfiguration().orientation == Configuration.ORIENTATION_LANDSCAPE;
+    }
+
     private void buildUi() {
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        scroll.setBackgroundColor(BG);
-        scroll.setClipToPadding(false);
+        if (isLandscape()) {
+            buildLandscapeUi();
+        } else {
+            buildPortraitUi();
+        }
+    }
+
+    /** Phone/tablet portrait: content + fixed bottom navigation, inspired by the supplied reference. */
+    private void buildPortraitUi() {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(BG);
+
+        pageScroll = new ScrollView(this);
+        pageScroll.setFillViewport(true);
+        pageScroll.setBackgroundColor(BG);
+        pageScroll.setClipToPadding(false);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(dp(16), dp(14), dp(16), dp(24));
+        content.setPadding(dp(16), dp(14), dp(16), dp(96));
+        buildHeader(content, true);
+        addPlayer(content, 16f / 9f);
+        addCatalogSection(content, false);
+        addActions(content);
+        addFooter(content);
 
-        // Header: compact enough for phones, spacious enough for tablets.
+        pageScroll.addView(content, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        root.addView(pageScroll, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        root.addView(buildBottomNav(), new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(76), Gravity.BOTTOM));
+        setContentView(root);
+    }
+
+    /** Landscape: video and live catalog sit side-by-side; a compact rail replaces the bottom bar to preserve height. */
+    private void buildLandscapeUi() {
+        FrameLayout root = new FrameLayout(this);
+        root.setBackgroundColor(BG);
+
+        LinearLayout shell = new LinearLayout(this);
+        shell.setOrientation(LinearLayout.HORIZONTAL);
+        shell.setPadding(dp(10), dp(10), dp(10), dp(10));
+
+        shell.addView(buildLandscapeRail(), new LinearLayout.LayoutParams(dp(68), ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout main = new LinearLayout(this);
+        main.setOrientation(LinearLayout.VERTICAL);
+        main.setPadding(dp(10), 0, 0, 0);
+
+        buildHeader(main, false);
+
+        LinearLayout split = new LinearLayout(this);
+        split.setOrientation(LinearLayout.HORIZONTAL);
+        split.setGravity(Gravity.TOP);
+        LinearLayout.LayoutParams splitParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f);
+        splitParams.topMargin = dp(10);
+        main.addView(split, splitParams);
+
+        LinearLayout videoColumn = new LinearLayout(this);
+        videoColumn.setOrientation(LinearLayout.VERTICAL);
+        addPlayer(videoColumn, 16f / 9f);
+        TextView hint = label("16:9  •  FIT  •  no stretching", 11f, MUTED, false);
+        hint.setGravity(Gravity.CENTER);
+        hint.setPadding(0, dp(6), 0, 0);
+        videoColumn.addView(hint);
+        LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.62f);
+        split.addView(videoColumn, videoParams);
+
+        LinearLayout catalogColumn = new LinearLayout(this);
+        catalogColumn.setOrientation(LinearLayout.VERTICAL);
+        catalogColumn.setPadding(dp(12), 0, 0, 0);
+        addCatalogSection(catalogColumn, true);
+        addActions(catalogColumn);
+        LinearLayout.LayoutParams catalogParams = new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f);
+        split.addView(catalogColumn, catalogParams);
+
+        shell.addView(main, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f));
+        root.addView(shell, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        setContentView(root);
+    }
+
+    private void buildHeader(LinearLayout parent, boolean portrait) {
         LinearLayout header = new LinearLayout(this);
         header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(dp(18), dp(15), dp(14), dp(15));
+        header.setPadding(dp(portrait ? 18 : 16), dp(14), dp(12), dp(14));
         header.setBackground(surface(SURFACE, 24));
 
         LinearLayout brand = new LinearLayout(this);
         brand.setOrientation(LinearLayout.VERTICAL);
-        TextView title = label("TV 49 East", 25f, TEXT, true);
+        TextView title = label("TV 49 East", portrait ? 25f : 22f, TEXT, true);
         TextView subtitle = label("FadCam creators  •  TV East  •  worldwide", 12f, MUTED, false);
         subtitle.setPadding(0, dp(3), 0, 0);
         brand.addView(title);
@@ -131,14 +208,11 @@ public final class MainActivity extends AppCompatActivity {
 
         status = pill("CONNECTING", ACCENT);
         header.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        content.addView(header);
+        parent.addView(header, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+    }
 
-        SpaceGap gap = new SpaceGap(this, dp(14));
-        content.addView(gap);
-
-        // A real 16:9 frame prevents portrait phones from stretching the video.
-        // PlayerView itself uses FIT so the video never crops or zooms unexpectedly.
-        AspectVideoFrame videoFrame = new AspectVideoFrame(this, 16f / 9f);
+    private void addPlayer(LinearLayout parent, float ratio) {
+        AspectVideoFrame videoFrame = new AspectVideoFrame(this, ratio);
         videoFrame.setBackground(surface(Color.BLACK, 20));
         videoFrame.setClipToOutline(true);
 
@@ -149,31 +223,104 @@ public final class MainActivity extends AppCompatActivity {
         playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
         playerView.setShutterBackgroundColor(Color.BLACK);
         videoFrame.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        content.addView(videoFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        TextView videoHint = label("16:9 player  •  adapts automatically to your screen", 11f, MUTED, false);
-        videoHint.setGravity(Gravity.CENTER);
-        videoHint.setPadding(0, dp(6), 0, dp(8));
-        content.addView(videoHint);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        params.topMargin = dp(12);
+        parent.addView(videoFrame, params);
+    }
 
-        // Featured section.
-        LinearLayout sectionHeader = new LinearLayout(this);
-        sectionHeader.setOrientation(LinearLayout.VERTICAL);
+    private void addCatalogSection(LinearLayout parent, boolean compact) {
+        LinearLayout section = new LinearLayout(this);
+        section.setOrientation(LinearLayout.VERTICAL);
+        section.setPadding(compact ? dp(14) : 0, dp(12), compact ? dp(10) : 0, dp(8));
+        section.setBackground(compact ? surface(SURFACE, 20) : null);
+
         TextView featured = label("FEATURED", 11f, ACCENT, true);
         featured.setLetterSpacing(0.12f);
-        sectionHeader.addView(featured);
-        TextView heading = label("FadCam Local", 22f, TEXT, true);
+        section.addView(featured);
+        TextView heading = label("FadCam Local", compact ? 19f : 22f, TEXT, true);
         heading.setPadding(0, dp(2), 0, 0);
-        sectionHeader.addView(heading);
-        TextView description = label("FadCam-originated channels first, followed by TV East creators and global variety.", 13f, MUTED, false);
-        description.setPadding(0, dp(3), 0, dp(10));
-        sectionHeader.addView(description);
-        content.addView(sectionHeader);
+        section.addView(heading);
+        TextView description = label("FadCam-originated channels first, followed by TV East creators and global variety.", 12f, MUTED, false);
+        description.setPadding(0, dp(3), 0, dp(8));
+        section.addView(description);
 
+        channelSection = section;
         channelList = new LinearLayout(this);
         channelList.setOrientation(LinearLayout.VERTICAL);
-        content.addView(channelList);
 
+        ScrollView listScroll = new ScrollView(this);
+        listScroll.setFillViewport(false);
+        listScroll.setClipToPadding(false);
+        listScroll.addView(channelList, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        section.addView(listScroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, compact ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT, compact ? 1f : 0f));
+
+        parent.addView(section, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, compact ? 0 : ViewGroup.LayoutParams.WRAP_CONTENT, compact ? 1f : 0f));
+    }
+
+    private LinearLayout buildBottomNav() {
+        LinearLayout nav = new LinearLayout(this);
+        nav.setOrientation(LinearLayout.HORIZONTAL);
+        nav.setGravity(Gravity.CENTER);
+        nav.setPadding(dp(8), dp(6), dp(8), dp(7));
+        nav.setBackground(surface(Color.rgb(20, 18, 25), 22));
+
+        nav.addView(navItem("⌂", "Home", true, v -> scrollToTop()));
+        nav.addView(navItem("TV", "Channels", false, v -> scrollToChannels()));
+        nav.addView(navItem("＋", "Add", false, v -> showAddChannelDialog()));
+        nav.addView(navItem("▣", "Library", false, v -> scrollToChannels()));
+        return nav;
+    }
+
+    private LinearLayout buildLandscapeRail() {
+        LinearLayout rail = new LinearLayout(this);
+        rail.setOrientation(LinearLayout.VERTICAL);
+        rail.setGravity(Gravity.CENTER_HORIZONTAL);
+        rail.setPadding(0, dp(8), 0, dp(8));
+        rail.setBackground(surface(SURFACE, 22));
+
+        TextView logo = label("49", 20f, TEXT, true);
+        logo.setGravity(Gravity.CENTER);
+        rail.addView(logo, new LinearLayout.LayoutParams(dp(52), dp(52)));
+
+        addRailItem(rail, "⌂", "Home", v -> scrollToTop());
+        addRailItem(rail, "TV", "Live", v -> scrollToChannels());
+        addRailItem(rail, "＋", "Add", v -> showAddChannelDialog());
+        addRailItem(rail, "▣", "Library", v -> scrollToChannels());
+    
+        View spacer = new View(this);
+        rail.addView(spacer, new LinearLayout.LayoutParams(1, 0, 1f));
+        TextView mode = label("LIVE", 9f, GOOD, true);
+        mode.setGravity(Gravity.CENTER);
+        rail.addView(mode, new LinearLayout.LayoutParams(dp(52), dp(40)));
+        return rail;
+    }
+
+    private void addRailItem(LinearLayout rail, String icon, String text, View.OnClickListener listener) {
+        LinearLayout item = navItem(icon, text, false, listener);
+        rail.addView(item, new LinearLayout.LayoutParams(dp(60), dp(66)));
+    }
+
+    private LinearLayout navItem(String icon, String text, boolean selected, View.OnClickListener listener) {
+        LinearLayout item = new LinearLayout(this);
+        item.setOrientation(LinearLayout.VERTICAL);
+        item.setGravity(Gravity.CENTER);
+        item.setPadding(dp(4), dp(2), dp(4), dp(2));
+        item.setClickable(true);
+        item.setFocusable(true);
+        item.setOnClickListener(listener);
+        if (selected) item.setBackground(surface(SURFACE_3, 16));
+
+        TextView iconView = label(icon, icon.equals("TV") ? 12f : 21f, selected ? TEXT : MUTED, true);
+        iconView.setGravity(Gravity.CENTER);
+        item.addView(iconView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f));
+        TextView textView = label(text, 9f, selected ? ACCENT : MUTED, selected);
+        textView.setGravity(Gravity.CENTER);
+        item.addView(textView, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        return item;
+    }
+
+    private void addActions(LinearLayout parent) {
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
         Button add = actionButton("＋  Add authorized channel", SURFACE_2);
@@ -184,25 +331,25 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         refreshParams.leftMargin = dp(8);
         actions.addView(refresh, refreshParams);
-        content.addView(actions);
+        LinearLayout.LayoutParams actionParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        actionParams.topMargin = dp(8);
+        parent.addView(actions, actionParams);
+    }
 
+    private void addFooter(LinearLayout parent) {
         TextView protocol = label("Secure receiver  •  catalog and playback use authorized HTTPS sources", 11f, MUTED, false);
         protocol.setGravity(Gravity.CENTER);
-        protocol.setPadding(0, dp(14), 0, 0);
-        content.addView(protocol);
+        protocol.setPadding(0, dp(14), 0, dp(8));
+        parent.addView(protocol);
 
         LinearLayout footer = new LinearLayout(this);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.setPadding(0, dp(10), 0, 0);
         footer.addView(label("TV East • standalone receiver", 11f, MUTED, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
         stop = actionButton("STOP", SURFACE_2);
         stop.setEnabled(false);
         stop.setOnClickListener(v -> stopPlayback());
         footer.addView(stop);
-        content.addView(footer);
-
-        scroll.addView(content, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
-        setContentView(scroll);
+        parent.addView(footer);
     }
 
     private Button actionButton(String text, int backgroundColor) {
@@ -216,6 +363,17 @@ public final class MainActivity extends AppCompatActivity {
         b.setPadding(dp(12), 0, dp(12), 0);
         b.setBackground(surface(backgroundColor, 18));
         return b;
+    }
+
+    private void scrollToTop() {
+        if (pageScroll != null) pageScroll.smoothScrollTo(0, 0);
+        else Toast.makeText(this, "Home", Toast.LENGTH_SHORT).show();
+    }
+
+    private void scrollToChannels() {
+        if (pageScroll != null && channelSection != null) {
+            pageScroll.post(() -> pageScroll.smoothScrollTo(0, Math.max(0, channelSection.getTop() - dp(8))));
+        }
     }
 
     private void refreshCatalog() {
@@ -282,7 +440,7 @@ public final class MainActivity extends AppCompatActivity {
     private void addChannelCard(ChannelStore.Channel channel, String prefix) {
         LinearLayout card = new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(dp(14), dp(11), dp(10), dp(11));
+        card.setPadding(dp(14), dp(10), dp(10), dp(10));
         card.setBackground(surface(SURFACE, 18));
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
         cardParams.bottomMargin = dp(8);
@@ -290,7 +448,7 @@ public final class MainActivity extends AppCompatActivity {
 
         LinearLayout text = new LinearLayout(this);
         text.setOrientation(LinearLayout.VERTICAL);
-        TextView name = label(prefix + channel.name, 16f, TEXT, true);
+        TextView name = label(prefix + channel.name, 15f, TEXT, true);
         TextView owner = label(channel.owner, 12f, MUTED, false);
         owner.setPadding(0, dp(3), 0, 0);
         text.addView(name);
@@ -436,21 +594,6 @@ public final class MainActivity extends AppCompatActivity {
             int height = Math.round(availableWidth / ratio) + getPaddingTop() + getPaddingBottom();
             int exactHeight = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY);
             super.onMeasure(widthMeasureSpec, exactHeight);
-        }
-    }
-
-    /** Tiny spacer view that keeps spacing density-aware without magic pixels. */
-    private static final class SpaceGap extends View {
-        private final int size;
-
-        SpaceGap(android.content.Context context, int size) {
-            super(context);
-            this.size = size;
-        }
-
-        @Override
-        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
-            setMeasuredDimension(0, size);
         }
     }
 }
