@@ -38,3 +38,14 @@ func TestPublisherRequestRejectsWrongDevice(t *testing.T) {
 	req := publisherRequest{Version: 1, Nonce: "nonce-2", IssuedAt: time.Now().Unix(), DeviceID: "device-2", ChannelID: "fadcam-local", StreamID: "camera", PublicKey: base64.RawURLEncoding.EncodeToString(der), Signature: "bad"}
 	if err := p.verifyRequest(req); err == nil { t.Fatal("wrong device accepted") }
 }
+
+func TestPublisherControlLoopbackAddress(t *testing.T) {
+	valid := []string{"127.0.0.1:8789", "127.0.0.2:1", "[::1]:8789", "localhost:8789"}
+	for _, addr := range valid {
+		if !isLoopbackListenAddress(addr) { t.Errorf("expected loopback address accepted: %s", addr) }
+	}
+	invalid := []string{"0.0.0.0:8789", ":8789", "192.168.1.10:8789", "10.0.0.2:8789", "[::]:8789", "bad"}
+	for _, addr := range invalid {
+		if isLoopbackListenAddress(addr) { t.Errorf("expected non-loopback address rejected: %s", addr) }
+	}
+}
