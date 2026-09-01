@@ -1,0 +1,151 @@
+name: Production Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+concurrency:
+  group: production-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+  attestations: write
+
+jobs:
+  verify:
+    name: Production verification
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Prepare Gradle
+        run: |
+          set -euo pipefail
+          test -f ./gradlew
+          chmod +x ./gradlew
+          ./gradlew --version
+
+      - name: Verify Go components
+        shell: bash
+        run: |
+          set -euo pipefail
+          for dir in stream-catalog server-tap stream-gateway; do
+            test -f "$dir/go.mod"
+            (cd "$dir" && go test ./... -count=1 -race)
+            (cd "$dir" && go vet ./...)
+          done
+
+      - name: Android unit tests
+        run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest :tv-receiver:test
+
+      - name: Android release lint
+        run: ./gradlew --no-daemon --no-watch-fs --stacktrace :app:lintDefaultRelease :tv-receiver:lintRelease
+
+  release:
+    name: Signed Android release
+    needs: verify
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v5
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: gradle
+
+      - name: Require release signing secrets
+        shell: bash
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_B64"
+          test -n "$KEYSTORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          printf '%s' "$KEYSTORE_B64" | base64 --decode > /tmp/tv49eastz-release.jks
+          chmod 600 /tmp/tv49eastz-release.jks
+          printf '%s\n' \
+            "KEYSTORE_FILE=/tmp/tv49eastz-release.jks" \
+            "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" \
+            "KEY_ALIAS=$KEY_ALIAS" \
+            "KEY_PASSWORD=$KEY_PASSWORD" > local.properties
+          chmod 600 local.properties
+          keytool -list -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
+
+      - name: Build signed AAB and paired APKs
+        run: |
+          set -euo pipefail
+          ./gradlew --no-daemon --no-watch-fs --stacktrace \
+            :app:bundleDefaultRelease \
+            :app:assembleDefaultRelease \
+            :tv-receiver:assembleRelease
+
+      - name: Collect release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          aab="$(find app/build/outputs/bundle -type f -path '*/defaultRelease/*.aab' -print -quit)"
+          fadcam="$(find app/build/outputs/apk -type f -path '*/default/release/*.apk' -print -quit)"
+          tv="$(find tv-receiver/build/outputs/apk -type f -path '*/release/*.apk' -print -quit)"
+          test -s "$aab"
+          test -s "$fadcam"
+          test -s "$tv"
+          cp "$aab" dist/FadCam.aab
+          cp "$fadcam" dist/FadCam.apk
+          cp "$tv" dist/TV49East.apk
+          sha256sum dist/FadCam.aab dist/FadCam.apk dist/TV49East.apk | tee dist/SHA256SUMS.txt
+          keytool -list -v -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | grep -E 'Owner:|SHA256:' > dist/RELEASE-CERTIFICATE.txt
+
+      - name: Generate release provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: 'dist/FadCam.aab'
+
+      - name: Generate FadCam APK provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: 'dist/FadCam.apk'
+
+      - name: Generate TV 49 East APK provenance
+        uses: actions/attest@v4
+        with:
+          subject-path: 'dist/TV49East.apk'
+
+      - name: Upload signed release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: tv49east-production-${{ github.ref_name }}
+          if-no-files-found: error
+          retention-days: 30
+          path: |
+            dist/FadCam.aab
+            dist/FadCam.apk
+            dist/TV49East.apk
+            dist/SHA256SUMS.txt
+            dist/RELEASE-CERTIFICATE.txt
