@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -24,6 +25,8 @@ import (
 
 const (
 	publisherControlPath = "/v1/publisher/session"
+	publisherEnrollPath  = "/v1/publisher/enroll"
+	publisherIdentityPath = "/v1/publisher/identity"
 	publisherProtocol    = 1
 	publisherMaxBody     = 16 << 10
 	publisherMaxLifetime = 30 * time.Second
@@ -38,6 +41,8 @@ type publisherControl struct {
 	client         *http.Client
 	publicKey      *ecdsa.PublicKey
 	publicKeyBytes []byte
+	publicKeyPath  string
+	enrollToken    string
 	mu             sync.Mutex
 	nonces         map[string]time.Time
 }
@@ -51,6 +56,12 @@ type publisherRequest struct {
 	StreamID  string `json:"stream_id"`
 	PublicKey string `json:"pub"`
 	Signature string `json:"sig"`
+}
+
+type publisherEnrollRequest struct {
+	Token     string `json:"token"`
+	DeviceID  string `json:"device_id"`
+	PublicKey string `json:"pub"`
 }
 
 type publisherResponse struct {
@@ -78,29 +89,37 @@ func newPublisherControl(deviceID string, tlsCfg *tls.Config) (*publisherControl
 	if pubPath == "" {
 		return nil, errors.New("PUBLISHER_PUBLIC_KEY_FILE is required")
 	}
-	der, err := os.ReadFile(pubPath)
-	if err != nil {
-		return nil, fmt.Errorf("read publisher public key: %w", err)
+	der, loadErr := os.ReadFile(pubPath)
+	if loadErr == nil {
+		der = bytes.TrimSpace(der)
+		if len(der) > 8192 {
+			return nil, errors.New("publisher public key too large")
+		}
+	} else if !errors.Is(loadErr, os.ErrNotExist) {
+		return nil, fmt.Errorf("read publisher public key: %w", loadErr)
+	} else if strings.TrimSpace(os.Getenv("PUBLISHER_ENROLL_TOKEN")) == "" {
+		return nil, fmt.Errorf("read publisher public key: %w", loadErr)
 	}
-	der = bytes.TrimSpace(der)
-	if len(der) > 8192 {
-		return nil, errors.New("publisher public key too large")
-	}
-	pubAny, err := x509.ParsePKIXPublicKey(der)
-	if err != nil {
-		return nil, fmt.Errorf("parse publisher public key: %w", err)
-	}
-	pub, ok := pubAny.(*ecdsa.PublicKey)
-	if !ok || pub.Curve == nil || pub.X == nil || pub.Y == nil || pub.Curve.Params() == nil || pub.Curve.Params().Name != elliptic.P256().Params().Name {
-		return nil, errors.New("publisher public key must be ECDSA P-256")
+	var pub *ecdsa.PublicKey
+	if len(der) != 0 {
+		pubAny, parseErr := x509.ParsePKIXPublicKey(der)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse publisher public key: %w", parseErr)
+		}
+		var ok bool
+		pub, ok = pubAny.(*ecdsa.PublicKey)
+		if !ok || pub.Curve == nil || pub.X == nil || pub.Y == nil || pub.Curve.Params() == nil || pub.Curve.Params().Name != elliptic.P256().Params().Name {
+			return nil, errors.New("publisher public key must be ECDSA P-256")
+		}
 	}
 	apiKey := strings.TrimSpace(os.Getenv("GATEWAY_API_KEY"))
 	if apiKey == "" {
 		return nil, errors.New("GATEWAY_API_KEY is required for publisher control")
 	}
+	enrollToken := strings.TrimSpace(os.Getenv("PUBLISHER_ENROLL_TOKEN"))
 	transportCfg := tlsCfg.Clone()
 	client := &http.Client{Timeout: 10 * time.Second, Transport: &http.Transport{TLSClientConfig: transportCfg, Proxy: nil, ForceAttemptHTTP2: true}, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-	return &publisherControl{deviceID: strings.TrimSpace(deviceID), gatewayURL: u, apiKey: apiKey, client: client, publicKey: pub, publicKeyBytes: der, nonces: make(map[string]time.Time)}, nil
+	return &publisherControl{deviceID: strings.TrimSpace(deviceID), gatewayURL: u, apiKey: apiKey, client: client, publicKey: pub, publicKeyBytes: der, publicKeyPath: pubPath, enrollToken: enrollToken, nonces: make(map[string]time.Time)}, nil
 }
 
 func (p *publisherControl) verifyRequest(req publisherRequest) error {
@@ -113,7 +132,14 @@ func (p *publisherControl) verifyRequest(req publisherRequest) error {
 		return errors.New("publisher request expired")
 	}
 	providedKey, err := base64.RawURLEncoding.DecodeString(req.PublicKey)
-	if err != nil || !bytes.Equal(providedKey, p.publicKeyBytes) {
+	if err != nil {
+		return errors.New("publisher identity mismatch")
+	}
+	p.mu.Lock()
+	pub := p.publicKey
+	pinned := append([]byte(nil), p.publicKeyBytes...)
+	p.mu.Unlock()
+	if pub == nil || !bytes.Equal(providedKey, pinned) {
 		return errors.New("publisher identity mismatch")
 	}
 	sig, err := base64.RawURLEncoding.DecodeString(req.Signature)
@@ -122,7 +148,7 @@ func (p *publisherControl) verifyRequest(req publisherRequest) error {
 	}
 	canonical := fmt.Sprintf("%d|%s|%d|%s|%s|%s", req.Version, req.Nonce, req.IssuedAt, req.DeviceID, req.ChannelID, req.StreamID)
 	digest := sha256.Sum256([]byte(canonical))
-	if !ecdsa.VerifyASN1(p.publicKey, digest[:], sig) {
+	if !ecdsa.VerifyASN1(pub, digest[:], sig) {
 		return errors.New("publisher signature verification failed")
 	}
 	p.mu.Lock()
@@ -201,6 +227,98 @@ func (p *publisherControl) handleSession(w http.ResponseWriter, r *http.Request)
 	_ = json.NewEncoder(w).Encode(gateway)
 }
 
+func (p *publisherControl) handleEnroll(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if p.enrollToken == "" {
+		http.Error(w, "publisher enrollment disabled", http.StatusNotFound)
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, publisherMaxBody+1))
+	if err != nil || len(body) > publisherMaxBody {
+		http.Error(w, "request too large", http.StatusRequestEntityTooLarge)
+		return
+	}
+	var req publisherEnrollRequest
+	dec := json.NewDecoder(bytes.NewReader(body))
+	if err := dec.Decode(&req); err != nil || dec.Decode(&struct{}{}) != io.EOF {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if req.DeviceID != p.deviceID || req.Token == "" || !constantTime(req.Token, p.enrollToken) || req.PublicKey == "" {
+		http.Error(w, "enrollment rejected", http.StatusForbidden)
+		return
+	}
+	der, err := base64.RawURLEncoding.DecodeString(req.PublicKey)
+	if err != nil || len(der) == 0 || len(der) > 8192 {
+		http.Error(w, "invalid public key", http.StatusBadRequest)
+		return
+	}
+	pubAny, err := x509.ParsePKIXPublicKey(der)
+	if err != nil {
+		http.Error(w, "invalid public key", http.StatusBadRequest)
+		return
+	}
+	pub, ok := pubAny.(*ecdsa.PublicKey)
+	if !ok || pub.Curve == nil || pub.X == nil || pub.Y == nil || pub.Curve.Params() == nil || pub.Curve.Params().Name != elliptic.P256().Params().Name {
+		http.Error(w, "publisher public key must be ECDSA P-256", http.StatusBadRequest)
+		return
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.publicKey != nil || len(p.publicKeyBytes) != 0 {
+		if bytes.Equal(der, p.publicKeyBytes) {
+			w.Header().Set("Cache-Control", "no-store")
+			_ = json.NewEncoder(w).Encode(map[string]string{"fingerprint": publisherPublicKeyFingerprint(der)})
+			return
+		}
+		http.Error(w, "publisher identity already provisioned", http.StatusConflict)
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(p.publicKeyPath), 0700); err != nil {
+		http.Error(w, "unable to persist publisher identity", http.StatusInternalServerError)
+		return
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(p.publicKeyPath), ".publisher-key-*")
+	if err != nil {
+		http.Error(w, "unable to persist publisher identity", http.StatusInternalServerError)
+		return
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+	if err := tmp.Chmod(0600); err != nil { _ = tmp.Close(); http.Error(w, "unable to persist publisher identity", 500); return }
+	if _, err := tmp.Write(der); err != nil { _ = tmp.Close(); http.Error(w, "unable to persist publisher identity", 500); return }
+	if err := tmp.Close(); err != nil { http.Error(w, "unable to persist publisher identity", 500); return }
+	if err := os.Rename(tmpName, p.publicKeyPath); err != nil { http.Error(w, "unable to persist publisher identity", 500); return }
+	p.publicKey = pub
+	p.publicKeyBytes = append([]byte(nil), der...)
+	// Enrollment is intentionally one-shot. Remove the token from the running
+	// process after successful provisioning; operators should rotate it on restart.
+	p.enrollToken = ""
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]string{"fingerprint": publisherPublicKeyFingerprint(der)})
+}
+
+func (p *publisherControl) handleIdentity(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	p.mu.Lock()
+	der := append([]byte(nil), p.publicKeyBytes...)
+	p.mu.Unlock()
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "no-store")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"device_id":  p.deviceID,
+		"provisioned": len(der) != 0,
+		"fingerprint": publisherPublicKeyFingerprint(der),
+	})
+}
+
 func (p *publisherControl) handleRevoke(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodDelete {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -241,18 +359,16 @@ func (p *publisherControl) serve(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc(publisherControlPath, p.handleSession)
 	mux.HandleFunc(publisherControlPath+"/", p.handleRevoke)
+	mux.HandleFunc(publisherEnrollPath, p.handleEnroll)
+	mux.HandleFunc(publisherIdentityPath, p.handleIdentity)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 10 * time.Second}
 	return server.ListenAndServe()
 }
 
 func isLoopbackListenAddress(addr string) bool {
 	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
-	if err != nil {
-		return false
-	}
-	if host == "localhost" {
-		return true
-	}
+	if err != nil { return false }
+	if host == "localhost" { return true }
 	ip := net.ParseIP(host)
 	return ip != nil && ip.IsLoopback()
 }
@@ -260,4 +376,11 @@ func isLoopbackListenAddress(addr string) bool {
 func publisherPublicKeyFingerprint(raw []byte) string {
 	h := sha256.Sum256(raw)
 	return hex.EncodeToString(h[:])
+}
+
+func constantTime(a, b string) bool {
+	if len(a) != len(b) { return false }
+	var x byte
+	for i := range a { x |= a[i] ^ b[i] }
+	return x == 0
 }
