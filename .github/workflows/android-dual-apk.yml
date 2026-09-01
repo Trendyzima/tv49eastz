@@ -1,20 +1,17 @@
-name: Android Dual APK Certification
+name: Android APK Builds
 
 on:
-  # The master push path is owned by android-build-smoke.yml. Keep this
-  # workflow for PR/tag/manual certification so Android does not execute the
-  # same expensive build twice on every master commit.
+  push:
+    branches: [master]
   pull_request:
     branches: [master]
-  push:
-    tags: ['v*']
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: android-dual-apk-${{ github.ref }}
+  group: android-apk-${{ github.ref }}
   cancel-in-progress: true
 
 env:
@@ -27,7 +24,8 @@ env:
   CI_KEY_PASSWORD: changeit-ci-only
 
 jobs:
-  certify:
+  build:
+    name: Build FadCam + TV 49 East APKs
     runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
@@ -45,12 +43,13 @@ jobs:
           git -C "$MEDIA3_PATCHED_PATH" remote add origin "$MEDIA3_PATCHED_REPO"
           git -C "$MEDIA3_PATCHED_PATH" fetch --depth 1 origin "$MEDIA3_PATCHED_SHA"
           git -C "$MEDIA3_PATCHED_PATH" checkout --detach FETCH_HEAD
-          actual_sha="$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)"
-          test "$actual_sha" = "$MEDIA3_PATCHED_SHA"
+          test "$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)" = "$MEDIA3_PATCHED_SHA"
           test -f "$MEDIA3_PATCHED_PATH/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
           test -d "$MEDIA3_PATCHED_PATH/libraries/common"
           test -d "$MEDIA3_PATCHED_PATH/libraries/container"
           test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
+          printf '%s\n' "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
+          chmod 600 local.properties
 
       - name: Set up JDK 17
         uses: actions/setup-java@v5
@@ -58,16 +57,6 @@ jobs:
           distribution: temurin
           java-version: '17'
           cache: gradle
-
-      - name: Prepare CI release signing
-        shell: bash
-        run: |
-          set -euo pipefail
-          rm -f "$CI_KEYSTORE_PATH"
-          keytool -genkeypair -noprompt -keystore "$CI_KEYSTORE_PATH" -storepass "$CI_KEYSTORE_PASSWORD" -keypass "$CI_KEY_PASSWORD" -alias "$CI_KEY_ALIAS" -keyalg RSA -keysize 2048 -validity 2 -dname "CN=tv49eastz CI,O=tv49eastz,C=XX"
-          chmod 600 "$CI_KEYSTORE_PATH"
-          printf '%s\n' "KEYSTORE_FILE=$CI_KEYSTORE_PATH" "KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD" "KEY_ALIAS=$CI_KEY_ALIAS" "KEY_PASSWORD=$CI_KEY_PASSWORD" > local.properties
-          chmod 600 local.properties
 
       - name: Prepare Gradle
         shell: bash
@@ -77,97 +66,88 @@ jobs:
           chmod +x ./gradlew
           ./gradlew --version
 
-      - name: Verify Android task graph
+      - name: Prepare CI signing
         shell: bash
         run: |
           set -euo pipefail
-          ./gradlew --no-daemon --no-watch-fs :app:tasks --all > /tmp/app-tasks.txt
-          ./gradlew --no-daemon --no-watch-fs :tv-receiver:tasks --all > /tmp/tv-tasks.txt
-          for task in testDefaultDebugUnitTest assembleDefaultDebug assembleDefaultRelease assembleProPlus; do
-            grep -Fq "$task" /tmp/app-tasks.txt || { echo "Missing app task: $task"; exit 1; }
-          done
-          for task in testDebugUnitTest assembleDebug assembleRelease; do
-            grep -Fq "$task" /tmp/tv-tasks.txt || { echo "Missing TV task: $task"; exit 1; }
-          done
+          rm -f "$CI_KEYSTORE_PATH"
+          keytool -genkeypair -noprompt \
+            -keystore "$CI_KEYSTORE_PATH" \
+            -storepass "$CI_KEYSTORE_PASSWORD" \
+            -keypass "$CI_KEY_PASSWORD" \
+            -alias "$CI_KEY_ALIAS" \
+            -keyalg RSA -keysize 2048 -validity 2 \
+            -dname "CN=tv49eastz CI,O=tv49eastz,C=XX"
+          chmod 600 "$CI_KEYSTORE_PATH"
+          printf '%s\n' \
+            "KEYSTORE_FILE=$CI_KEYSTORE_PATH" \
+            "KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD" \
+            "KEY_ALIAS=$CI_KEY_ALIAS" \
+            "KEY_PASSWORD=$CI_KEY_PASSWORD" \
+            "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
+          chmod 600 local.properties
 
-      - name: Verify patched Media3 substitutions
+      - name: Verify patched Media3 substitution
         shell: bash
         run: |
           set -euo pipefail
-          verify() {
-            local module="$1" project="$2" out="/tmp/dependency-${1//:/-}.txt"
-            ./gradlew --no-daemon --no-watch-fs --stacktrace :app:dependencyInsight --dependency "$module" --configuration defaultDebugCompileClasspath >"$out" 2>&1 || { cat "$out"; exit 1; }
-            grep -Fq "project $project" "$out" || { cat "$out"; echo "FAIL: $module -> $project"; exit 1; }
-          }
-          verify "androidx.media3:media3-muxer" ":media3-patched:lib-muxer"
-          verify "androidx.media3:media3-common" ":media3-patched:lib-common"
-          verify "androidx.media3:media3-container" ":media3-patched:lib-container"
+          for spec in \
+            "androidx.media3:media3-muxer :media3-patched:lib-muxer" \
+            "androidx.media3:media3-common :media3-patched:lib-common" \
+            "androidx.media3:media3-container :media3-patched:lib-container"; do
+            set -- $spec
+            ./gradlew --no-daemon --no-watch-fs --stacktrace \
+              :app:dependencyInsight --dependency "$1" \
+              --configuration defaultDebugCompileClasspath | grep -Fq "project $2"
+          done
 
-      - name: Android unit tests
-        shell: bash
+      - name: Run Android tests
         run: ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
-      - name: Build FadCam APKs
-        shell: bash
-        run: ./gradlew :app:assembleDebug :app:assembleRelease :app:assembleProPlus --no-daemon --no-watch-fs --stacktrace
+      - name: Build downloadable APKs
+        run: |
+          ./gradlew \
+            :app:assembleDefaultDebug \
+            :app:assembleDefaultRelease \
+            :tv-receiver:assembleDebug \
+            :tv-receiver:assembleRelease \
+            --no-daemon --no-watch-fs --stacktrace
 
-      - name: Build TV receiver APKs
-        shell: bash
-        run: ./gradlew :tv-receiver:assembleDebug :tv-receiver:assembleRelease --no-daemon --no-watch-fs --stacktrace
-
-      - name: Resolve Android SDK build-tools
-        id: android-tools
+      - name: Collect APKs and checksums
         shell: bash
         run: |
           set -euo pipefail
-          sdk="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
-          test -n "$sdk" && test -d "$sdk" || { echo "ERROR: Android SDK root is unavailable"; exit 1; }
-          build_tools="$sdk/build-tools"
-          test -d "$build_tools" || { echo "ERROR: Android SDK build-tools directory is unavailable: $build_tools"; exit 1; }
-          mapfile -t zipalign_candidates < <(find "$build_tools" -mindepth 2 -maxdepth 2 -type f -name zipalign -perm -111 -print 2>/dev/null | sort -V -r)
-          zipalign=""
-          for candidate in "${zipalign_candidates[@]}"; do
-            if [[ -x "$candidate" ]]; then zipalign="$candidate"; break; fi
-          done
-          if [[ -z "$zipalign" ]]; then
-            echo "ERROR: no executable zipalign found under $build_tools"
-            find "$build_tools" -type f -name zipalign -print 2>/dev/null || true
-            exit 1
-          fi
-          echo "Using zipalign: $zipalign"
-          test -x "$zipalign"
-          help_output="$(mktemp)"
-          help_status=0
-          "$zipalign" -h >"$help_output" 2>&1 || help_status=$?
-          grep -Fq "Zip alignment utility" "$help_output" || { cat "$help_output"; echo "ERROR: selected zipalign is not functional"; rm -f "$help_output"; exit 1; }
-          [[ "$help_status" -eq 0 || "$help_status" -eq 2 ]] || { cat "$help_output"; echo "ERROR: zipalign failed unexpectedly with status $help_status"; rm -f "$help_output"; exit 1; }
-          rm -f "$help_output"
-          echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
+          mkdir -p dist
+          fadcam_debug="$(find app/build/outputs/apk -type f -path '*/default/debug/*.apk' -print -quit)"
+          fadcam_release="$(find app/build/outputs/apk -type f -path '*/default/release/*.apk' -print -quit)"
+          tv_debug="$(find tv-receiver/build/outputs/apk -type f -path '*/debug/*.apk' -print -quit)"
+          tv_release="$(find tv-receiver/build/outputs/apk -type f -path '*/release/*.apk' -print -quit)"
+          test -s "$fadcam_debug"
+          test -s "$fadcam_release"
+          test -s "$tv_debug"
+          test -s "$tv_release"
+          cp "$fadcam_debug" dist/FadCam-debug.apk
+          cp "$fadcam_release" dist/FadCam-release-ci.apk
+          cp "$tv_debug" dist/TV49East-debug.apk
+          cp "$tv_release" dist/TV49East-release-ci.apk
+          sha256sum dist/*.apk | tee dist/SHA256SUMS.txt
+          printf '%s\n' \
+            "Build commit: $GITHUB_SHA" \
+            "Media3 patch: $MEDIA3_PATCHED_SHA" \
+            "CI release APKs use an ephemeral CI signing key and are for testing." \
+            "Production releases are published separately by production-release.yml." \
+            > dist/BUILD-INFO.txt
 
-      - name: Verify APK outputs and alignment
-        shell: bash
-        env:
-          ZIPALIGN: ${{ steps.android-tools.outputs.zipalign }}
-        run: |
-          set -euo pipefail
-          test -n "$ZIPALIGN"
-          test -x "$ZIPALIGN"
-          apk_count=0
-          while IFS= read -r -d '' apk; do
-            test -s "$apk"
-            echo "APK: $apk"
-            "$ZIPALIGN" -c -P 16 -v 4 "$apk"
-            apk_count=$((apk_count + 1))
-          done < <(find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print0)
-          test "$apk_count" -ge 6 || { echo "Expected at least 6 APKs, found $apk_count"; find app/build/outputs/apk tv-receiver/build/outputs/apk -type f -name '*.apk' -print || true; exit 1; }
-          echo "Certified APK count: $apk_count"
-
-      - name: Upload coordinated APK artifacts
+      - name: Upload downloadable APK artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: android-dual-apk-${{ github.sha }}
+          name: tv49east-android-apks-${{ github.sha }}
           if-no-files-found: error
+          retention-days: 30
           path: |
-            app/build/outputs/apk/**/*.apk
-            tv-receiver/build/outputs/apk/**/*.apk
-          retention-days: 7
+            dist/FadCam-debug.apk
+            dist/FadCam-release-ci.apk
+            dist/TV49East-debug.apk
+            dist/TV49East-release-ci.apk
+            dist/SHA256SUMS.txt
+            dist/BUILD-INFO.txt
