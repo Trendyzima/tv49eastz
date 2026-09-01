@@ -204,7 +204,7 @@ public final class IptvFeedClient {
         return l.contains("nsfw") || l.contains("geo-blocked") || l.contains("blocked") || l.contains("broken");
     }
 
-    private boolean isDirectHls(String value) {
+    static boolean isDirectHls(String value) {
         if (value == null || value.trim().isEmpty()) return false;
         String url = value.trim();
         String lower = url.toLowerCase(Locale.US);
