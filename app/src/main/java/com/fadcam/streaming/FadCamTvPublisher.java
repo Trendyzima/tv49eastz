@@ -1,8 +1,8 @@
 package com.fadcam.streaming;
 
 import android.content.Context;
+import android.content.Intent;
 import android.net.Uri;
-import android.os.Build;
 import android.util.Base64;
 
 import androidx.annotation.NonNull;
@@ -16,17 +16,12 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.KeyStore;
-import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
-import java.util.Locale;
 import java.util.UUID;
-
-import javax.net.ssl.HttpsURLConnection;
 
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
@@ -42,6 +37,8 @@ import android.security.keystore.KeyProperties;
 public final class FadCamTvPublisher {
     private static final String TAG = "FadCamTvPublisher";
     private static final String KEY_ALIAS = "tv49_fadcam_publisher_v1";
+    private static final String PREFS = "FadCamTvPublisher";
+    private static final String ACTIVE_SESSION = "active_session";
     private static final String CONTROL_ORIGIN = "http://127.0.0.1:8789";
     private static final int CONNECT_TIMEOUT_MS = 5000;
     private static final int READ_TIMEOUT_MS = 10000;
@@ -49,35 +46,37 @@ public final class FadCamTvPublisher {
 
     private FadCamTvPublisher() {}
 
-    /** Explicit Start TV entry point. Throws if the publisher boundary is unavailable. */
+    /** Explicit Start TV entry point. Returns the signed handoff URI. */
     public static String startTv(@NonNull Context context, @NonNull String deviceId,
                                  @NonNull String channelId, @NonNull String streamId,
                                  String name, String owner) throws Exception {
-        String playlist = requestGatewaySession(deviceId, channelId, streamId);
-        return buildHandoffUri(playlist, name == null ? "FadCam Local" : name,
+        ensureKey(context);
+        PublisherSession session = requestGatewaySession(deviceId, channelId, streamId);
+        String handoff = buildHandoffUri(session.playlist, name == null ? "FadCam Local" : name,
                 owner == null ? "FadCam" : owner).toString();
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
+                .putString(ACTIVE_SESSION, session.sessionId).apply();
+        return handoff;
+    }
+
+    /** Explicit Start TV + launch. The receiver remains responsible for verifying the handoff. */
+    public static void startTvAndLaunch(@NonNull Context context, @NonNull String deviceId,
+                                        @NonNull String channelId, @NonNull String streamId,
+                                        String name, String owner) throws Exception {
+        String handoff = startTv(context, deviceId, channelId, streamId, name, owner);
+        Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(handoff));
+        intent.setPackage("com.tv49.com");
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+        context.startActivity(intent);
     }
 
     /** Explicit Stop TV entry point. The gateway revocation is immediate. */
-    public static void stopTv(@NonNull String sessionId) throws Exception {
-        if (sessionId == null || sessionId.trim().isEmpty() || sessionId.contains("/")) {
-            throw new IllegalArgumentException("invalid session id");
-        }
-        HttpURLConnection connection = null;
-        try {
-            URL url = new URL(CONTROL_ORIGIN + "/v1/publisher/session/" + Uri.encode(sessionId));
-            connection = (HttpURLConnection) url.openConnection();
-            connection.setRequestMethod("DELETE");
-            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
-            connection.setReadTimeout(READ_TIMEOUT_MS);
-            int status = connection.getResponseCode();
-            if (status != HttpURLConnection.HTTP_NO_CONTENT && status != HttpURLConnection.HTTP_OK
-                    && status != HttpURLConnection.HTTP_NOT_FOUND) {
-                throw new IOException("publisher revoke failed: HTTP " + status);
-            }
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
+    public static void stopTv(@NonNull Context context) throws Exception {
+        String sessionId = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+                .getString(ACTIVE_SESSION, "");
+        if (sessionId == null || sessionId.trim().isEmpty()) return;
+        revokeSession(sessionId);
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().remove(ACTIVE_SESSION).apply();
     }
 
     /** Public key enrollment material. Provision this exact value into the tunnel agent. */
@@ -89,9 +88,8 @@ public final class FadCamTvPublisher {
         return Base64.encodeToString(encoded, Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
     }
 
-    private static String requestGatewaySession(String deviceId, String channelId, String streamId) throws Exception {
-        if (deviceId == null || deviceId.trim().isEmpty() || channelId == null || channelId.trim().isEmpty()
-                || streamId == null || streamId.trim().isEmpty()) {
+    private static PublisherSession requestGatewaySession(String deviceId, String channelId, String streamId) throws Exception {
+        if (deviceId.trim().isEmpty() || channelId.trim().isEmpty() || streamId.trim().isEmpty()) {
             throw new IllegalArgumentException("publisher identity and stream are required");
         }
         long issuedAt = System.currentTimeMillis() / 1000L;
@@ -107,8 +105,7 @@ public final class FadCamTvPublisher {
 
         HttpURLConnection connection = null;
         try {
-            URL url = new URL(CONTROL_ORIGIN + "/v1/publisher/session");
-            connection = (HttpURLConnection) url.openConnection();
+            connection = (HttpURLConnection) new URL(CONTROL_ORIGIN + "/v1/publisher/session").openConnection();
             connection.setRequestMethod("POST");
             connection.setDoOutput(true);
             connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
@@ -117,9 +114,7 @@ public final class FadCamTvPublisher {
             connection.setRequestProperty("Cache-Control", "no-store");
             byte[] bytes = body.getBytes(StandardCharsets.UTF_8);
             connection.setFixedLengthStreamingMode(bytes.length);
-            try (OutputStream out = connection.getOutputStream()) {
-                out.write(bytes);
-            }
+            try (OutputStream out = connection.getOutputStream()) { out.write(bytes); }
             int status = connection.getResponseCode();
             InputStream input = status >= 400 ? connection.getErrorStream() : connection.getInputStream();
             String response = readBounded(input);
@@ -131,11 +126,28 @@ public final class FadCamTvPublisher {
             if (session == null || session.isEmpty() || playlist == null || playlist.isEmpty()) {
                 throw new IOException("publisher returned incomplete session");
             }
-            if (!playlist.startsWith("https://")) {
-                throw new IOException("publisher returned non-HTTPS playlist");
-            }
+            if (!playlist.startsWith("https://")) throw new IOException("publisher returned non-HTTPS playlist");
             FLog.i(TAG, "TV session created: " + session);
-            return playlist;
+            return new PublisherSession(session, playlist);
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private static void revokeSession(String sessionId) throws Exception {
+        if (sessionId.contains("/") || sessionId.length() > 128) throw new IllegalArgumentException("invalid session id");
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL(CONTROL_ORIGIN + "/v1/publisher/session/" + Uri.encode(sessionId));
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setRequestMethod("DELETE");
+            connection.setConnectTimeout(CONNECT_TIMEOUT_MS);
+            connection.setReadTimeout(READ_TIMEOUT_MS);
+            int status = connection.getResponseCode();
+            if (status != HttpURLConnection.HTTP_NO_CONTENT && status != HttpURLConnection.HTTP_OK
+                    && status != HttpURLConnection.HTTP_NOT_FOUND) {
+                throw new IOException("publisher revoke failed: HTTP " + status);
+            }
         } finally {
             if (connection != null) connection.disconnect();
         }
@@ -232,5 +244,14 @@ public final class FadCamTvPublisher {
             out.append(c);
         }
         return null;
+    }
+
+    private static final class PublisherSession {
+        final String sessionId;
+        final String playlist;
+        PublisherSession(String sessionId, String playlist) {
+            this.sessionId = sessionId;
+            this.playlist = playlist;
+        }
     }
 }
