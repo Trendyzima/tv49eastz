@@ -15,7 +15,24 @@ Once a versioned production tag (`v*`) passes the production verification job, G
 
 The production release also publishes the FadCam AAB, SHA-256 checksums, and release-certificate information.
 
-> **Download status:** these URLs are intentionally release-backed. They become live only after the first successful versioned production release is published. Do not treat a missing `latest` release as a valid APK.
+> **Production download status:** these URLs are intentionally release-backed. They become live only after a successful versioned production release is published. Do not treat a missing `latest` release as a valid APK.
+
+## Latest build downloads
+
+Every push to `master` now runs the Android APK build workflow. It builds both applications and uploads a coordinated artifact containing:
+
+- `FadCam-debug.apk` — debug/test build
+- `FadCam-release-ci.apk` — CI-signed release variant for testing
+- `TV49East-debug.apk` — Android TV debug/test build
+- `TV49East-release-ci.apk` — CI-signed Android TV release variant for testing
+- `SHA256SUMS.txt` — checksums for all APKs
+- `BUILD-INFO.txt` — exact source commit and patched Media3 commit used
+
+**Easy download:** open the latest successful Android APK workflow run, then download the `tv49east-android-apks-*` artifact.
+
+[Open Android APK builds](https://github.com/Trendyzima/tv49eastz/actions/workflows/android-dual-apk.yml)
+
+> **Important:** CI release APKs are test artifacts signed with an ephemeral CI key. They are not the production release signing identity. Use the Production downloads above for production-distributed binaries.
 
 ## Production release process
 
@@ -43,7 +60,25 @@ GitHub Release publication
 README direct-download links
 ```
 
-The release workflow requires the repository's Android release-signing secrets and fails closed if they are absent. It also pins the certified patched Media3 checkout before building.
+The production release workflow requires the repository's Android release-signing secrets and fails closed if they are absent. It also pins the certified patched Media3 checkout before building.
+
+## Android build pipeline
+
+```text
+master push / PR / manual run
+            ↓
+Android APK Build workflow
+            ├── checkout source
+            ├── fetch pinned patched Media3
+            ├── run Android tests
+            ├── verify Media3 substitutions
+            ├── build FadCam debug + release
+            ├── build TV 49 East debug + release
+            ├── calculate SHA-256 checksums
+            └── upload one coordinated APK artifact
+```
+
+The build is intentionally fail-closed: missing Gradle tasks, missing patched Media3 sources, failed tests, or missing APK outputs stop publication of the downloadable artifact.
 
 ## Architecture
 
