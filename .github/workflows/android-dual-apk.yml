@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -153,31 +153,3 @@ jobs:
             dist/TV49East-release-ci.apk
             dist/SHA256SUMS.txt
             dist/BUILD-INFO.txt
-
-      - name: Publish latest CI APK release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          assets=(
-            dist/FadCam.apk
-            dist/TV49East.apk
-            dist/FadCam-release-ci.apk
-            dist/TV49East-release-ci.apk
-            dist/FadCam-debug.apk
-            dist/TV49East-debug.apk
-            dist/SHA256SUMS.txt
-            dist/BUILD-INFO.txt
-          )
-          if gh release view latest >/dev/null 2>&1; then
-            gh release upload latest "${assets[@]}" --clobber
-            gh release edit latest \
-              --title "TV 49 East — Latest CI Build" \
-              --notes "Automated APK build from commit $GITHUB_SHA. FadCam.apk and TV49East.apk here are CI-signed testing builds. Versioned v* releases contain production-signed APKs."
-          else
-            gh release create latest "${assets[@]}" \
-              --title "TV 49 East — Latest CI Build" \
-              --notes "Automated APK build from commit $GITHUB_SHA. FadCam.apk and TV49East.apk here are CI-signed testing builds. Versioned v* releases contain production-signed APKs."
-          fi
