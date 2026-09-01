@@ -1,7 +1,12 @@
+# Reference deployment shape for Gate 1.
+# The current stream-gateway binary is configured with environment variables;
+# this YAML is documentation only and is intentionally not read by the binary.
+# Never put the FadCam device's private/LAN address in gateway configuration.
+
 upstream:
-  base_url: "http://192.168.100.5:8080"
+  base_url: "http://127.0.0.1:8785" # device-tunnel gateway-side proxy
   connect_timeout: 3s
-  request_timeout: 10s
+  request_timeout: 15s
 
 public:
   listen: "0.0.0.0:8787"
@@ -11,6 +16,7 @@ security:
   require_auth: true
   allow_control_endpoints: false
   hide_upstream_address: true
+  require_mutual_tls: true
 
 hls:
   manifest_cache_ttl: 1s
@@ -19,4 +25,9 @@ hls:
 
 limits:
   max_viewers_per_stream: 10
-  max_requests_per_second: 20
+  max_requests_per_minute: 120
+
+# Device-side boundary (documented here for completeness):
+#   FadCam HTTP server -> server-tap 127.0.0.1:8788 -> outbound mTLS tunnel
+# Gateway-side tunnel proxy:
+#   127.0.0.1:8785
