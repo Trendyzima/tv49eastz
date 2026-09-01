@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: android-apk-${{ github.ref }}
@@ -151,3 +151,34 @@ jobs:
             dist/TV49East-release-ci.apk
             dist/SHA256SUMS.txt
             dist/BUILD-INFO.txt
+
+      - name: Publish latest CI APK release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view latest >/dev/null 2>&1; then
+            gh release upload latest \
+              dist/FadCam-release-ci.apk \
+              dist/TV49East-release-ci.apk \
+              dist/FadCam-debug.apk \
+              dist/TV49East-debug.apk \
+              dist/SHA256SUMS.txt \
+              dist/BUILD-INFO.txt \
+              --clobber
+            gh release edit latest \
+              --title "TV 49 East — Latest CI Build" \
+              --notes "Automated APK build from commit $GITHUB_SHA. These APKs use an ephemeral CI signing key and are intended for testing. Use a versioned v* release for production-signed APKs."
+          else
+            gh release create latest \
+              dist/FadCam-release-ci.apk \
+              dist/TV49East-release-ci.apk \
+              dist/FadCam-debug.apk \
+              dist/TV49East-debug.apk \
+              dist/SHA256SUMS.txt \
+              dist/BUILD-INFO.txt \
+              --title "TV 49 East — Latest CI Build" \
+              --notes "Automated APK build from commit $GITHUB_SHA. These APKs use an ephemeral CI signing key and are intended for testing. Use a versioned v* release for production-signed APKs."
+          fi
