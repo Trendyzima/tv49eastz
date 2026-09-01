@@ -13,7 +13,7 @@
         android:theme="@style/Theme.TV49East"
         android:banner="@drawable/tv49east_banner">
         <activity
-            android:name=".MainActivity"
+            android:name="com.fadcam.tv.MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:exported="true"
             android:intentMatchingFlags="enforceIntentFilter"
@@ -32,7 +32,7 @@
         </activity>
 
         <activity
-            android:name=".FadCamHandoffActivity"
+            android:name="com.fadcam.tv.FadCamHandoffActivity"
             android:exported="true"
             android:intentMatchingFlags="enforceIntentFilter"
             android:permission="com.tv49.com.permission.PUBLISH_FADCAM"
