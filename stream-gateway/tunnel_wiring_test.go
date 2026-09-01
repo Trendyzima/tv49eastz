@@ -23,7 +23,13 @@ func TestTunnelRegistryLazyProxyWiring(t *testing.T) {
 		t.Fatal("expected lazy device tunnel registration")
 	}
 
-	req := httptest.NewRequest(http.MethodGet, tunnel.BaseURL+"/live.m3u8", nil)
+	// httptest.NewRequest models an inbound server request and sets RequestURI.
+	// DeviceTunnel.client is an outbound HTTP client, so use http.NewRequest
+	// here to exercise the same request shape the production gateway creates.
+	req, err := http.NewRequest(http.MethodGet, tunnel.BaseURL+"/live.m3u8", nil)
+	if err != nil {
+		t.Fatalf("build tunnel request: %v", err)
+	}
 	resp, err := tunnel.client.Do(req)
 	if err != nil {
 		t.Fatalf("tunnel request failed: %v", err)
