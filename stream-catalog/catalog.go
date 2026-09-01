@@ -103,7 +103,10 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 			Logo:     firstNonEmpty(meta["tvg-logo"], meta["logo"]),
 			Stream:   stream,
 			Source:   "iptv-org",
-			Relay:    true,
+			// Public discovery metadata is not authorization to redistribute the
+			// stream. Explicitly onboarded relay sources are the only relay=true
+			// records and are handled outside this importer.
+			Relay: false,
 		})
 		meta = nil
 	}
