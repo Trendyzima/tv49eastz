@@ -89,7 +89,10 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 			meta = nil
 			continue
 		}
-		name := firstNonEmpty(meta["name"], meta["tvg-name"], stream)
+
+		// Canonical TVG fields take precedence over legacy aliases and the
+		// EXTINF display name. This preserves authoritative IPTV metadata.
+		name := firstNonEmpty(meta["tvg-name"], meta["name"], meta["display-name"], stream)
 		id := firstNonEmpty(meta["tvg-id"], meta["id"], slug(name+"|"+stream))
 		out = append(out, Channel{
 			ID:       id,
@@ -160,8 +163,6 @@ func parseExtInf(line string) map[string]string {
 		if attrs[0] == '"' {
 			value, rest, ok := consumeQuoted(attrs)
 			if !ok {
-				// A malformed quoted attribute is not allowed to consume the
-				// remainder as arbitrary metadata.
 				break
 			}
 			m[key] = value
