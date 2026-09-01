@@ -68,6 +68,39 @@ func TestParseExtInfHandlesDurationWithoutAttributes(t *testing.T) {
 	}
 }
 
+func TestParseExtInfHandlesEscapedQuotes(t *testing.T) {
+	line := `#EXTINF:-1 tvg-id="east-3" tvg-name="East \"News\"" group-title="News",East News`
+	meta := parseExtInf(line)
+	if meta["tvg-id"] != "east-3" {
+		t.Fatalf("tvg-id = %q, want east-3", meta["tvg-id"])
+	}
+	if meta["tvg-name"] != `East "News"` {
+		t.Fatalf("tvg-name = %q, want East %q", meta["tvg-name"], `"News"`)
+	}
+	if meta["group-title"] != "News" || meta["name"] != "East News" {
+		t.Fatalf("unexpected metadata: %+v", meta)
+	}
+}
+
+func TestParseExtInfPrefersTVGMetadataAndAliases(t *testing.T) {
+	line := `#EXTINF:-1 id="legacy-id" tvg-id="canonical-id" name="Legacy Name" tvg-name="Canonical Name" group="Sports" country="KE" language="en" logo="https://example.com/logo.png",Display Name`
+	meta := parseExtInf(line)
+	c, err := parseM3U(strings.NewReader(line+"\nhttps://example.com/live.m3u8\n"), 1<<20)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if meta["id"] != "legacy-id" || meta["tvg-id"] != "canonical-id" {
+		t.Fatalf("attributes not preserved: %+v", meta)
+	}
+	if len(c.Channels) != 1 {
+		t.Fatalf("got %d channels, want 1", len(c.Channels))
+	}
+	ch := c.Channels[0]
+	if ch.ID != "canonical-id" || ch.Name != "Canonical Name" || ch.Group != "Sports" || ch.Country != "KE" || ch.Language != "en" || ch.Logo != "https://example.com/logo.png" {
+		t.Fatalf("unexpected channel metadata: %+v", ch)
+	}
+}
+
 func TestSafeHTTPSStreamRejectsUnsafeSchemes(t *testing.T) {
 	for _, raw := range []string{"http://example.com/a.m3u8", "file:///tmp/a", "//example.com/a", "/a.m3u8", "javascript:alert(1)"} {
 		if _, ok := safeHTTPSStream(raw); ok {

@@ -74,7 +74,7 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 		if total > maxBytes {
 			return Catalog{}, errors.New("playlist exceeds maximum size")
 		}
-		if line == "" || line == "#EXTM3U" {
+		if line == "" || strings.EqualFold(line, "#EXTM3U") {
 			continue
 		}
 		if strings.HasPrefix(line, "#EXTINF:") {
@@ -89,24 +89,18 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 			meta = nil
 			continue
 		}
-		name := meta["name"]
-		if name == "" {
-			name = meta["tvg-name"]
-		}
-		if name == "" {
-			name = stream
-		}
-		id := meta["tvg-id"]
-		if id == "" {
-			id = meta["id"]
-		}
-		if id == "" {
-			id = slug(name + "|" + stream)
-		}
+		name := firstNonEmpty(meta["name"], meta["tvg-name"], stream)
+		id := firstNonEmpty(meta["tvg-id"], meta["id"], slug(name+"|"+stream))
 		out = append(out, Channel{
-			ID: id, Name: name, Group: meta["group-title"], Country: meta["tvg-country"],
-			Language: meta["tvg-language"], Logo: meta["tvg-logo"], Stream: stream,
-			Source: "iptv-org", Relay: true,
+			ID:       id,
+			Name:     name,
+			Group:    firstNonEmpty(meta["group-title"], meta["group"]),
+			Country:  firstNonEmpty(meta["tvg-country"], meta["country"]),
+			Language: firstNonEmpty(meta["tvg-language"], meta["language"]),
+			Logo:     firstNonEmpty(meta["tvg-logo"], meta["logo"]),
+			Stream:   stream,
+			Source:   "iptv-org",
+			Relay:    true,
 		})
 		meta = nil
 	}
@@ -116,29 +110,28 @@ func parseM3U(r interface{ Read([]byte) (int, error) }, maxBytes int64) (Catalog
 	return Catalog{Channels: out, Updated: time.Now().UTC()}, nil
 }
 
-// parseExtInf parses an EXTINF record without confusing the numeric duration
-// with attributes. Attribute values may be quoted and may contain spaces or
-// commas. Once the duration token is consumed, attributes are parsed in order
-// and the first comma after the attribute list begins the display name. This
-// preserves every comma in an unquoted display name.
+// parseExtInf parses an EXTINF record while keeping the duration, attributes,
+// and display name distinct. Quoted attribute values may contain spaces,
+// commas, and escaped quotes. The first comma outside a quoted value separates
+// the attribute section from the display name.
 func parseExtInf(line string) map[string]string {
-	m := map[string]string{}
-	attrs := strings.TrimSpace(strings.TrimPrefix(line, "#EXTINF:"))
-	if attrs == "" {
+	m := make(map[string]string)
+	body := strings.TrimSpace(strings.TrimPrefix(line, "#EXTINF:"))
+	if body == "" {
 		return m
 	}
 
-	// Consume the duration token. The delimiter can be either whitespace
-	// (attributes follow) or a comma (no attributes; display name follows).
-	delimiter := strings.IndexAny(attrs, " \t,")
+	// Consume the duration token. Attributes begin after whitespace; a comma
+	// immediately after the duration means there are no attributes.
+	delimiter := strings.IndexAny(body, " \t,")
 	if delimiter < 0 {
 		return m
 	}
-	if attrs[delimiter] == ',' {
-		m["name"] = strings.TrimSpace(attrs[delimiter+1:])
+	if body[delimiter] == ',' {
+		m["name"] = strings.TrimSpace(body[delimiter+1:])
 		return m
 	}
-	attrs = strings.TrimLeft(attrs[delimiter:], " \t")
+	attrs := strings.TrimLeft(body[delimiter:], " \t")
 
 	for len(attrs) > 0 {
 		attrs = strings.TrimLeft(attrs, " \t")
@@ -165,19 +158,14 @@ func parseExtInf(line string) map[string]string {
 		}
 
 		if attrs[0] == '"' {
-			end := -1
-			for i := 1; i < len(attrs); i++ {
-				if attrs[i] == '"' {
-					end = i
-					break
-				}
-			}
-			if end < 0 {
-				m[key] = attrs[1:]
+			value, rest, ok := consumeQuoted(attrs)
+			if !ok {
+				// A malformed quoted attribute is not allowed to consume the
+				// remainder as arbitrary metadata.
 				break
 			}
-			m[key] = attrs[1:end]
-			attrs = attrs[end+1:]
+			m[key] = value
+			attrs = rest
 			continue
 		}
 
@@ -190,6 +178,37 @@ func parseExtInf(line string) map[string]string {
 		attrs = attrs[end:]
 	}
 	return m
+}
+
+func consumeQuoted(s string) (string, string, bool) {
+	if len(s) == 0 || s[0] != '"' {
+		return "", s, false
+	}
+	var b strings.Builder
+	for i := 1; i < len(s); i++ {
+		switch s[i] {
+		case '\\':
+			if i+1 >= len(s) {
+				return "", s, false
+			}
+			b.WriteByte(s[i+1])
+			i++
+		case '"':
+			return b.String(), s[i+1:], true
+		default:
+			b.WriteByte(s[i])
+		}
+	}
+	return "", s, false
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
 }
 
 func safeHTTPSStream(raw string) (string, bool) {
