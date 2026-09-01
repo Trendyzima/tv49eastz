@@ -49,6 +49,24 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
+	// The media tunnel and publisher-control channel intentionally share the
+	// same device mTLS identity, but use separate transports. The control
+	// channel is what lets FadCam ask for a short-lived gateway session without
+	// ever receiving the gateway master API key.
+	if strings.TrimSpace(os.Getenv("GATEWAY_CONTROL_URL")) != "" && strings.TrimSpace(os.Getenv("GATEWAY_API_KEY")) != "" && strings.TrimSpace(os.Getenv("PUBLISHER_PUBLIC_KEY_FILE")) != "" {
+		publisher, publisherErr := newPublisherControl(deviceID, cfg)
+		if publisherErr != nil {
+			panic(fmt.Sprintf("publisher control configuration: %v", publisherErr))
+		}
+		listen := env("PUBLISHER_CONTROL_LISTEN", "127.0.0.1:8789")
+		go func() {
+			if err := publisher.serve(listen); err != nil {
+				panic(fmt.Sprintf("publisher control listener: %v", err))
+			}
+		}()
+	}
+
 	gateway := env("TUNNEL_GATEWAY", "gateway.example:9443")
 	// server-tap's canonical listener. Override with TUNNEL_LOCAL_ADDR only
 	// when the tap is deliberately deployed on a different local address.
