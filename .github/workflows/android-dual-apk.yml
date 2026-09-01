@@ -10,9 +10,11 @@ on:
 permissions:
   contents: write
 
+# PR builds may be superseded safely. Master builds must finish so a good APK
+# build cannot be killed merely because another commit arrived on master.
 concurrency:
   group: android-apk-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
@@ -104,14 +106,28 @@ jobs:
       - name: Run Android tests
         run: ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
-      - name: Build downloadable APKs
+      # Do not package both Android applications in one Gradle invocation.
+      # The FadCam APK contains a large native dependency set and its release
+      # R8/ZipFlinger path is memory-heavy. Separate invocations give each
+      # application a clean Gradle JVM and prevent cross-module packaging
+      # pressure from turning into heap exhaustion or orphaned JVMs.
+      - name: Build FadCam APKs
+        shell: bash
         run: |
+          set -euo pipefail
           ./gradlew \
             :app:assembleDefaultDebug \
             :app:assembleDefaultRelease \
+            --no-daemon --no-watch-fs --stacktrace --max-workers=1
+
+      - name: Build TV 49 East APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew \
             :tv-receiver:assembleDebug \
             :tv-receiver:assembleRelease \
-            --no-daemon --no-watch-fs --stacktrace
+            --no-daemon --no-watch-fs --stacktrace --max-workers=1
 
       - name: Collect APKs and checksums
         shell: bash
