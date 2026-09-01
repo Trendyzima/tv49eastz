@@ -1,467 +1,384 @@
-<div align="center">
-    
-<!-- <img src="https://github.com/user-attachments/assets/9c1c7f9e-8798-4baa-b803-fa82cf1a6bd7" style="width: 700px; height: auto;" >  this is the old banner -->
-
-<img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/tvBanner.jpg" style="width: 900px; height: auto;" >
-
-<!-- https://github.com/user-attachments/assets/c9eeaf74-6649-4810-b420-e2c4ad4bd365 -->
-
-
-<br>
-</div>
-
-> [!Tip]
-> This project is part of the [FadSec Lab suite](https://github.com/fadsec-lab). <br> Discover our focus on ad-free, privacy-first applications and stay updated on future releases!
-
-> [!Note]
-> Unlock FadCam Pro with lifetime access: Visit the [Shop](https://www.patreon.com/cw/Fadedx/shop) <br> FadCam for Desktop is planned! 
-
-
----
-
-<div align="center">
-    
-<img src="https://github.com/anonfaded/FadCam/assets/124708903/d6f99201-65c7-4c93-bf13-d4a0d65172ac" style="width: 100px; height: auto;" >
-
-# `>_` FadCam
-
-**Privacy-focused Android multimedia suite: background video recording, dashcam, screen recorder, live streaming & remote control - ad-free & open-source.**
-
-<a href="https://trendshift.io/repositories/12830" target="_blank"><img src="https://trendshift.io/api/badge/repositories/12830" alt="anonfaded%2FFadCam | Trendshift" style="width: 250px; height: 55px;" width="250" height="55"/></a>
-
-[![GitHub all releases](https://img.shields.io/github/downloads/anonfaded/FadCam/total?label=Downloads&logo=github)](https://github.com/anonfaded/FadCam/releases/)
-[![SourceForge Downloads](https://img.shields.io/sourceforge/dt/fadcam.svg?label=SourceForge%20Downloads&color=red)](https://sourceforge.net/projects/fadcam/files/latest/download)
-[<img src="https://shields.rbtlog.dev/simple/com.fadcam" alt="badge">](https://shields.rbtlog.dev/com.fadcam)
-
-[![ko-fi badge](https://img.shields.io/badge/buy_me_a-coffee-red)](https://ko-fi.com/D1D510FNSV)
-[![Support me on Patreon](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3DFadedx%26type%3Dpatrons%26suffix%3Dpatrons%2520%257C%2520Shop&style=social)](https://www.patreon.com/cw/Fadedx/shop)
-<!-- [![Patreon](https://img.shields.io/badge/Patreon-orange?logo=patreon&label=Patreon)](https://www.patreon.com/cw/Fadedx/shop) -->
-<br>
-<sub>Scan to visit Patreon shop:</sub>
-<br>
-<img src="app/src/main/assets/QRCodes/QRCode_patreon_shop.png" alt="Scan to visit Patreon shop" style="width: 150px; height: auto;" >
-<br>
-
-[![Discord](https://img.shields.io/discord/1263384048194027520?label=Join%20Us%20on%20Discord&logo=discord)](https://discord.gg/kvAZvdkuuN )
-
-<!-- <img alt="Discord" src="https://img.shields.io/discord/1263384048194027520?style=social&logo=discord&label=Join%20chat&color=red"> -->
-
-
-
-<br>
-<br>
-
-<!--
-<a href="https://play.google.com/store/apps/details?id=com.fadcam">
-    <img src="https://github.com/anonfaded/FadCam/blob/a75be2fe8e6fca539c18af8e0a208508ff1ad4ed/app/src/main/assets/PreRegisterOnGooglePlay_Badge.png"
-    alt="Pre-Register on Google Play"
-    height="50"></a>
--->
-<br>
-    
-<a href="https://apt.izzysoft.de/packages/com.fadcam">
-    <img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroid.png"
-    alt="Get it on IoD"
-    height="70"></a>
-
-<a href="https://apps.apple.com/us/app/fadcam-dashcam-bodycam/id6778121848?itscg=30200&itsct=apps_box_badge&mttnsubad=6778121848" style="display: inline-block;">
-    <img src="https://toolbox.marketingtools.apple.com/api/v2/badges/download-on-the-app-store/black/en-us?releaseDate=1782345600" alt="Download on the App Store" style="width: auto; height: 60px; vertical-align: middle; object-fit: contain;" /></a>
-
-<a href="https://f-droid.org/packages/com.fadcam">
-    <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
-    alt="Get it on F-Droid"
-    height="70"></a>
-    
-<br>
-
-<!--
-[![Pre-Register on Google Play](https://github.com/anonfaded/FadCam/blob/a75be2fe8e6fca539c18af8e0a208508ff1ad4ed/app/src/main/assets/PreRegisterOnGooglePlay_Badge.png)](https://play.google.com/store/apps/details?id=com.fadcam)
-
-[![Get it on Google Play](https://github.com/anonfaded/FadCam/blob/a75be2fe8e6fca539c18af8e0a208508ff1ad4ed/app/src/main/assets/GetItOnGooglePlay_Badge.png)](https://play.google.com/store/apps/details?id=com.fadcam)
--->
-
-| ⭐ |<img src="https://github.com/user-attachments/assets/c730eda3-5887-458d-8df1-971a74807b73" style="width: 100px; height: auto;" > | *New app from FadSec-Lab suite:🎉* <br> Also, check out our new Windows app! Visit here: [FadCrypt](https://github.com/anonfaded/FadCrypt)  |
-|--|-------------|:---------------------------------------------------------------------------------------------------------------------------------------------------------------|
-
-
-<br>
-</div>
-
-<p align="center">
-        <img src="https://raw.githubusercontent.com/bornmay/bornmay/Update/svg/Bottom.svg" alt="Github Stats" />
-</p>
-
----
-
-<details>
-    <summary>Expand Table of Contents</summary>
-    
-<br>
-        
-- [Purpose](#purpose)
-- [Screenshots](#-screenshots)
-- [Featured on](#featured-on)
-- [Download](https://github.com/anonfaded/FadCam#-download)
-- [Features](#features)
-- [Upcoming Features](#upcoming-features)
-- [Join Community](#join-community)
-- [Support](#support)
-- [Contributions](#contributions)
-- [Credits](#credits)
-
-</details>
-
----
-
-## `>_` Purpose
-
-FadCam is developed with the goal of providing a powerful, privacy-focused multimedia suite for Android devices. This comprehensive app includes dashcam functionality, screen recording with annotations, live streaming over local networks, and remote camera control — all designed for **ethical use** only.
-
-**Ethical Use Cases Include:**
-- **Personal Security:** Use as a dashcam while driving, CCTV at home with remote monitoring, or recording proof in situations where needed for yourself
-- **Content Creation:** Screen recording with professional annotation tools
-- **Remote Monitoring:** Live streaming and remote control for security purposes
-- **Research and Documentation:** Multi-purpose recording tools for various needs
-
-> [!Caution]
-> **Misuse Disclaimer:** <br>
-> The developers of FadCam do not condone or support any unethical or illegal use of this software. Misuse, such as unauthorized surveillance or invasion of privacy, is strictly against our guidelines. The authors are not responsible for any misuse of the application.
-
-## `>_` 📱 Screenshots
-
-<div align="center">
-<!--     <img src="https://github.com/anonfaded/FadCam/assets/124708903/4a93c111-fc67-4d75-94b1-fa4e01822998" style="width: 50px; height: auto;" >
-    <br>
-    <em>apk icon</em> -->
-    <br><br>
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/1.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/2.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/3.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/4.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/5.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/6.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/7.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/8.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/9.jpg" style="width: 200px; height: auto;" >
-    <img src="https://github.com/anonfaded/FadCam/blob/master/fastlane/metadata/android/en-US/images/phoneScreenshots/10.jpg" style="width: 200px; height: auto;" >
- <br>
-
-<!--     <br> -->
-<!--     <em>UI</em> -->
-   
-</div>
-<!--     <details>
-        <summary><strong>More Screenshots</strong></summary>
-        <img src="/img/3.png" style="width: 700px; height: auto;" >
-        <br>
-        <img src="/img/4.png" style="width: 700px; height: auto;" >
-        <br>
-        <img src="/img/5.png" style="width: 700px; height: auto;" >
-    </details> -->
-
-## `>_` Featured On
-
-<details>
-<summary><strong>Expand Featured Content</strong></summary>
-
-### `>_` Featured Audio Podcast
-- [closednetwork.io](https://closednetwork.io/podcast/episode-42-deepseek-ai-oh-my/) at `1:15:22` timestamp
-
-### `>_` Featured Videos
-- [HowToMen on YouTube](https://youtu.be/gU9ddvtqL3E?si=6GpPO2fKQxT6RWKz&t=297)
-- [HowToMen 2nd feature :) ](https://youtu.be/3pOoU5JjfnE?si=JMwoHfGyocXuvkC7&t=520)
-- [Xtream Droid on YouTube](https://youtu.be/PImJehUqOC0?si=kQKrwk7kdHJT0_-8&t=238)
-- [Xtream Droid once again in Hindi](https://www.youtube.com/watch?v=smCMKih759I)
-- [Tech Quirk on YouTube](https://www.youtube.com/shorts/4cQ2RpWHess)
-- [TechyNoob on YouTube](https://youtu.be/ahUmOhOc_cI?si=P5_MK5B7KiJV_2Ip)
-- [Luca Crocco on TikTok](https://www.tiktok.com/@lucacrocco96/video/7400823097613503777)
-- [TipTopTech on YouTube](https://youtu.be/SXHT25dNCrM?si=csEav5ZBYniJWT3J&t=177)
-- [Adhip Pandey on YouTube](https://www.youtube.com/watch?v=ud0bu8U08Ic)
-- [Daniel Bueno - Tecnología on YouTube](https://www.youtube.com/watch?v=TuZBXJVPfOU)
-- [degeregi on TikTok](https://www.tiktok.com/@degereji/video/7403781470180920581)
-- [Anurag - The Geek](https://youtu.be/uXDQhGgjhDU?si=dgYo_wMAxiCM77R5&t=166)
-- [@ALHATEFALDHAKI on YouTube](https://www.youtube.com/watch?v=jOqnfL3mRks)
-- [@techtricks306 on YouTube](https://www.youtube.com/watch?v=3C2XM4YnlDY)
-- [Samfans VN on YouTube](https://www.youtube.com/watch?v=LSYKu51ibeI)
-- [Sam Beckman on YouTube](https://youtu.be/GujW6qMdVGg?si=WLQ5PyneHkUQvyB7)
-- [Sam Beckman 2nd Feature](https://youtu.be/E4Row0mFbfk?si=QLjgWyv5p3gO1giM&t=518)
-- [Tech In Hand on YouTube](https://youtu.be/OjuSXf5Dj8E?si=Ng6C7Ic_HZbzxWo5)
-- [AWAk3N on YouTube](https://youtu.be/B38XqQBT398?si=p7-jNVu-LxSXkNaF)
-- [Toped de Gama plus on YouTube](https://youtu.be/Vhg3IvyGXWE?si=EC_rSt6gcB-1AyRT&t=361)
-- [Learn Freelancing with Tusher on YouTube](https://youtu.be/bgfTJsbXjLw?si=XJ6P8WF_KA4usLd6)
-- [iamrooney_ on TikTok](https://www.tiktok.com/@iamrooney_/video/7476628538636913925)
-- [Brandulox](https://youtu.be/yWg-quQIX1Y?si=-Wq_ZAV9WwAEV592)
-- [brandulox on TikTok](https://www.tiktok.com/@brandulox/video/7481545146144673030)
-- [El Androide Feliz on YouTube](https://youtu.be/H02x9pnJh_g?si=dXCmNLaDm9Hrra2C&t=669)
-- [ODORIZZI on YouTube](https://www.youtube.com/watch?v=e2IFJJgjKRg)
-- [Tech OverWatch on TikTok](https://www.tiktok.com/@tech_overwatch/video/7506821012655181062)
-- [tech_overwatch on Insta](https://www.instagram.com/reel/DJ6Nn5uNHxq/)
-- [Wuincy Tran on YouTube](https://youtu.be/gLY1SstSwgo?si=_h3eyb0Zh3oo14jK)
-- [El Androide Feliz on YouTube](https://youtu.be/5SCl5X_miTc?si=E44ej0ZfPGTz3HfR)
-- [msn.com](https://www.msn.com/es-es/noticias/tecnologia/esta-app-convierte-tu-m%C3%B3vil-en-una-c%C3%A1mara-discreta-graba-v%C3%ADdeo-sin-encender-la-pantalla/ar-AA1Hf4dR)
-- [RivollPlay Tech on YouTube](https://youtu.be/v0grlqT_qOw?si=PRdB2oLhJLXiXBU_)
-- [softonic on X](https://x.com/softonic/status/1939598582643830840)
-<!-- - [Someone in comments mentioned about fadcam, on TikTok](https://www.tiktok.com/@unijpeg/video/7438464230807948600) -->
-<!-- - [Tech Knowing](https://youtu.be/5ZqjensX_XQ?si=iXIY4tMf1iBW9zoR) -->
-<!-- - [EI Tech - Emanuele Iafulla on YouTube](https://youtu.be/n8k9J4GnoCY?si=D6RVGSD832jOFhiQ) -->
-<!-- [Police recording with FadCam](https://www.facebook.com/joseph.anthony.emaikwu/videos/fadcam/3206531569486276/) -->
-
-### `>_` Articles and Listings
-- [fmhy.net](https://fmhy.net/android-iosguide#camera-tools)
-- [discuss.privacyguides.net](https://discuss.privacyguides.net/t/fadcam-open-source-cam-background-video-recording-even-when-the-screen-is-off/19823)
-- [appteka.com](https://appteka.store/app/bcdr185175)
-- [discuss.grapheneos.org](https://discuss.grapheneos.org/d/11667-what-featureapp-do-you-use-that-the-majority-never-talk-about/69)
-- [fmhy.net](https://fmhy.net/android-iosguide#camera-tools)
-- [offa repo](https://github.com/offa/android-foss#-camera)
-- [geeky-gadgets.com](https://www.geeky-gadgets.com/awesome-android-apps-to-try-out-in-august/)
-- [GrowingGit repo](https://github.com/GrowingGit/GitHub-English-Top-Charts/blob/main/content/charts/new_repo/software/Java.md)
-- [openapk.net](https://www.openapk.net/fadcam/com.fadcam/)
-- [popMODS on Telegram](https://t.me/popmodschat/447936)
-- [VPN Club on Telegram](https://t.me/wbnet/99735)
-- [Mobile Applications on Telegram](https://t.me/appCentre/18006)
-- [phonenovo.com](https://phonenovo.com/new-android-apps-for-august-enhance-your-mobile-experience/)
-- [dailymobile.ir](https://www.dailymobile.ir/89140/fadcam-android/)
-- [roonby.com](https://roonby.com/2024/08/01/10-best-android-apps-to-use-these-months-august-2024/)
-- [en.xiaomitoday.it](https://en.xiaomitoday.it/fadcam-con-questa-app-diventi-un-agente-segreto.html)
-- [alternativeto.net](https://alternativeto.net/software/fadcam/about/)
-- [misa7atech.com](https://www.misa7atech.com/2024/08/BestPhoneApps13Aug24.html)
-- [mounirtech.com](https://www.mounirtech.com/2024/08/Best-new-apps-august-2024.html)
-- [androidtr.es](https://androidtr.es/las-8-mejores-aplicaciones-ocultas-de-codigo-abierto-para-android-y-hacks-secretos-que-te-dejaran-boquiabierto-2/)
-- [gadgetstouse.com](https://gadgetstouse.com/blog/2024/08/22/record-video-with-screen-off-on-android/)
-- [summarize.tech](https://www.summarize.tech/www.youtube.com/watch?v=gU9ddvtqL3E)
-- [phcorner.net](https://phcorner.net/threads/fadcam-open-source-seamless-background-video-recorder-for-android.2069335/)
-- [danielbuenotecnologia.com](https://danielbuenotecnologia.com/2024/09/13/protege-tu-vida-con-la-app-fad-cam/)
-- [nothingforum.com](https://nothingforum.com/konu/fadcam-video-kaydi-icin-guvenli-bir-cozum.1982/)
-- [manualdousuario.net](https://manualdousuario.net/fadcam-videos-android-tela-desligada/)
-- [techwiser.com](https://techwiser.com/how-to-secretly-record-a-video-with-screen-off-on-android/)
-- [geeky-gadgets.com (2nd feature)](https://www.geeky-gadgets.com/15-foss-android-apps-that-are-not-on-the-google-play-store/)
-- [iiktshf.com](https://iiktshf.com/fadcam/)
-- [androidfreeware.net](https://www.androidfreeware.net/download-fadcam-apk.html)
-- [computer-wd.com](https://www.computer-wd.com/2024/08/new-mobile-apps.html)
-- [computer-wd.com (2nd feature)](https://www.computer-wd.com/2024/11/secretly-record-video-on-android.html)
-- [computer-wd.com (3rd feature)](https://www.computer-wd.com/2024/12/best-android-apps-2024.html)
-- [thetechboy.org](https://www.thetechboy.org/2024/11/undercover-recording-no-ads.html)
-- [tz887.com](https://www.tz887.com/app/311291.html)
-- [news.ycombinator.com](https://news.ycombinator.com/item?id=42802171)
-- [archivecan.info](https://archivecan.info/android-ios/)
-- [purepc.pl](https://www.purepc.pl/darmowe-aplikacje-na-telefon-z-androidem-stycze%C5%84-2025)
-- [aqweeb.com](https://www.aqweeb.com/2025/02/10-new-apps-android-and-ios-pt9.html)
-- [nomiapk.website](https://nomiapk.website/xscamera-smart-secure-video-recorder/)
-- [apkhubs.com](https://apkhubs.com/en/fadcam-apk)
-- [malavida.com](https://www.malavida.com/br/soft/fadcam/android/)
-- [apkclone.com](https://apkclone.com/ja/fadcam-apk)
-- [diyiyou.com](https://www.diyiyou.com/soft/1768.html)
-- [zxki.cn](https://zxki.cn/syrj/18967.html)
-- [xmk8.com](https://www.xmk8.com/119603/.html)
-- [aukbbs.com](https://aukbbs.com/t-30218-1-1.html)
-- [blog.csdn.net](https://blog.csdn.net/gitblog_00782/article/details/146972336)
-- [lealternative.net](https://www.lealternative.net/2025/04/15/fadcam-fotocamera-sempre-attiva-per-la-tua-sicurezza/)
-- [uptodown.com](https://fadcam.en.uptodown.com/android)
-- [buzzspot.net](https://www.buzzspot.net/2025/05/open-source-android-apps.html?m=1)
-- [ababtools.com](https://ababtools.com/?post=5528)
-- [0714.com](http://www.0714.com/soft/59753.htm)
-- [yeeach.com](https://yeeach.com/1685/%E5%BC%80%E6%BA%90android%E5%90%8E%E5%8F%B0%E5%BD%95%E9%9F%B3-%E5%BD%95%E5%83%8F%E5%B7%A5%E5%85%B7%E6%B1%87%E6%80%BB/)
-- [codegith.com](https://codegith.com/fadcam-open-source-background-video-recorder-for-android/)
-- [52pojie.cn](https://www.52pojie.cn/thread-2038164-1-1.html)
-- [anfensi.com](https://www.anfensi.com/down/429430.html)
-- [fy6b.com](https://www.fy6b.com/fadcam.html)
-- [xatakandroid.com](https://www.xatakandroid.com/aplicaciones-android/esta-app-convierte-tu-movil-camara-discreta-graba-video-encender-pantalla)
-- [blog.csdn.net](https://blog.csdn.net/2501_91832086/article/details/148797756)
-- [lewz.cn](https://www.lewz.cn/jprj/10448.html)
-- [ruanyazyk.com](https://ruanyazyk.com/tools/media/imageProduction.html#fadcam)
-- [centrum.cz](https://www.centrum.cz/chytre-nahravani-aplikace-fadcam-toci-video-i-s-vypnutou-obrazovkou-89fff656-54ab-5ff0-9d30-5c26e9bd9a3a)
-- [meta.appinn.net](https://meta.appinn.net/t/topic/72853/2)
-<!-- - https://www.cityrumors.it/tecnologia/il-trucco-per-fare-video-di-nascosto-con-il-tuo-smartphone-tutti-lo-stanno-provando.html -->
-
-</details>
-
-
-
-## `>_` ⬇️ Download
-
-Download the latest `apk` file directly from the [releases page](https://github.com/anonfaded/FadCam/releases).
-
-[<img src="https://raw.githubusercontent.com/vadret/android/master/assets/get-github.png" alt="Get it on GitHub" height="70">](https://github.com/anonfaded/FadCam/releases)
-
-Or:
-
-<!--
-<a href="https://play.google.com/store/apps/details?id=com.fadcam">
-    <img src="https://github.com/anonfaded/FadCam/blob/a75be2fe8e6fca539c18af8e0a208508ff1ad4ed/app/src/main/assets/PreRegisterOnGooglePlay_Badge.png"
-    alt="Pre-Register on Google Play"
-    height="50"></a>
--->
-
-<br>
-
-<a href="https://apt.izzysoft.de/packages/com.fadcam">
-    <img src="https://gitlab.com/IzzyOnDroid/repo/-/raw/master/assets/IzzyOnDroid.png"
-    alt="Get it on F-Droid"
-    height="70"></a>
-<a href="https://f-droid.org/packages/com.fadcam">
-    <img src="https://fdroid.gitlab.io/artwork/badge/get-it-on.png"
-    alt="Get it on F-Droid"
-    height="70"></a>
-
-<a href="http://www.amazon.com/gp/product/B0CZKWZ8PG/ref=mas_pm_FadCam">
-    <img src="https://github.com/anonfaded/FadCam/assets/124708903/43550ba6-dcf2-46cb-8aa5-2a882968c529"
-    alt="Get it on Amazon appstore"
-    height="47"></a>
-
-
-
-<!-- **Downloads logs:**
-- 5k -> 10 Jul 2024 (1st month)
-- 10k -> 21 Aug 2024 (6th week)
-- 15k -> 8 Sep 2024 (9th week) -->
-
-## `>_` Features:
-
-<details>
-<summary><strong>🎬 FadRec Screen Recorder</strong></summary>
-
-- Full-featured screen recording with annotation tools (pen, eraser, text, shapes)
-- Multi-layer editing with version control and unlimited undo/redo
-- Automatic project saving with full recovery options
-- Sidebar overlay menu for quick-access recording controls
-</details>
-
-<details>
-<summary><strong>🏠 FadCam Remote</strong></summary>
-
-- Live stream camera feed over local network with beautiful web interface
-- Remote control features: start/stop recording, adjust settings, toggle torch
-- Real-time monitoring: battery level, storage status, recording status
-- Perfect for security monitoring and remote access
-</details>
-
-<details>
-<summary><strong>📸 Dashcam & Background Recording</strong></summary>
-
-- Background video recording with screen off capability
-- **Custom hybrid MP4 output** — FadCam's recording engine is built on a custom-patched version of the Media3 library that streams recordings as a fragmented MP4 while recording (zero corruption risk, instant recovery), then finalizes them into a universally playable MP4 on stop. This hybrid format is specific to FadCam and not part of the stock Media3 library
-- **Auto-repair of interrupted recordings** — if the process is killed mid-recording (aggressive OEM background management, crashes, battery optimization), the file is automatically detected and repaired on the next app launch
-- **Repair notifications** — a banner in the Records tab tells you when an interrupted recording was successfully recovered
-- Auto-splitting large files with customizable size limits
-- Wide-angle camera detection and support
-</details>
-
-<details>
-<summary><strong>🎥 Video & Audio Controls</strong></summary>
-
-- Multiple resolutions and 60/90fps support
-- Orientation control and quality options
-- Audio recording with customizable bitrate and sample rate
-- Custom watermark text overlays
-- Geotagging with location data embedding
-</details>
-
-<details>
-<summary><strong>🎨 User Interface & Experience</strong></summary>
-
-- Clean Material Design with bottom sheet actions
-- 7+ app themes including AMOLED, Light, and System themes
-- 15+ customizable app icons
-- In-app "What's New" page for feature discovery
-- Standalone beta installation without conflicts
-</details>
-
-<details>
-<summary><strong>📁 File Management & Playback</strong></summary>
-
-- Enhanced thumbnails with index, duration, and file size
-- Sorting & filtering by date, size, and more
-- Trash bin with restore and auto-delete options
-- Inbuilt video player using ExoPlayer
-- Video info view with resolution, size, and duration details
-- Direct video renaming in-app
-</details>
-
-<details>
-<summary><strong>🔧 Advanced Features</strong></summary>
-
-- Storage indicator with real-time space and estimated record time
-- Clock widget with customizable date/time and colors
-- Custom notification presets and descriptions
-- Audio input source selection (phone mic, wired/Bluetooth)
-- Dynamic watermarks with timestamp, logo, and GPS options
- - App Shortcuts: Three quick actions are available (Start Recording, Stop Recording, Toggle Torch). These shortcuts can be triggered without opening the app and can be mapped with key-mapping apps (e.g. MacroDroid) to hardware buttons (like volume buttons) for convenient control.
-- Quick Settings Tile: Adds a notification shade Quick Settings tile. Single-tap to start/stop recording, double-tap to switch between Front/Rear camera (even live during recording), with secure keyguard lockscreen authentication.
-</details>
-
-<details>
-<summary><strong>🌐 Localization & Privacy</strong></summary>
-
-- Multiple language support (Italian, and more coming)
-- 100% ad-free and open-source
-- No data collection or tracking
-- Hide from recent apps for privacy
-- Ethical use guidelines and disclaimer
-</details>
-
-## `>_` Upcoming Features:
-- **Scheduled Recording:** Automatically start/stop recordings at set times.
-- **In-App Video Editor:** Quick trim/edit with Faditor Mini (coming soon).
-- **Enhanced Remote Features:** Additional remote control capabilities.
-
-
-
-<details>
-<summary><strong>🛡️ How Recording Reliability Works</strong></summary>
-
-FadCam writes recordings in a **hybrid MP4 format** that balances crash safety with universal compatibility. This format is implemented through a custom patch of the Media3 library — the hybrid finalization and self-healing repair described below are FadCam-specific features, not part of the stock library:
-
-1. **While recording**, the file is streamed as a *fragmented MP4* — data is appended in small fragments with the metadata kept at the front. If the app or process dies at any moment, nothing already written is ever lost or corrupted.
-2. **On a clean stop**, the file is finalized into a *standard MP4* (a single `moov` metadata block + one `mdat` container) that plays everywhere — gallery, WhatsApp, Instagram, VLC, PC players.
-3. **If the process is killed mid-recording** (background kill by the OS, crash, battery optimization), the file is left as a valid fragmented MP4. On the next app launch, FadCam's **self-healing scan**:
-   - Detects the interrupted file automatically
-   - Rebuilds the metadata directly from the file's fragments
-   - Converts it into a playable standard MP4 — often byte-identical to a clean stop
-   - Shows a **repair banner** in the Records tab so you know the recording was recovered
-
-The scan is database-driven and runs once per file — it only ever examines recordings that were never verified as finalized, so it adds no overhead to normal use. Files that cannot be recovered are left untouched and marked so they are never retried.
-
-This means **no more lost recordings** from background kills — the worst case is a recovered file, not a corrupted one.
-</details>
-
-
-
-## `>_` Join Community
-Join our [Discord server](https://discord.gg/kvAZvdkuuN) to share ideas, seek help, or connect with other users. Your feedback and contributions are welcome!
-
-[![Discord](https://img.shields.io/discord/1263384048194027520?label=Join%20Us%20on%20Discord&logo=discord)](https://discord.gg/kvAZvdkuuN )
-
-
-## `>_` Support & Shop
-
-Buy FadCam Pro (lifetime access) from my Patreon shop. Your purchases help fund development and maintenance.
-
-[![Support me on Patreon](https://img.shields.io/endpoint.svg?url=https%3A%2F%2Fshieldsio-patreon.vercel.app%2Fapi%3Fusername%3DFadedx%26type%3Dpatrons%26suffix%3Dpatrons%2520%257C%2520Shop&style=for-the-badge)](https://www.patreon.com/cw/Fadedx/shop)
-
-<br>
-<sub>Scan to visit Patreon shop:</sub><br>
-<img src="app/src/main/assets/QRCodes/QRCode_patreon_shop.png" alt="Scan to visit Patreon shop" style="width: 150px; height: auto;" >
-
-
-## `>_` Contributions
-
-We welcome any contributions to improve this project! Whether it's bug fixes or new features, your help is appreciated.
-
-### `>_` How to Contribute
-1. **Open an Issue First**: Before starting any work, please open an [issue](https://github.com/anonfaded/FadCam/issues) to discuss your proposed changes and get approval.
-2. **Fork the Repo**: Fork the repository to make your changes.
-3. **Submit a PR**: Create a pull request with a clear description of your changes.
-
-We look forward to your contributions!
-
-
-### `>_` 🙌 Contributions & Credits
-
-- 🖼️ App screenshots and banner design by [T010](https://ko-fi.com/t010nl)
-- The 3D text in icon is from <a href="https://www.textstudio.com/">Font generator</a>.
-- Icons used in app by <a target="_blank" href="https://icons8.com">Icons8</a> and <a target="_blank" href="https://www.flaticon.com/">Flaticon</a>.
-- Elapsed timer font option includes Doto by The Doto Project Authors (https://github.com/oliverlalan/Doto).
-- Location reverse geocoding powered by <a target="_blank" href="https://nominatim.org/">Nominatim</a> — free, open-source geocoding based on <a target="_blank" href="https://www.openstreetmap.org/">OpenStreetMap</a> data. Building-level precision (zoom=18) for accurate address watermarking.
-- QR codes generated using <a target="_blank" href="https://www.qrcodechimp.com">QRCodeChimp</a>.
-
-
+# TV 49 East
+
+**Secure TV streaming platform connecting FadCam-originated live video and authorized IPTV sources to an Android TV receiver.**
+
+> **Certification status:** the repository contains the FadCam integration layer, `server-tap`, `device-tunnel`, `stream-gateway`, `stream-catalog`, and a standalone `tv-receiver` Android application. The receiver is explicitly wired to Media3/ExoPlayer and `PlayerView`. The source code demonstrates the application-side playback chain. A physical-TV runtime test is still required before claiming that the complete FadCam → TV screen path has been operationally certified.
+
+## Architecture
+
+```text
+ FadCam phone
+ ┌─────────────────┐
+ │ Existing HTTP   │
+ │ server :8080    │
+ └────────┬────────┘
+          │ HLS
+          ▼
+ ┌─────────────────┐
+ │   server-tap    │
+ └────────┬────────┘
+          │
+          ▼
+ ┌─────────────────┐
+ │  device-tunnel  │
+ └────────┬────────┘
+          │ authenticated path
+          ▼
+ ┌────────────────────────────────┐
+ │        stream-gateway          │
+ │ TLS/mTLS • identity • auth     │
+ │ authorization • HLS proxy      │
+ └───────────────┬────────────────┘
+                 │ authorized HLS
+                 ▼
+ ┌────────────────────────────────┐
+ │       TV 49 East receiver      │
+ │                                │
+ │ catalog / handoff → HLS URL    │
+ │              ↓                 │
+ │         MediaItem              │
+ │              ↓                 │
+ │        ExoPlayer/Media3        │
+ │              ↓                 │
+ │          PlayerView            │
+ │              ↓                 │
+ │        TV video surface        │
+ └────────────────────────────────┘
+
+                 ▲
+                 │ catalog metadata / authorized relay
+                 │
+        ┌────────┴─────────┐
+        │  stream-catalog  │
+        │ IPTV discovery   │
+        │ + creator data  │
+        └──────────────────┘
+```
+
+The existing FadCam server is a protected source system. TV 49 East is designed to integrate around it rather than replace its server, routes, storage, recording behavior, or control endpoints.
+
+The TV client is not supposed to connect directly to a private address such as `192.168.x.x:8080`. The tunnel and gateway provide the controlled path that hides the private source address.
+
+## Repository components
+
+### `app/`
+
+The FadCam Android application/source. FadCam remains the source publisher for FadCam-originated video.
+
+### `server-tap/`
+
+Go adapter for the existing FadCam HTTP/HLS source. It is a narrow integration boundary rather than a replacement server or remote-control interface.
+
+Important files:
+
+```text
+server-tap/main.go
+server-tap/main_test.go
+server-tap/contract.md
+server-tap/README.md
+```
+
+### `device-tunnel/`
+
+Authenticated device-to-gateway transport. The repository contains separate `agent`, `gateway`, and `protocol` areas plus example configuration.
+
+### `stream-gateway/`
+
+Secure public streaming boundary. It handles viewer authentication, authorization, stream resolution, private-upstream isolation, HLS manifest rewriting, and proxying of HLS initialization data and segments.
+
+Documented routes:
+
+```text
+GET /stream/{id}/index.m3u8
+GET /stream/{id}/init.mp4
+GET /stream/{id}/segment/{name}
+GET /health
+```
+
+Gateway viewer flow:
+
+```text
+authenticate
+   ↓
+request stable stream URL
+   ↓
+resolve authorized stream to tap
+   ↓
+tap reads existing FadCam server
+   ↓
+return client-safe HLS manifest
+   ↓
+proxy subsequent HLS resources
+```
+
+### `stream-catalog/`
+
+Discovery and catalog service. It normalizes channel metadata and keeps discovery separate from authorization. Public IPTV entries are not automatically authorized for redistribution.
+
+### `tv-receiver/`
+
+Standalone Android TV application with its own manifest, source, tests, Media3 dependencies, and build configuration.
+
+```text
+tv-receiver/
+├── build.gradle.kts
+├── proguard-rules.pro
+└── src/
+    ├── main/
+    │   ├── AndroidManifest.xml
+    │   └── java/com/fadcam/tv/
+    │       ├── MainActivity.java
+    │       ├── CatalogClient.java
+    │       ├── ChannelStore.java
+    │       ├── FadCamHandoffActivity.java
+    │       └── FadCamHandoffVerifier.java
+    ├── test/
+    └── androidTest/
+```
+
+## TV playback: source-level proof
+
+`MainActivity` contains the actual receiver-to-player chain:
+
+```text
+MainActivity.onCreate()
+        ↓
+buildUi()
+        ↓
+PlayerView created
+        ↓
+channel selected / handoff received
+        ↓
+startPlayback(url, channelName)
+        ↓
+ExoPlayer.Builder(this).build()
+        ↓
+playerView.setPlayer(player)
+        ↓
+MediaItem.fromUri(url)
+        ↓
+player.setMediaItem(...)
+        ↓
+player.prepare()
+        ↓
+player.play()
+        ↓
+Android video surface / TV display
+```
+
+The receiver also calls `setKeepScreenOn(true)` for the playback UI.
+
+### HLS URL provenance
+
+The normal catalog path is server-side:
+
+```text
+TV receiver
+    ↓
+CatalogClient
+    ↓
+GET {configured HTTPS catalog}/v1/catalog
+    ↓
+server-side channel metadata
+    ↓
+relay=true entries only
+    ↓
+/v1/relay?id=...
+    ↓
+configured TV East origin
+    ↓
+Media3
+```
+
+`CatalogClient` rejects non-HTTPS catalog origins and ignores catalog entries that are not marked `relay=true`. It therefore does not directly feed arbitrary upstream IPTV URLs into the normal receiver catalog path.
+
+The receiver also supports explicit `fadcam://stream?...` and `tv49east://channel?...` handoffs. These require HTTPS playback URLs. Production handoffs should point at the authorized TV East/gateway surface, never a private FadCam LAN address.
+
+## FadCam → TV streaming path
+
+The target end-to-end route is:
+
+```text
+FadCam HTTP server
+      ↓
+server-tap
+      ↓
+device-tunnel
+      ↓
+stream-gateway
+      ↓
+authorized HLS manifest
+      ↓
+TV 49 East receiver
+      ↓
+Media3 / ExoPlayer
+      ↓
+PlayerView
+      ↓
+TV video surface
+      ↓
+physical TV
+```
+
+This is deliberately different from a direct connection such as:
+
+```text
+TV → http://192.168.x.x:8080/...
+```
+
+The direct private-address path bypasses the intended security boundary and is not the target architecture.
+
+## IPTV path
+
+```text
+IPTV discovery source
+       ↓
+stream-catalog
+       ↓
+normalized metadata
+       ↓
+explicitly authorized relay
+       ↓
+stream-gateway
+       ↓
+TV receiver
+```
+
+A public playlist is discovery data, not blanket permission to redistribute every listed stream.
+
+## Security boundaries
+
+- Existing FadCam server remains unchanged.
+- Private FadCam addressing stays behind the tunnel/gateway boundary.
+- Viewers are authenticated before protected playback.
+- Requested streams are authorized before proxying.
+- HLS manifests and subsequent media resources remain behind the streaming boundary.
+- Catalog discovery is separate from redistribution authorization.
+- Client-facing catalog configuration must use HTTPS.
+- The TV receiver rejects non-HTTPS playback URLs.
+- Device identity and stream authorization are separate from catalog discovery.
+- Required certified Media3 dependencies are fail-closed at build time.
+
+The gateway tree contains TLS, device-registry, persistence, capability-security, and related tests.
+
+## Build structure
+
+Root Gradle modules:
+
+```text
+:app
+:tv-receiver
+```
+
+The TV receiver targets Android API 36, supports API 24+, targets API 36, and uses Java 17. It depends on Media3 ExoPlayer/UI/session components.
+
+Go modules:
+
+```text
+server-tap/go.mod
+device-tunnel/go.mod
+stream-catalog/go.mod
+stream-gateway/go.mod
+```
+
+### Patched Media3 requirement
+
+The root `settings.gradle.kts` requires the pinned patched Media3 checkout before the Android build can proceed. Default:
+
+```text
+/tmp/media3-patched
+```
+
+Override with:
+
+```properties
+media3.patched.path=/path/to/media3-patched
+```
+
+The build intentionally fails closed if that checkout is absent, preventing a silent fallback to unqualified upstream Media3 artifacts.
+
+## End-to-end certification standard
+
+The repository distinguishes **source-level wiring** from **runtime certification**.
+
+Source-level evidence establishes:
+
+```text
+TV receiver
+ → MainActivity
+ → PlayerView
+ → ExoPlayer
+ → MediaItem.fromUri(HLS URL)
+ → prepare()
+ → play()
+```
+
+and the server-side architecture establishes:
+
+```text
+FadCam
+ → server-tap
+ → device-tunnel
+ → stream-gateway
+ → authorized HLS
+```
+
+A real physical-TV certification must prove all edges:
+
+```text
+[01] FadCam produces live video
+[02] server-tap reads the live source
+[03] device-tunnel carries the authorized path
+[04] gateway authenticates the viewer
+[05] gateway authorizes the stream
+[06] gateway emits a valid HLS manifest
+[07] init data and segments are retrievable through gateway
+[08] TV receiver obtains the gateway URL
+[09] Media3 prepares the HLS source
+[10] ExoPlayer reaches a playing state
+[11] PlayerView is attached to the active player
+[12] decoded video reaches the Android TV surface
+[13] video is visibly rendered on the physical TV
+```
+
+Until that runtime test is executed, the accurate status is **source-level wired and ready for end-to-end certification**, not “physically proven on a TV.”
+
+## Repository map
+
+```text
+.
+├── app/                    # FadCam Android source/application
+├── tv-receiver/            # Android TV playback application
+├── server-tap/             # FadCam HTTP/HLS adapter
+├── device-tunnel/          # authenticated device transport
+├── stream-gateway/         # secure HLS gateway
+├── stream-catalog/         # catalog/discovery service
+├── ARCHITECTURE.md         # system boundaries
+├── settings.gradle.kts     # Android modules + pinned Media3 build
+└── README.md               # project architecture and certification status
+```
+
+## Design rules
+
+1. **Freeze FadCam's existing server.** Integration belongs around it.
+2. **Never make the TV client depend on the FadCam private LAN address.**
+3. **Separate discovery from authorization.**
+4. **Use the gateway as the protected playback boundary.**
+5. **Keep the TV receiver as a real Media3 playback application.**
+6. **Fail closed on missing secure transport or certified Media3 dependencies.**
+7. **Distinguish source evidence from runtime evidence.**
+8. **Do not claim physical-TV streaming until the live path has actually been exercised.**
+
+## Documentation
+
+- `ARCHITECTURE.md` — platform boundaries and responsibilities
+- `server-tap/README.md` — FadCam source adapter
+- `server-tap/contract.md` — tap contract
+- `device-tunnel/README.md` — authenticated transport
+- `stream-gateway/README.md` — gateway implementation
+- `stream-gateway/API.md` — gateway streaming routes
+- `stream-catalog/README.md` — catalog implementation
+
+## Responsible use
+
+Only stream, relay, record, or redistribute content for which the operator has the necessary rights and authorization. A public IPTV catalog entry does not by itself grant redistribution rights.
