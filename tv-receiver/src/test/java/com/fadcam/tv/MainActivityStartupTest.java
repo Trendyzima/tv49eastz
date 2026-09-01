@@ -2,13 +2,11 @@ package com.fadcam.tv;
 
 import static org.junit.Assert.assertNotNull;
 
-import android.app.Activity;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import androidx.test.core.app.ActivityScenario;
-
+import org.robolectric.Robolectric;
+import org.robolectric.android.controller.ActivityController;
 import org.robolectric.RobolectricTestRunner;
 
 /**
@@ -19,8 +17,9 @@ import org.robolectric.RobolectricTestRunner;
 public class MainActivityStartupTest {
     @Test
     public void mainActivityStartsWithoutThemeCrash() {
-        try (ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class)) {
-            scenario.onActivity((Activity activity) -> assertNotNull(activity.findViewById(android.R.id.content)));
-        }
+        ActivityController<MainActivity> controller = Robolectric.buildActivity(MainActivity.class);
+        MainActivity activity = controller.create().start().resume().visible().get();
+        assertNotNull(activity.findViewById(android.R.id.content));
+        controller.pause().stop().destroy();
     }
 }
