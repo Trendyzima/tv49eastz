@@ -1,49 +1,79 @@
 # Hardened device-to-gateway tunnel
 
-This component creates a **reverse, outbound-only mTLS TCP tunnel** from the device-side server tap to a gateway. The existing FadCam HTTP server is not changed and port `8080` is not exposed by this component.
+This component creates a **reverse, outbound-only mTLS TCP tunnel** from the device-side server tap to a gateway. The existing FadCam HTTP server is not changed and its local port `8080` is never exposed by this component.
 
-## Topology
+## Gate 1 local topology
 
 ```text
-FadCam server :8080
+FadCam local HTTP server
        |
-       | existing local boundary
+       | existing local/LAN boundary
+       | TAP_UPSTREAM=http://<fadcam-local-ip>:8080
        v
-server-tap :8786
+server-tap 127.0.0.1:8788
        |
-       | device-tunnel agent -- outbound TLS 1.3 + client certificate
-       |
+       | device-tunnel agent
+       | outbound TLS 1.3 + client certificate
        v
-public gateway :9443
+TUNNEL_GATEWAY:<9443>
        |
-       | loopback only
+       | authenticated device tunnel
        v
-127.0.0.1:8786
+TUNNEL_PROXY_LISTEN=127.0.0.1:8785
        |
        v
 stream-gateway
        |
        v
-authorized users
+authorized Android clients
 ```
+
+**No VPS is required for the FadCam endpoint.** The FadCam server remains on its existing local IP/port. The tunnel agent connects only to `server-tap`; it never publishes the FadCam address.
+
+The existing aggregated IPTV catalog is a separate source path and does not need to traverse this FadCam tunnel.
 
 ## Security properties
 
 - TLS 1.3 minimum.
 - Mutual certificate authentication; both peers require a certificate issued by the configured CA.
 - Device initiates the connection. No inbound connection to the device is required.
-- Gateway's forwarded listener binds to `127.0.0.1` by default and is not a public proxy.
+- Gateway's forwarded HTTP listener binds to `127.0.0.1` by default and is not a public media proxy.
 - The tunnel has a fixed destination: the local `server-tap` address. It does not accept a user-supplied host or port.
 - Each tunnel connection serves one TCP request and is discarded afterward.
 - A small bounded idle pool prevents unbounded tunnel creation.
 - Handshake and local-connect timeouts limit resource exhaustion.
 - The protocol is deliberately tiny: `TV49-TUNNEL/1`, `OK`, `START`, then raw bytes.
 
-## Deployment
+## Gate 1 configuration
 
-Run the agent on the same device/network namespace as `server-tap`. Run the gateway listener on the public gateway host. Configure `stream-gateway` to use the gateway's loopback forward address, for example `http://127.0.0.1:8786`.
+The device side must use the same listener address as `server-tap`:
 
-Do **not** place the device's private `192.168.x.x:8080` URL in public configuration or playlists.
+```text
+TAP_LISTEN=127.0.0.1:8788
+TUNNEL_LOCAL_ADDR=127.0.0.1:8788
+```
+
+Point `TAP_UPSTREAM` at the **actual FadCam local HTTP server**, for example:
+
+```text
+TAP_UPSTREAM=http://<fadcam-local-ip>:8080
+```
+
+On the gateway host:
+
+```text
+TUNNEL_LISTEN=:9443
+TUNNEL_PROXY_LISTEN=127.0.0.1:8785
+```
+
+Configure `stream-gateway` to use:
+
+```text
+TUNNEL_PROXY_BASE_URL=http://127.0.0.1:8785
+TAP_UPSTREAM=http://127.0.0.1:8785
+```
+
+The stream gateway must never be configured with the FadCam LAN URL. It consumes the gateway's local tunnel proxy instead.
 
 ## Certificates
 
