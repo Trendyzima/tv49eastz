@@ -3,6 +3,8 @@ package com.fadcam.tv;
 import android.content.Context;
 import android.content.Intent;
 import android.net.Uri;
+import android.os.Handler;
+import android.os.Looper;
 import android.security.keystore.KeyGenParameterSpec;
 import android.security.keystore.KeyProperties;
 import android.util.Base64;
@@ -19,8 +21,8 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.security.KeyPair;
-import java.security.KeyPairGenerator;
 import java.security.KeyStore;
+import java.security.MessageDigest;
 import java.security.PrivateKey;
 import java.security.Signature;
 import java.security.spec.ECGenParameterSpec;
@@ -33,11 +35,13 @@ public final class FadCamTvPublisher {
     private static final String KEYSTORE = "AndroidKeyStore";
     private static final String KEY_ALIAS = "fadcam_tv_publisher_v1";
     private static final String CONTROL_URL = "http://127.0.0.1:8789/v1/publisher/session";
+    private static final String ENROLL_URL = "http://127.0.0.1:8789/v1/publisher/enroll";
     private static final String PACKAGE = "com.fadcam";
     private static final String NAME = "FadCam Local";
     private static final String OWNER = "FadCam";
     private static final long MAX_HANDOFF_LIFETIME_MS = 60_000L;
     private static final ExecutorService EXECUTOR = Executors.newSingleThreadExecutor();
+    private static final Handler MAIN = new Handler(Looper.getMainLooper());
 
     private FadCamTvPublisher() {}
 
@@ -47,19 +51,60 @@ public final class FadCamTvPublisher {
         void onError(@NonNull String message);
     }
 
+    public interface ProvisionCallback {
+        void onProvisioned(@NonNull String deviceId, @NonNull String fingerprint);
+        void onError(@NonNull String message);
+    }
+
+    /**
+     * One-time pairing of this FadCam installation with the local device-tunnel.
+     * The enrollment token is never stored; the private key remains Android Keystore-only.
+     */
+    public static void provision(@NonNull Context context, @NonNull String deviceId,
+                                 @NonNull String enrollmentToken, @NonNull ProvisionCallback callback) {
+        String id = deviceId.trim();
+        String token = enrollmentToken.trim();
+        if (id.isEmpty() || token.isEmpty()) {
+            postProvisionError(callback, "Device ID and enrollment token are required");
+            return;
+        }
+        EXECUTOR.execute(() -> {
+            try {
+                ensureKeyPair();
+                String publicKey = publicKeyBase64();
+                JSONObject request = new JSONObject();
+                request.put("device_id", id);
+                request.put("token", token);
+                request.put("pub", publicKey);
+                JSONObject response = postJson(ENROLL_URL, request);
+                String fingerprint = response.optString("fingerprint", "").trim();
+                if (fingerprint.isEmpty()) throw new SecurityException("publisher enrollment returned no fingerprint");
+                String expected = fingerprint(publicKeyDer());
+                if (!expected.equalsIgnoreCase(fingerprint)) {
+                    throw new SecurityException("publisher enrollment fingerprint mismatch");
+                }
+                context.getApplicationContext().getSharedPreferences("fadcam_tv", Context.MODE_PRIVATE)
+                        .edit().putString("device_id", id).apply();
+                MAIN.post(() -> callback.onProvisioned(id, fingerprint));
+            } catch (Exception e) {
+                postProvisionError(callback, e.getMessage() == null ? "Unable to provision TV publisher" : e.getMessage());
+            }
+        });
+    }
+
     /** Starts a TV session without touching RemoteStreamService. */
     public static void start(@NonNull Context context, @NonNull String channelId,
                              @NonNull String streamId, @NonNull Callback callback) {
         String channel = channelId.trim();
         String stream = streamId.trim();
         if (channel.isEmpty() || stream.isEmpty()) {
-            callback.onError("TV channel and stream identifiers are required");
+            postError(callback, "TV channel and stream identifiers are required");
             return;
         }
         EXECUTOR.execute(() -> {
             try {
                 String deviceId = deviceId(context);
-                if (deviceId.isEmpty()) throw new IllegalStateException("TV device identity is not configured");
+                if (deviceId.isEmpty()) throw new IllegalStateException("TV publisher is not provisioned");
                 ensureKeyPair();
                 String nonce = UUID.randomUUID().toString().replace("-", "");
                 long iat = System.currentTimeMillis() / 1000L;
@@ -110,9 +155,9 @@ public final class FadCamTvPublisher {
                 Intent intent = new Intent(Intent.ACTION_VIEW, handoff);
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TOP);
                 context.getApplicationContext().startActivity(intent);
-                callback.onStarted(session, playlist);
+                MAIN.post(() -> callback.onStarted(session, playlist));
             } catch (Exception e) {
-                callback.onError(e.getMessage() == null ? "Unable to start TV" : e.getMessage());
+                postError(callback, e.getMessage() == null ? "Unable to start TV" : e.getMessage());
             }
         });
     }
@@ -121,17 +166,25 @@ public final class FadCamTvPublisher {
     public static void stop(@NonNull String sessionId, @NonNull Callback callback) {
         String id = sessionId.trim();
         if (id.isEmpty()) {
-            callback.onError("TV session is not active");
+            postError(callback, "TV session is not active");
             return;
         }
         EXECUTOR.execute(() -> {
             try {
                 delete(CONTROL_URL + "/" + Uri.encode(id));
-                callback.onStopped();
+                MAIN.post(callback::onStopped);
             } catch (Exception e) {
-                callback.onError(e.getMessage() == null ? "Unable to stop TV" : e.getMessage());
+                postError(callback, e.getMessage() == null ? "Unable to stop TV" : e.getMessage());
             }
         });
+    }
+
+    private static void postError(@NonNull Callback callback, @NonNull String message) {
+        MAIN.post(() -> callback.onError(message));
+    }
+
+    private static void postProvisionError(@NonNull ProvisionCallback callback, @NonNull String message) {
+        MAIN.post(() -> callback.onError(message));
     }
 
     private static String deviceId(Context context) {
@@ -146,7 +199,9 @@ public final class FadCamTvPublisher {
             KeyStore.Entry entry = ks.getEntry(KEY_ALIAS, null);
             if (entry instanceof KeyStore.PrivateKeyEntry) {
                 KeyStore.PrivateKeyEntry e = (KeyStore.PrivateKeyEntry) entry;
-                return new KeyPair(e.getCertificate().getPublicKey(), e.getPrivateKey());
+                if ("EC".equalsIgnoreCase(e.getCertificate().getPublicKey().getAlgorithm())) {
+                    return new KeyPair(e.getCertificate().getPublicKey(), e.getPrivateKey());
+                }
             }
             ks.deleteEntry(KEY_ALIAS);
         }
@@ -159,12 +214,22 @@ public final class FadCamTvPublisher {
         return generator.generateKeyPair();
     }
 
-    private static String publicKeyBase64() throws Exception {
+    private static byte[] publicKeyDer() throws Exception {
         KeyStore ks = KeyStore.getInstance(KEYSTORE);
         ks.load(null);
         KeyStore.PrivateKeyEntry entry = (KeyStore.PrivateKeyEntry) ks.getEntry(KEY_ALIAS, null);
-        return Base64.encodeToString(entry.getCertificate().getPublicKey().getEncoded(),
-                Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+        return entry.getCertificate().getPublicKey().getEncoded();
+    }
+
+    private static String publicKeyBase64() throws Exception {
+        return Base64.encodeToString(publicKeyDer(), Base64.URL_SAFE | Base64.NO_WRAP | Base64.NO_PADDING);
+    }
+
+    private static String fingerprint(byte[] der) throws Exception {
+        byte[] digest = MessageDigest.getInstance("SHA-256").digest(der);
+        StringBuilder out = new StringBuilder(digest.length * 2);
+        for (byte b : digest) out.append(String.format("%02x", b & 0xff));
+        return out.toString();
     }
 
     private static String sign(String canonical) throws Exception {
