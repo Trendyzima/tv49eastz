@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -61,10 +62,10 @@ func TestPublisherEnrollmentPinsAndroidKey(t *testing.T) {
 	if err != nil { t.Fatal(err) }
 	path := filepath.Join(t.TempDir(), "publisher-key.der")
 	p := &publisherControl{
-		deviceID:       "device-1",
-		publicKeyPath:  path,
-		enrollToken:    "one-time-token",
-		nonces:         make(map[string]time.Time),
+		deviceID:      "device-1",
+		publicKeyPath: path,
+		enrollToken:   "one-time-token",
+		nonces:        make(map[string]time.Time),
 	}
 	body := fmt.Sprintf(`{"token":"one-time-token","device_id":"device-1","pub":"%s"}`,
 		base64.RawURLEncoding.EncodeToString(der))
