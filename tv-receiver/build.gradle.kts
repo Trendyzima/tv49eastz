@@ -60,11 +60,14 @@ android {
     // Robolectric exercises the real Android resources, manifest and AppCompat
     // theme. AGP otherwise omits module resources from the JVM test runtime,
     // which can surface as Resources$NotFoundException during Activity startup.
+    // The Android Gradle Plugin exposes the forked local-test JVM through the
+    // UnitTestOptions.all receiver; configure its jvmArgs property rather than
+    // calling jvmArgs() as a function on the Android DSL receiver.
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
             all {
-                jvmArgs(
+                jvmArgs = listOf(
                     "--add-opens=java.base/java.lang=ALL-UNNAMED",
                     "--add-opens=java.base/java.io=ALL-UNNAMED",
                     "--add-opens=java.base/jdk.internal.access=ALL-UNNAMED"
