@@ -50,7 +50,9 @@ func main() {
 		panic(err)
 	}
 	gateway := env("TUNNEL_GATEWAY", "gateway.example:9443")
-	local := env("TUNNEL_LOCAL_ADDR", "127.0.0.1:8786")
+	// server-tap's canonical listener. Override with TUNNEL_LOCAL_ADDR only
+	// when the tap is deliberately deployed on a different local address.
+	local := env("TUNNEL_LOCAL_ADDR", "127.0.0.1:8788")
 	for i := 0; i < pool; i++ {
 		go maintain(cfg, gateway, local, deviceID)
 	}
