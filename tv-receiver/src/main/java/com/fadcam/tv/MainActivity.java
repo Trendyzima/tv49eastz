@@ -22,7 +22,7 @@ import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.ui.PlayerView;
 
-import com.tv49east.BuildConfig;
+import com.tv49.com.BuildConfig;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -199,13 +199,10 @@ public final class MainActivity extends AppCompatActivity {
         if (channelList == null) return;
         channelList.removeAllViews();
         LinkedHashMap<String, ChannelStore.Channel> merged = new LinkedHashMap<>();
-        // A FadCam-local channel is always first when the creator has published it.
         for (ChannelStore.Channel c : store.load()) {
             if (c.featured) merged.put(c.id, c);
         }
-        // Server catalog order is authoritative: TV East creators precede IPTV variety.
         for (ChannelStore.Channel c : remoteChannels) merged.putIfAbsent(c.id, c);
-        // Preserve viewer-added authorized channels after the server catalog.
         for (ChannelStore.Channel c : store.load()) merged.putIfAbsent(c.id, c);
 
         if (merged.isEmpty()) {
