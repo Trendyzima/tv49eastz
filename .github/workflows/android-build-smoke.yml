@@ -48,6 +48,17 @@ jobs:
           test -d "$MEDIA3_PATCHED_PATH/libraries/container"
           test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
 
+      - name: Normalize pinned Media3 manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for module in common container muxer; do
+            manifest="$MEDIA3_PATCHED_PATH/libraries/$module/src/main/AndroidManifest.xml"
+            test -f "$manifest"
+            sed -i -E 's/[[:space:]]+package="androidx\.media3\.[^"]+"//' "$manifest"
+            ! grep -Eq '^[[:space:]]*<manifest[^>]*package=' "$manifest"
+          done
+
       - name: Set up Java 17
         uses: actions/setup-java@v5
         with:
