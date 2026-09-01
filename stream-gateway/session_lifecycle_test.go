@@ -44,6 +44,21 @@ func TestDecodeSessionRequest(t *testing.T) {
 	}
 }
 
+func TestDecodeSessionRequestRejectsTrailingJSON(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(`{"channel_id":"camera","stream_id":"abc"}{"extra":true}`))
+	if _, _, err := decodeSessionRequest(req); err == nil {
+		t.Fatal("trailing JSON value was accepted")
+	}
+}
+
+func TestDecodeSessionRequestRejectsOversizedBody(t *testing.T) {
+	body := `{"channel_id":"camera","stream_id":"abc","padding":"` + strings.Repeat("x", maxSessionRequestBytes) + `"}`
+	req := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(body))
+	if _, _, err := decodeSessionRequest(req); err == nil {
+		t.Fatal("oversized body was accepted")
+	}
+}
+
 func TestSessionMiddlewareRequiresMutationMethods(t *testing.T) {
 	g := &Gateway{cfg: Config{APIKey: "test", MaxSessions: 1}}
 	h := g.middleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
