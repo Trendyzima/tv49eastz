@@ -11,7 +11,8 @@
         android:label="TV 49 East"
         android:supportsRtl="true"
         android:theme="@style/Theme.TV49East"
-        android:banner="@drawable/tv49east_banner">
+        android:banner="@drawable/tv49east_banner"
+        android:usesCleartextTraffic="true">
 
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
