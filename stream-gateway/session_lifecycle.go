@@ -7,36 +7,6 @@ import (
 	"strings"
 )
 
-// reserveSessionSlot atomically enforces the configured concurrent-session cap.
-// A failed reservation never increments the active count.
-func (g *Gateway) reserveSessionSlot() bool {
-	max := int64(g.cfg.MaxSessions)
-	if max <= 0 {
-		max = 25
-	}
-	for {
-		current := g.sessionCount.Load()
-		if current >= max {
-			return false
-		}
-		if g.sessionCount.CompareAndSwap(current, current+1) {
-			return true
-		}
-	}
-}
-
-func (g *Gateway) releaseSessionSlot() {
-	for {
-		current := g.sessionCount.Load()
-		if current <= 0 {
-			return
-		}
-		if g.sessionCount.CompareAndSwap(current, current-1) {
-			return
-		}
-	}
-}
-
 // revokeSession removes a live session exactly once. CompareAndDelete makes
 // repeated Stop-TV requests idempotent and prevents double slot release.
 func (g *Gateway) revokeSession(id string) bool {
