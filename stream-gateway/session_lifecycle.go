@@ -3,9 +3,12 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 )
+
+const maxSessionRequestBytes = 8192
 
 // revokeSession removes a live session exactly once. CompareAndDelete makes
 // repeated Stop-TV requests idempotent and prevents double slot release.
@@ -74,9 +77,15 @@ func decodeSessionRequest(r *http.Request) (string, string, error) {
 	}
 	defer r.Body.Close()
 	var req sessionRequest
-	dec := json.NewDecoder(r.Body)
+	dec := json.NewDecoder(io.LimitReader(r.Body, maxSessionRequestBytes+1))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
+		return "", "", errors.New("invalid JSON body")
+	}
+	// A request is exactly one JSON value. Reject trailing JSON values and
+	// trailing non-whitespace bytes instead of silently accepting them.
+	var extra interface{}
+	if err := dec.Decode(&extra); err != io.EOF {
 		return "", "", errors.New("invalid JSON body")
 	}
 	channelID := strings.TrimSpace(req.ChannelID)
