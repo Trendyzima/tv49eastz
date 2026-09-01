@@ -12,8 +12,8 @@ android {
         applicationId = "com.tv49.com"
         minSdk = 24
         targetSdk = 36
-        versionCode = 3
-        versionName = "2.1.0"
+        versionCode = 4
+        versionName = "2.2.0"
         val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim().orEmpty()
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
@@ -57,9 +57,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
-    // Robolectric exercises the real Android resources, manifest and AppCompat
-    // theme. Keep Android resources in the local JVM test runtime; JVM-specific
-    // arguments are intentionally configured outside the Android DSL when needed.
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
@@ -79,9 +76,11 @@ dependencies {
     implementation(libs.appcompat)
     implementation(libs.material)
     implementation(libs.media3.exoplayer)
+    implementation(libs.media3.exoplayer.hls)
     implementation(libs.media3.ui)
     implementation(libs.media3.session)
     implementation(libs.okhttp)
+    implementation(libs.viewpager2)
 
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
