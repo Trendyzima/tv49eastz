@@ -57,6 +57,16 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
 
+    // Robolectric exercises the real Android resources, manifest and AppCompat
+    // theme. AGP otherwise omits module resources from the JVM test runtime,
+    // which can surface as Resources$NotFoundException during Activity startup.
+    // This affects only JVM tests and has no APK/runtime impact.
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
     packaging {
         jniLibs.useLegacyPackaging = false
     }
