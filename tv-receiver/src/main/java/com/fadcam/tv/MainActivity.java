@@ -6,7 +6,9 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
+import android.text.InputType;
 import android.view.Gravity;
+import android.view.View;
 import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
@@ -20,6 +22,7 @@ import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 import androidx.media3.common.MediaItem;
 import androidx.media3.exoplayer.ExoPlayer;
+import androidx.media3.ui.AspectRatioFrameLayout;
 import androidx.media3.ui.PlayerView;
 
 import com.tv49.com.BuildConfig;
@@ -29,11 +32,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.UUID;
 
-/** Standalone TV 49 East receiver. All catalog playback is served through the TV East relay. */
+/** Responsive standalone TV 49 East receiver. */
 public final class MainActivity extends AppCompatActivity {
-    private static final int BG = Color.rgb(15, 15, 18);
-    private static final int SURFACE = Color.rgb(31, 24, 49);
-    private static final int SURFACE_2 = Color.rgb(42, 32, 64);
+    private static final int BG = Color.rgb(12, 11, 16);
+    private static final int SURFACE = Color.rgb(29, 23, 45);
+    private static final int SURFACE_2 = Color.rgb(39, 31, 58);
+    private static final int SURFACE_3 = Color.rgb(49, 39, 70);
     private static final int ACCENT = Color.rgb(207, 186, 253);
     private static final int TEXT = Color.WHITE;
     private static final int MUTED = Color.rgb(190, 184, 205);
@@ -53,7 +57,9 @@ public final class MainActivity extends AppCompatActivity {
     protected void onCreate(@Nullable Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         getWindow().setStatusBarColor(BG);
-        getWindow().setNavigationBarColor(Color.rgb(9, 9, 11));
+        getWindow().setNavigationBarColor(Color.rgb(7, 7, 9));
+        getWindow().getDecorView().setSystemUiVisibility(0);
+
         store = new ChannelStore(this);
         catalogClient = new CatalogClient(BuildConfig.TV_EAST_CATALOG_URL);
         buildUi();
@@ -69,6 +75,10 @@ public final class MainActivity extends AppCompatActivity {
         refreshCatalog();
     }
 
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
+
     private TextView label(String text, float size, int color, boolean bold) {
         TextView v = new TextView(this);
         v.setText(text);
@@ -78,97 +88,133 @@ public final class MainActivity extends AppCompatActivity {
         return v;
     }
 
-    private GradientDrawable surface(int color, int radius) {
+    private GradientDrawable surface(int color, int radiusDp) {
         GradientDrawable d = new GradientDrawable();
         d.setColor(color);
-        d.setCornerRadius(radius);
+        d.setCornerRadius(dp(radiusDp));
         return d;
     }
 
+    private TextView pill(String text, int color) {
+        TextView v = label(text, 11f, color, true);
+        v.setGravity(Gravity.CENTER);
+        v.setPadding(dp(12), dp(7), dp(12), dp(7));
+        v.setBackground(surface(Color.argb(38, Color.red(color), Color.green(color), Color.blue(color)), 18));
+        return v;
+    }
+
     private void buildUi() {
-        FrameLayout root = new FrameLayout(this);
-        root.setBackgroundColor(BG);
-        root.setKeepScreenOn(true);
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(true);
+        scroll.setBackgroundColor(BG);
+        scroll.setClipToPadding(false);
 
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
-        content.setPadding(28, 20, 28, 20);
+        content.setPadding(dp(16), dp(14), dp(16), dp(24));
 
+        // Header: compact enough for phones, spacious enough for tablets.
         LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
         header.setGravity(Gravity.CENTER_VERTICAL);
-        header.setPadding(22, 16, 22, 16);
-        header.setBackground(surface(SURFACE, 28));
-        LinearLayout titles = new LinearLayout(this);
-        titles.setOrientation(LinearLayout.VERTICAL);
-        titles.addView(label("TV 49 East", 27f, TEXT, true));
-        titles.addView(label("FadCam creators • TV East • worldwide", 13f, MUTED, false));
-        header.addView(titles, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        status = label("CONNECTING", 12f, ACCENT, true);
-        status.setGravity(Gravity.CENTER);
-        header.addView(status);
+        header.setPadding(dp(18), dp(15), dp(14), dp(15));
+        header.setBackground(surface(SURFACE, 24));
+
+        LinearLayout brand = new LinearLayout(this);
+        brand.setOrientation(LinearLayout.VERTICAL);
+        TextView title = label("TV 49 East", 25f, TEXT, true);
+        TextView subtitle = label("FadCam creators  •  TV East  •  worldwide", 12f, MUTED, false);
+        subtitle.setPadding(0, dp(3), 0, 0);
+        brand.addView(title);
+        brand.addView(subtitle);
+        header.addView(brand, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+
+        status = pill("CONNECTING", ACCENT);
+        header.addView(status, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT));
         content.addView(header);
+
+        SpaceGap gap = new SpaceGap(this, dp(14));
+        content.addView(gap);
+
+        // A real 16:9 frame prevents portrait phones from stretching the video.
+        // PlayerView itself uses FIT so the video never crops or zooms unexpectedly.
+        AspectVideoFrame videoFrame = new AspectVideoFrame(this, 16f / 9f);
+        videoFrame.setBackground(surface(Color.BLACK, 20));
+        videoFrame.setClipToOutline(true);
 
         playerView = new PlayerView(this);
         playerView.setUseController(true);
+        playerView.setControllerShowTimeoutMs(2500);
         playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
-        LinearLayout.LayoutParams videoParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.56f);
-        videoParams.topMargin = 16;
-        content.addView(playerView, videoParams);
+        playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
+        playerView.setShutterBackgroundColor(Color.BLACK);
+        videoFrame.addView(playerView, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+        content.addView(videoFrame, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
 
-        ScrollView scroll = new ScrollView(this);
-        scroll.setFillViewport(true);
-        LinearLayout catalog = new LinearLayout(this);
-        catalog.setOrientation(LinearLayout.VERTICAL);
-        catalog.setPadding(0, 14, 0, 8);
-        catalog.addView(label("FEATURED", 12f, ACCENT, true));
-        catalog.addView(label("FadCam Local", 21f, TEXT, true));
-        TextView featuredHint = label("FadCam-originated channels are surfaced first, followed by TV East creators and global variety.", 13f, MUTED, false);
-        featuredHint.setPadding(0, 2, 0, 10);
-        catalog.addView(featuredHint);
+        TextView videoHint = label("16:9 player  •  adapts automatically to your screen", 11f, MUTED, false);
+        videoHint.setGravity(Gravity.CENTER);
+        videoHint.setPadding(0, dp(6), 0, dp(8));
+        content.addView(videoHint);
+
+        // Featured section.
+        LinearLayout sectionHeader = new LinearLayout(this);
+        sectionHeader.setOrientation(LinearLayout.VERTICAL);
+        TextView featured = label("FEATURED", 11f, ACCENT, true);
+        featured.setLetterSpacing(0.12f);
+        sectionHeader.addView(featured);
+        TextView heading = label("FadCam Local", 22f, TEXT, true);
+        heading.setPadding(0, dp(2), 0, 0);
+        sectionHeader.addView(heading);
+        TextView description = label("FadCam-originated channels first, followed by TV East creators and global variety.", 13f, MUTED, false);
+        description.setPadding(0, dp(3), 0, dp(10));
+        sectionHeader.addView(description);
+        content.addView(sectionHeader);
+
         channelList = new LinearLayout(this);
         channelList.setOrientation(LinearLayout.VERTICAL);
-        catalog.addView(channelList);
+        content.addView(channelList);
 
         LinearLayout actions = new LinearLayout(this);
         actions.setGravity(Gravity.CENTER_VERTICAL);
-        Button add = actionButton("＋  Add authorized channel");
+        Button add = actionButton("＋  Add authorized channel", SURFACE_2);
         add.setOnClickListener(v -> showAddChannelDialog());
         actions.addView(add, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        Button refresh = actionButton("Refresh");
+        Button refresh = actionButton("Refresh", SURFACE_3);
         refresh.setOnClickListener(v -> refreshCatalog());
         LinearLayout.LayoutParams refreshParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        refreshParams.leftMargin = 10;
+        refreshParams.leftMargin = dp(8);
         actions.addView(refresh, refreshParams);
-        catalog.addView(actions);
+        content.addView(actions);
 
-        TextView protocol = label("Catalog channels play through the TV 49 East HTTPS relay. FadCam publishers register through the authenticated TV East publishing API.", 12f, MUTED, false);
-        protocol.setPadding(0, 14, 0, 8);
-        catalog.addView(protocol);
-        scroll.addView(catalog);
-        content.addView(scroll, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 0.44f));
+        TextView protocol = label("Secure receiver  •  catalog and playback use authorized HTTPS sources", 11f, MUTED, false);
+        protocol.setGravity(Gravity.CENTER);
+        protocol.setPadding(0, dp(14), 0, 0);
+        content.addView(protocol);
 
         LinearLayout footer = new LinearLayout(this);
         footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.addView(label("TV East • secure standalone receiver", 12f, MUTED, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        stop = new Button(this);
-        stop.setText("STOP");
-        stop.setTextColor(TEXT);
-        stop.setAllCaps(false);
+        footer.setPadding(0, dp(10), 0, 0);
+        footer.addView(label("TV East • standalone receiver", 11f, MUTED, false), new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
+        stop = actionButton("STOP", SURFACE_2);
         stop.setEnabled(false);
         stop.setOnClickListener(v -> stopPlayback());
         footer.addView(stop);
         content.addView(footer);
-        root.addView(content, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
-        setContentView(root);
+
+        scroll.addView(content, new ScrollView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
+        setContentView(scroll);
     }
 
-    private Button actionButton(String text) {
+    private Button actionButton(String text, int backgroundColor) {
         Button b = new Button(this);
         b.setText(text);
         b.setTextColor(TEXT);
+        b.setTextSize(13f);
         b.setAllCaps(false);
-        b.setMinHeight(52);
-        b.setBackground(surface(SURFACE_2, 22));
+        b.setMinHeight(dp(48));
+        b.setMinWidth(0);
+        b.setPadding(dp(12), 0, dp(12), 0);
+        b.setBackground(surface(backgroundColor, 18));
         return b;
     }
 
@@ -188,7 +234,8 @@ public final class MainActivity extends AppCompatActivity {
             @Override
             public void onError(Exception error) {
                 runOnUiThread(() -> {
-                    setStatus(BuildConfig.TV_EAST_CATALOG_URL.isEmpty() ? "SERVER NOT CONFIGURED" : "OFFLINE • LOCAL CHANNELS", BuildConfig.TV_EAST_CATALOG_URL.isEmpty() ? ERROR : MUTED);
+                    boolean configured = !BuildConfig.TV_EAST_CATALOG_URL.isEmpty();
+                    setStatus(configured ? "OFFLINE • LOCAL" : "SERVER NOT CONFIGURED", configured ? MUTED : ERROR);
                     renderChannels();
                 });
             }
@@ -199,16 +246,28 @@ public final class MainActivity extends AppCompatActivity {
         if (channelList == null) return;
         channelList.removeAllViews();
         LinkedHashMap<String, ChannelStore.Channel> merged = new LinkedHashMap<>();
-        for (ChannelStore.Channel c : store.load()) {
-            if (c.featured) merged.put(c.id, c);
-        }
+        for (ChannelStore.Channel c : store.load()) if (c.featured) merged.put(c.id, c);
         for (ChannelStore.Channel c : remoteChannels) merged.putIfAbsent(c.id, c);
         for (ChannelStore.Channel c : store.load()) merged.putIfAbsent(c.id, c);
 
         if (merged.isEmpty()) {
-            TextView empty = label("No channels cached yet. Connect to the TV East catalog server or publish a FadCam channel.", 13f, MUTED, false);
-            empty.setPadding(0, 4, 0, 12);
-            channelList.addView(empty);
+            LinearLayout empty = new LinearLayout(this);
+            empty.setOrientation(LinearLayout.VERTICAL);
+            empty.setGravity(Gravity.CENTER);
+            empty.setPadding(dp(20), dp(22), dp(20), dp(22));
+            empty.setBackground(surface(SURFACE, 18));
+            TextView icon = label("TV", 18f, ACCENT, true);
+            icon.setGravity(Gravity.CENTER);
+            empty.addView(icon);
+            TextView message = label("No channels cached yet", 15f, TEXT, true);
+            message.setGravity(Gravity.CENTER);
+            message.setPadding(0, dp(6), 0, 0);
+            empty.addView(message);
+            TextView detail = label("Connect to the TV East catalog or add an authorized channel.", 12f, MUTED, false);
+            detail.setGravity(Gravity.CENTER);
+            detail.setPadding(0, dp(3), 0, 0);
+            empty.addView(detail);
+            channelList.addView(empty, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT));
             return;
         }
 
@@ -223,18 +282,21 @@ public final class MainActivity extends AppCompatActivity {
     private void addChannelCard(ChannelStore.Channel channel, String prefix) {
         LinearLayout card = new LinearLayout(this);
         card.setGravity(Gravity.CENTER_VERTICAL);
-        card.setPadding(18, 12, 10, 12);
-        card.setBackground(surface(SURFACE, 22));
+        card.setPadding(dp(14), dp(11), dp(10), dp(11));
+        card.setBackground(surface(SURFACE, 18));
         LinearLayout.LayoutParams cardParams = new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
-        cardParams.bottomMargin = 8;
+        cardParams.bottomMargin = dp(8);
         channelList.addView(card, cardParams);
 
         LinearLayout text = new LinearLayout(this);
         text.setOrientation(LinearLayout.VERTICAL);
-        text.addView(label(prefix + channel.name, 17f, TEXT, true));
-        text.addView(label(channel.owner, 12f, MUTED, false));
+        TextView name = label(prefix + channel.name, 16f, TEXT, true);
+        TextView owner = label(channel.owner, 12f, MUTED, false);
+        owner.setPadding(0, dp(3), 0, 0);
+        text.addView(name);
+        text.addView(owner);
         card.addView(text, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f));
-        Button play = actionButton("WATCH");
+        Button play = actionButton("WATCH", SURFACE_2);
         play.setOnClickListener(v -> startPlayback(channel.url, channel.name));
         card.addView(play);
     }
@@ -242,7 +304,7 @@ public final class MainActivity extends AppCompatActivity {
     private void showAddChannelDialog() {
         LinearLayout form = new LinearLayout(this);
         form.setOrientation(LinearLayout.VERTICAL);
-        form.setPadding(8, 8, 8, 8);
+        form.setPadding(dp(8), dp(4), dp(8), dp(4));
         EditText name = new EditText(this);
         name.setHint("Channel name");
         name.setSingleLine(true);
@@ -254,11 +316,11 @@ public final class MainActivity extends AppCompatActivity {
         EditText url = new EditText(this);
         url.setHint("HTTPS HLS stream URL");
         url.setSingleLine(true);
-        url.setInputType(android.text.InputType.TYPE_CLASS_TEXT | android.text.InputType.TYPE_TEXT_VARIATION_URI);
+        url.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_URI);
         form.addView(url);
         new androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle("Add authorized channel")
-                .setMessage("Only add streams you own or are authorized to watch/distribute. Catalog channels should use the TV East relay.")
+                .setMessage("Only add streams you own or are authorized to watch/distribute.")
                 .setView(form)
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
@@ -356,5 +418,39 @@ public final class MainActivity extends AppCompatActivity {
     protected void onDestroy() {
         stopPlayback();
         super.onDestroy();
+    }
+
+    /** Enforces a stable 16:9 video surface on every phone/tablet width. */
+    private static final class AspectVideoFrame extends FrameLayout {
+        private final float ratio;
+
+        AspectVideoFrame(android.content.Context context, float ratio) {
+            super(context);
+            this.ratio = ratio;
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            int width = MeasureSpec.getSize(widthMeasureSpec);
+            int availableWidth = Math.max(0, width - getPaddingLeft() - getPaddingRight());
+            int height = Math.round(availableWidth / ratio) + getPaddingTop() + getPaddingBottom();
+            int exactHeight = MeasureSpec.makeMeasureSpec(height, MeasureSpec.EXACTLY);
+            super.onMeasure(widthMeasureSpec, exactHeight);
+        }
+    }
+
+    /** Tiny spacer view that keeps spacing density-aware without magic pixels. */
+    private static final class SpaceGap extends View {
+        private final int size;
+
+        SpaceGap(android.content.Context context, int size) {
+            super(context);
+            this.size = size;
+        }
+
+        @Override
+        protected void onMeasure(int widthMeasureSpec, int heightMeasureSpec) {
+            setMeasuredDimension(0, size);
+        }
     }
 }
