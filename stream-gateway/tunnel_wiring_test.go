@@ -4,8 +4,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
-	"strings"
 	"testing"
 )
 
@@ -65,6 +63,4 @@ func TestTunnelRegistryRejectsUnsafeDeviceIdentity(t *testing.T) {
 			t.Fatalf("unsafe device identity registered: %q", id)
 		}
 	}
-	_ = os.Getenv("PATH")
-	_ = strings.TrimSpace("")
 }
