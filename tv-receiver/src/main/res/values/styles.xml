@@ -1,11 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- TV 49 East keeps FadCam's signature lavender accent and deep midnight surfaces. -->
-    <style name="Theme.TV49East" parent="android:style/Theme.Material.NoActionBar">
+    <!--
+        MainActivity extends AndroidX AppCompatActivity, so this MUST be an
+        AppCompat descendant. The previous platform Theme.Material parent
+        caused the installed release APK to crash during Activity startup
+        with AppCompat's theme-enforcement check.
+    -->
+    <style name="Theme.TV49East" parent="Theme.AppCompat.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:windowBackground">#111113</item>
         <item name="android:colorAccent">#CFBAFD</item>
+        <item name="colorAccent">#CFBAFD</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:statusBarColor">#111113</item>
         <item name="android:navigationBarColor">#0B0B0D</item>
