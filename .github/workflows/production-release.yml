@@ -15,6 +15,11 @@ permissions:
   id-token: write
   attestations: write
 
+env:
+  MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
+  MEDIA3_PATCHED_SHA: 6d498560637d273dcb754727c9dcdce97548e621
+  MEDIA3_PATCHED_PATH: /tmp/media3-patched
+
 jobs:
   verify:
     name: Production verification
@@ -25,6 +30,23 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Fetch pinned patched Media3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MEDIA3_PATCHED_PATH"
+          git init "$MEDIA3_PATCHED_PATH"
+          git -C "$MEDIA3_PATCHED_PATH" remote add origin "$MEDIA3_PATCHED_REPO"
+          git -C "$MEDIA3_PATCHED_PATH" fetch --depth 1 origin "$MEDIA3_PATCHED_SHA"
+          git -C "$MEDIA3_PATCHED_PATH" checkout --detach FETCH_HEAD
+          test "$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)" = "$MEDIA3_PATCHED_SHA"
+          test -f "$MEDIA3_PATCHED_PATH/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/common"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/container"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
+          printf '%s\n' "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
+          chmod 600 local.properties
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -53,6 +75,18 @@ jobs:
       - name: Android unit tests
         run: ./gradlew --no-daemon --no-watch-fs --stacktrace testDefaultDebugUnitTest :tv-receiver:test
 
+      - name: Verify patched Media3 substitution
+        shell: bash
+        run: |
+          set -euo pipefail
+          for spec in \
+            "androidx.media3:media3-muxer :media3-patched:lib-muxer" \
+            "androidx.media3:media3-common :media3-patched:lib-common" \
+            "androidx.media3:media3-container :media3-patched:lib-container"; do
+            set -- $spec
+            ./gradlew --no-daemon --no-watch-fs --stacktrace :app:dependencyInsight --dependency "$1" --configuration defaultReleaseCompileClasspath | grep -Fq "project $2"
+          done
+
       - name: Android release lint
         run: ./gradlew --no-daemon --no-watch-fs --stacktrace :app:lintDefaultRelease :tv-receiver:lintRelease
 
@@ -66,6 +100,18 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Fetch pinned patched Media3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MEDIA3_PATCHED_PATH"
+          git init "$MEDIA3_PATCHED_PATH"
+          git -C "$MEDIA3_PATCHED_PATH" remote add origin "$MEDIA3_PATCHED_REPO"
+          git -C "$MEDIA3_PATCHED_PATH" fetch --depth 1 origin "$MEDIA3_PATCHED_SHA"
+          git -C "$MEDIA3_PATCHED_PATH" checkout --detach FETCH_HEAD
+          test "$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)" = "$MEDIA3_PATCHED_SHA"
+          test -f "$MEDIA3_PATCHED_PATH/libraries/muxer/src/main/java/androidx/media3/muxer/ProcessedSegment.java"
 
       - name: Set up Java 17
         uses: actions/setup-java@v5
@@ -93,7 +139,8 @@ jobs:
             "KEYSTORE_FILE=/tmp/tv49eastz-release.jks" \
             "KEYSTORE_PASSWORD=$KEYSTORE_PASSWORD" \
             "KEY_ALIAS=$KEY_ALIAS" \
-            "KEY_PASSWORD=$KEY_PASSWORD" > local.properties
+            "KEY_PASSWORD=$KEY_PASSWORD" \
+            "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
           chmod 600 local.properties
           keytool -list -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" >/dev/null
 
@@ -116,9 +163,7 @@ jobs:
           aab="$(find app/build/outputs/bundle -type f -path '*/defaultRelease/*.aab' -print -quit)"
           fadcam="$(find app/build/outputs/apk -type f -path '*/default/release/*.apk' -print -quit)"
           tv="$(find tv-receiver/build/outputs/apk -type f -path '*/release/*.apk' -print -quit)"
-          test -s "$aab"
-          test -s "$fadcam"
-          test -s "$tv"
+          test -s "$aab" && test -s "$fadcam" && test -s "$tv"
           cp "$aab" dist/FadCam.aab
           cp "$fadcam" dist/FadCam.apk
           cp "$tv" dist/TV49East.apk
