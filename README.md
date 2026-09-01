@@ -1,370 +1,312 @@
 # TV 49 East
 
-**Secure TV streaming platform connecting FadCam-originated live video and authorized IPTV sources to an Android TV receiver.**
+**TV 49 East is a unified TV streaming platform that brings together an Android/TV client, channel discovery and EPG sources, live media routing, and authorized FadCam-originated streaming.**
 
-## Production downloads
+> **Status:** The repository defines the integration architecture and component boundaries. A physical end-to-end FadCam → TV screen stream is **not claimed as runtime-certified until it has been exercised on real devices**.
 
-### Android APKs
+## What this repository actually contains
 
-Production APKs are **release-backed**. They are published only after a versioned `v*` tag passes the production verification and signed-release workflow. The repository currently has **no published GitHub Releases**, so production APK download URLs are not live yet.
+TV 49 East is a host/integration repository. It does **not** contain a replacement implementation of the FadCam server, and it does not pretend that all upstream TV components are one native codebase.
 
-**Current status:** 🟡 No production release published yet.
-
-| Application | Production download |
-|---|---|
-| **FadCam** | Not published yet — use the [Latest build downloads](#latest-build-downloads) for a test APK |
-| **TV 49 East** | Not published yet — use the [Latest build downloads](#latest-build-downloads) for a test APK |
-
-When the first production release is published, this section will point to the release-backed APKs:
+The project integrates independently maintained components as pinned Git submodules under `components/`:
 
 ```text
-https://github.com/Trendyzima/tv49eastz/releases/latest/download/FadCam.apk
-https://github.com/Trendyzima/tv49eastz/releases/latest/download/TV49East.apk
+TV 49 East host repository
+│
+├── components/player          → Android TV/IPTV player source
+├── components/channel-engine  → channel scheduling / TV engine source
+├── components/media-router    → live media routing / proxy server
+├── components/epg-engine      → EPG data source
+├── components/playlist-client → Android playlist/client source
+└── components/tv-client       → TV/IPTV client source
 ```
 
-The production release also publishes the FadCam AAB, SHA-256 checksums, and release-certificate information.
-
-> **Important:** Do not use a `releases/latest/download/...` URL until a release exists. GitHub currently reports zero published releases for this repository, so those URLs cannot resolve to APK files yet.
-
-## Latest build downloads
-
-Every push to `master` runs the Android APK build workflow. It builds both applications and uploads a coordinated artifact containing:
-
-- `FadCam-debug.apk` — debug/test build
-- `FadCam-release-ci.apk` — CI-signed release variant for testing
-- `TV49East-debug.apk` — Android TV debug/test build
-- `TV49East-release-ci.apk` — CI-signed Android TV release variant for testing
-- `SHA256SUMS.txt` — checksums for all APKs
-- `BUILD-INFO.txt` — exact source commit and patched Media3 commit used
-
-### How to get the current APKs
-
-1. Open **[Android APK Builds](https://github.com/Trendyzima/tv49eastz/actions/workflows/android-dual-apk.yml)**.
-2. Open the newest **successful** workflow run.
-3. Scroll to **Artifacts**.
-4. Download `tv49east-android-apks-<commit-sha>`.
-5. Extract the ZIP and install the APK appropriate for your device.
-
-The workflow itself is the authoritative source for these test APKs; there is intentionally no fake or unstable `latest` artifact URL in this README.
-
-> **Important:** CI release APKs are test artifacts signed with an ephemeral CI key. They are not the production release signing identity. Use a published GitHub Release for production-distributed binaries.
-
-## Production release process
-
-```text
-version tag vX.Y.Z
-        ↓
-Production verification
-        ├── Go race tests
-        ├── Go vet
-        ├── Android unit tests
-        ├── patched Media3 substitution check
-        └── Android release lint
-                ↓
-Signed release build
-        ├── FadCam.apk
-        ├── TV49East.apk
-        └── FadCam.aab
-                ↓
-SHA-256 checksums
-        ↓
-GitHub artifact upload
-        ↓
-GitHub Release publication
-        ↓
-README release-backed downloads become live
-```
-
-The production release workflow requires the repository's Android release-signing secrets and fails closed if they are absent. It also pins the certified patched Media3 checkout before building.
-
-## Android build pipeline
-
-```text
-master push / PR / manual run
-            ↓
-Android APK Build workflow
-            ├── checkout source
-            ├── fetch pinned patched Media3
-            ├── run Android tests
-            ├── verify Media3 substitutions
-            ├── build FadCam debug + release
-            ├── build TV 49 East debug + release
-            ├── calculate SHA-256 checksums
-            └── upload one coordinated APK artifact
-```
-
-The build is intentionally fail-closed: missing Gradle tasks, missing patched Media3 sources, failed tests, or missing APK outputs stop publication of the downloadable artifact.
+The exact upstream sources and branch selections are recorded in `.gitmodules`. The FadCam wiki is also retained as a documentation submodule at `docs/FadCam.wiki`.
 
 ## Architecture
 
-```text
- FadCam phone
- ┌─────────────────┐
- │ Existing HTTP   │
- │ server :8080    │
- └────────┬────────┘
-          │ HLS
-          ▼
- ┌─────────────────┐
- │   server-tap    │
- └────────┬────────┘
-          │
-          ▼
- ┌─────────────────┐
- │  device-tunnel  │
- └────────┬────────┘
-          │ authenticated path
-          ▼
- ┌────────────────────────────────┐
- │        stream-gateway          │
- │ TLS/mTLS • identity • auth     │
- │ authorization • HLS proxy      │
- └───────────────┬────────────────┘
-                 │ authorized HLS
-                 ▼
- ┌────────────────────────────────┐
- │       TV 49 East receiver      │
- │                                │
- │ catalog / handoff → HLS URL    │
- │              ↓                 │
- │         MediaItem              │
- │              ↓                 │
- │        ExoPlayer/Media3        │
- │              ↓                 │
- │          PlayerView            │
- │              ↓                 │
- │        TV video surface        │
- └────────────────────────────────┘
-
-                 ▲
-                 │ catalog metadata / authorized relay
-                 │
-        ┌────────┴─────────┐
-        │  stream-catalog  │
-        │ IPTV discovery   │
-        │ + creator data   │
-        └──────────────────┘
-```
-
-The existing FadCam server is a protected source system. TV 49 East integrates around it rather than replacing its server, routes, storage, recording behavior, or control endpoints.
-
-## Repository components
-
-### `app/`
-
-The FadCam Android application/source. FadCam remains the source publisher for FadCam-originated video.
-
-### `server-tap/`
-
-Go adapter for the existing FadCam HTTP/HLS source. It is a narrow integration boundary rather than a replacement server or remote-control interface.
-
-### `device-tunnel/`
-
-Authenticated device-to-gateway transport containing the device agent, gateway, and protocol layers.
-
-### `stream-gateway/`
-
-Secure public streaming boundary handling viewer authentication, authorization, stream resolution, private-upstream isolation, HLS manifest rewriting, and HLS resource proxying.
-
-Documented streaming routes include:
+The intended production data path is:
 
 ```text
-GET /stream/{id}/index.m3u8
-GET /stream/{id}/init.mp4
-GET /stream/{id}/segment/{name}
-GET /health
+                         LOCAL / AUTHORIZED NETWORK
+
+ FadCam device                                             IPTV / EPG sources
+ ┌─────────────────┐                                      ┌──────────────────┐
+ │ Existing FadCam │                                      │ Authorized/public│
+ │ HTTP/HLS server │                                      │ catalog sources  │
+ │     :8080       │                                      └────────┬─────────┘
+ └────────┬────────┘                                               │
+          │ HLS                                                     │ discovery
+          ▼                                                         ▼
+   ┌───────────────┐                                      ┌──────────────────┐
+   │  server-tap   │                                      │ stream-catalog / │
+   │ narrow source │                                      │ EPG / playlists  │
+   │    adapter    │                                      └────────┬─────────┘
+   └───────┬───────┘                                               │
+           │                                                        │ metadata
+           └──────────────────┐                     ┌───────────────┘
+                              ▼                     ▼
+                       ┌────────────────────────────────┐
+                       │       stream-gateway /         │
+                       │       media-router boundary    │
+                       │                                │
+                       │ auth → authorization → relay  │
+                       │ HLS manifest / init / segments │
+                       └───────────────┬────────────────┘
+                                       │ authorized HTTPS/HLS
+                                       ▼
+                         ┌─────────────────────────────┐
+                         │        TV 49 East client    │
+                         │                             │
+                         │ channel selection / handoff │
+                         │              ↓              │
+                         │       playback engine       │
+                         │              ↓              │
+                         │       video surface         │
+                         └──────────────┬──────────────┘
+                                        │
+                                        ▼
+                                  PHYSICAL TV
 ```
 
-### `stream-catalog/`
+### Important boundary
 
-Discovery and catalog service. Discovery is kept separate from authorization; public IPTV entries are not automatically authorized for redistribution.
+The existing FadCam server remains a **protected source system**. Integration is performed around it. The project must not silently replace its routes, storage, recording behavior, or control endpoints.
 
-### `tv-receiver/`
+A private FadCam address such as `192.168.100.5:8080` is **not a public TV playback endpoint**. A gateway deployed outside that LAN requires an authorized network path such as a VPN, secure tunnel, or controlled forwarding mechanism.
 
-Standalone Android TV application with Media3/ExoPlayer playback and a video surface.
+## Component map
 
-## TV playback chain
+### `components/player`
 
-The receiver's application-side playback path is:
+Pinned Android TV/IPTV player source. This is one of the receiver-side building blocks; it is not proof by itself that the final application is connected to the FadCam gateway.
+
+### `components/channel-engine`
+
+Pinned channel/scheduling engine source used as part of the TV platform integration.
+
+### `components/media-router`
+
+Pinned media-routing/proxy source. This is the media infrastructure component used for live routing and playback-server responsibilities.
+
+### `components/epg-engine`
+
+Pinned EPG source. EPG metadata is a discovery/program-guide concern and is kept separate from stream authorization.
+
+### `components/playlist-client`
+
+Pinned Android playlist/client source used for channel discovery and playback integration.
+
+### `components/tv-client`
+
+Pinned TV/IPTV client source used as another receiver-side component. Its presence does not automatically establish an end-to-end FadCam playback path; that connection must be demonstrated through the actual handoff and playback code.
+
+### `docs/FadCam.wiki`
+
+Documentation mirror for the upstream FadCam project. It is documentation, not the FadCam server implementation used by this repository.
+
+## FadCam integration
+
+The FadCam path is intentionally narrow:
 
 ```text
-MainActivity.onCreate()
-        ↓
-buildUi()
-        ↓
-PlayerView created
-        ↓
-channel / handoff selected
-        ↓
-startPlayback(url, channelName)
-        ↓
-ExoPlayer.Builder(this).build()
-        ↓
-playerView.setPlayer(player)
-        ↓
-MediaItem.fromUri(url)
-        ↓
-player.setMediaItem(...)
-        ↓
-player.prepare()
-        ↓
-player.play()
-        ↓
-Android video surface / TV display
+Existing FadCam HTTP/HLS server
+            ↓
+        server-tap
+            ↓
+ authorized transport / network path
+            ↓
+     streaming gateway
+            ↓
+ authorized HLS manifest
+            ↓
+       TV client
 ```
 
-The receiver also keeps the playback screen awake.
+The integration layer should consume FadCam's existing HTTP/HLS output rather than modifying FadCam's server implementation.
 
-## HLS URL provenance
+### What `server-tap` is responsible for
 
-The normal catalog path is server-side:
+- reaching the existing FadCam HTTP/HLS source from an authorized network position;
+- reading the source HLS manifest and media resources;
+- exposing a narrow integration boundary to the streaming layer;
+- avoiding remote-control mutations and unrelated FadCam server behavior.
+
+### What it must not do
+
+- replace the FadCam server;
+- expose the FadCam private LAN address to TV clients;
+- turn an unauthenticated source into a public relay;
+- provide unauthorized camera/control access.
+
+## Gateway and media routing
+
+The protected streaming boundary is responsible for separating **viewer access** from the private upstream source.
+
+Conceptually:
 
 ```text
-TV receiver
-    ↓
-CatalogClient
-    ↓
-configured HTTPS catalog
-    ↓
-server-side channel metadata
-    ↓
-relay=true entries only
-    ↓
-configured TV East origin
-    ↓
-Media3
+Viewer / TV client
+       ↓
+authentication
+       ↓
+stream authorization
+       ↓
+stream resolution
+       ↓
+private upstream
+       ↓
+HLS proxy / rewrite
+       ↓
+manifest + init + segments
 ```
 
-The receiver supports explicit FadCam and TV East handoffs, but production playback URLs must point at the authorized TV East/gateway surface, never at a private FadCam LAN address.
+For FadCam-originated playback, the gateway must hide the private upstream address and expose only an authorized client-facing stream.
 
-## Target end-to-end streaming path
+No transcoding is required for the initial relay path when the authorized HLS payload is already compatible with the receiver.
+
+## Channel discovery is not authorization
+
+The project deliberately separates discovery from redistribution rights.
 
 ```text
-FadCam HTTP server
-      ↓
-server-tap
-      ↓
-device-tunnel
-      ↓
-stream-gateway
-      ↓
-authorized HLS manifest
-      ↓
-TV 49 East receiver
-      ↓
-Media3 / ExoPlayer
-      ↓
-PlayerView
-      ↓
-TV video surface
-      ↓
-physical TV
+Public/catalog metadata
+        ↓
+ discovery
+        ↓
+ normalized channel data
+        ↓
+ authorization decision
+        ↓
+ playback URL
 ```
 
-A direct path such as `TV → http://192.168.x.x:8080/...` is not the production architecture because it bypasses the security boundary.
+A public IPTV playlist or EPG entry does **not** by itself authorize TV 49 East to redistribute the associated stream. External sources must be consumed directly where permitted, or explicitly onboarded as authorized relay sources.
 
-## Security boundaries
+## Receiver-side playback proof
 
-- Existing FadCam server remains unchanged.
-- Private FadCam addressing stays behind the tunnel/gateway boundary.
-- Viewers are authenticated before protected playback.
-- Requested streams are authorized before proxying.
-- HLS manifests and media resources remain behind the streaming boundary.
-- Catalog discovery is separate from redistribution authorization.
-- Client-facing catalog configuration uses HTTPS.
-- The TV receiver rejects non-HTTPS playback URLs.
-- Device identity and stream authorization are separate from catalog discovery.
-- Certified Media3 dependencies are required at build time.
+The final TV path must be traced through the actual receiver code. The repository should not be considered end-to-end complete merely because an ExoPlayer/Media3 dependency, a player component, or a TV APK exists.
 
-## Build structure
-
-Root Gradle modules:
+The required receiver chain is:
 
 ```text
-:app
-:tv-receiver
+TV application startup
+        ↓
+receiver activity / client initialization
+        ↓
+channel selection or server-side handoff
+        ↓
+authorized HTTPS playback URL
+        ↓
+MediaItem / media source
+        ↓
+Media3 / ExoPlayer playback
+        ↓
+PlayerView / Surface
+        ↓
+Android video renderer
+        ↓
+physical TV display
 ```
 
-Go modules:
+The critical forensic question is **URL provenance**:
 
 ```text
-server-tap/go.mod
-device-tunnel/go.mod
-stream-catalog/go.mod
-stream-gateway/go.mod
+GOOD:
+TV client → authorized TV 49 East/gateway URL → HLS → video surface
+
+BAD:
+TV client → http://192.168.x.x:8080/... → FadCam directly
+
+UNPROVEN:
+TV client → hard-coded or unrelated IPTV URL
 ```
 
-The TV receiver supports API 24+ and targets API 36 with Java 17.
+The repository must only claim the first path when the actual code and runtime evidence establish it.
 
-### Patched Media3
+## End-to-end certification gate
 
-The Android build requires the pinned patched Media3 checkout:
+Source-level presence is not physical-TV certification.
 
-```properties
-media3.patched.path=/tmp/media3-patched
-```
-
-The production workflow fetches the pinned commit and fails closed if the expected patched Media3 sources are absent or dependency substitution is not proven.
-
-## Production certification
-
-Source-level wiring is not the same as physical-TV runtime certification.
-
-The production runtime certification must prove:
+A real Gate 1 certification requires all of the following:
 
 ```text
-[01] FadCam produces live video
-[02] server-tap reads the live source
-[03] device-tunnel carries the authorized path
-[04] gateway authenticates the viewer
-[05] gateway authorizes the stream
-[06] gateway emits a valid HLS manifest
-[07] HLS init data and segments work through the gateway
-[08] TV receiver obtains the gateway URL
-[09] Media3 prepares the HLS source
-[10] ExoPlayer reaches a playing state
-[11] PlayerView is attached to the active player
-[12] decoded video reaches the Android TV surface
-[13] video is visibly rendered on the physical TV
+[01] FadCam is running and producing live video
+[02] FadCam HTTP/HLS source is reachable from the authorized integration position
+[03] server-tap successfully reads the live source
+[04] the authorized transport path carries the source to the gateway
+[05] gateway authenticates the viewer/client
+[06] gateway authorizes the requested FadCam stream
+[07] gateway returns a valid HLS manifest
+[08] HLS init data and media segments successfully pass through the gateway
+[09] TV client receives the gateway playback URL
+[10] Media3/ExoPlayer accepts and prepares the HLS source
+[11] ExoPlayer reaches a playing state
+[12] the active player is attached to the visible video surface
+[13] decoded video is visibly rendered on the physical TV
 ```
 
-Until those runtime checks are executed against a real TV/device, the accurate status is **source-level wired and production-build capable**, not physically certified.
+Only after step 13 has been demonstrated should the project documentation state that **FadCam → TV screen streaming is end-to-end operational**.
 
-## Repository map
+## Repository integration model
+
+The repository deliberately uses submodules instead of copying upstream projects into a single artificial source tree.
+
+`.gitmodules` currently defines:
+
+```text
+components/player          → opentvproject/opentv
+components/channel-engine  → ErsatzTV/legacy
+components/media-router    → Trendyzima/mediamtx
+components/epg-engine      → iptv-org/epg
+components/playlist-client → oxyroid/M3UAndroid
+components/tv-client       → Davidona/StreamVault-IPTV
+
+docs/FadCam.wiki           → anonfaded/FadCam.wiki
+```
+
+Each component retains its own upstream history, build assumptions, licensing, and attribution. Integration work belongs at the boundaries: APIs, stream URLs, playlists/EPG, authentication, health/observability, and deployment configuration.
+
+## Repository structure
 
 ```text
 .
-├── app/                    # FadCam Android source/application
-├── tv-receiver/            # Android TV playback application
-├── server-tap/             # FadCam HTTP/HLS adapter
-├── device-tunnel/          # authenticated device transport
-├── stream-gateway/         # secure HLS gateway
-├── stream-catalog/         # catalog/discovery service
-├── ARCHITECTURE.md         # system boundaries
-├── settings.gradle.kts     # Android modules + pinned Media3 build
-└── README.md               # project architecture, releases, certification
+├── components/
+│   ├── player/             # Android TV/IPTV player component
+│   ├── channel-engine/     # channel/scheduling component
+│   ├── media-router/       # live media routing/proxy component
+│   ├── epg-engine/         # EPG component
+│   ├── playlist-client/    # playlist/client component
+│   └── tv-client/          # TV/IPTV client component
+│
+├── docs/
+│   └── FadCam.wiki/        # FadCam documentation submodule
+│
+├── ARCHITECTURE.md         # non-negotiable architecture boundaries
+├── INTEGRATION.md          # component integration rules
+├── .gitmodules             # authoritative submodule definitions
+└── README.md               # project overview and certification criteria
 ```
 
-## Design rules
+## Development principles
 
-1. **Freeze FadCam's existing server.** Integration belongs around it.
-2. **Never make the TV client depend on the FadCam private LAN address.**
-3. **Separate discovery from authorization.**
-4. **Use the gateway as the protected playback boundary.**
-5. **Keep the TV receiver as a real Media3 playback application.**
-6. **Fail closed on missing secure transport or certified Media3 dependencies.**
-7. **Distinguish source evidence from runtime evidence.**
-8. **Do not claim physical-TV streaming until the live path has actually been exercised.**
+1. **Freeze the existing FadCam server.** Integration belongs around it.
+2. **Keep private FadCam addressing private.** Do not put LAN source URLs in the TV client.
+3. **Separate discovery from authorization.** Catalog metadata is not permission to relay.
+4. **Use an explicit protected streaming boundary.** Authentication and authorization occur before protected playback.
+5. **Treat upstream components as components.** Do not claim they are one native implementation when they are pinned submodules.
+6. **Trace the real receiver path.** A player dependency is not a playback proof.
+7. **Prefer HLS passthrough.** Avoid unnecessary transcoding for the initial authorized path.
+8. **Fail closed.** Missing authorization, unavailable upstreams, or invalid playback configuration must not become open relay behavior.
+9. **Separate source evidence from runtime evidence.** Code inspection can prove wiring; only a live device test can prove physical-screen playback.
+10. **Do not claim end-to-end streaming until it is actually demonstrated.**
 
 ## Documentation
 
-- `ARCHITECTURE.md` — platform boundaries and responsibilities
-- `server-tap/README.md` — FadCam source adapter
-- `server-tap/contract.md` — tap contract
-- `device-tunnel/README.md` — authenticated transport
-- `stream-gateway/README.md` — gateway implementation
-- `stream-gateway/API.md` — gateway streaming routes
-- `stream-catalog/README.md` — catalog implementation
+- [`ARCHITECTURE.md`](ARCHITECTURE.md) — platform boundaries and responsibilities
+- [`INTEGRATION.md`](INTEGRATION.md) — component integration model
+- [`.gitmodules`](.gitmodules) — pinned upstream component definitions
+- [`docs/FadCam.wiki`](docs/FadCam.wiki) — FadCam documentation submodule
 
 ## Responsible use
 
