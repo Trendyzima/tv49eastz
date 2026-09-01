@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/ecdsa"
+	"crypto/elliptic"
 	"crypto/sha256"
 	"crypto/tls"
 	"crypto/x509"
@@ -12,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -26,6 +28,7 @@ const (
 	publisherMaxBody     = 16 << 10
 	publisherMaxLifetime = 30 * time.Second
 	publisherClockSkew   = 30 * time.Second
+	publisherMaxSession  = 15 * time.Minute
 )
 
 type publisherControl struct {
@@ -88,8 +91,8 @@ func newPublisherControl(deviceID string, tlsCfg *tls.Config) (*publisherControl
 		return nil, fmt.Errorf("parse publisher public key: %w", err)
 	}
 	pub, ok := pubAny.(*ecdsa.PublicKey)
-	if !ok || pub.Curve == nil || pub.X == nil || pub.Y == nil {
-		return nil, errors.New("publisher public key must be EC")
+	if !ok || pub.Curve == nil || pub.X == nil || pub.Y == nil || pub.Curve.Params() == nil || pub.Curve.Params().Name != elliptic.P256().Params().Name {
+		return nil, errors.New("publisher public key must be ECDSA P-256")
 	}
 	apiKey := strings.TrimSpace(os.Getenv("GATEWAY_API_KEY"))
 	if apiKey == "" {
@@ -183,19 +186,19 @@ func (p *publisherControl) handleSession(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	var gateway publisherResponse
-	if err := json.Unmarshal(responseBody, &gateway); err != nil || gateway.Session == "" || gateway.Playlist == "" {
+	if err := json.Unmarshal(responseBody, &gateway); err != nil || gateway.Session == "" || gateway.Playlist == "" || gateway.ExpiresIn <= 0 || time.Duration(gateway.ExpiresIn)*time.Second > publisherMaxSession {
 		http.Error(w, "invalid gateway response", http.StatusBadGateway)
 		return
 	}
 	playlist, err := p.gatewayURL.Parse(gateway.Playlist)
-	if err != nil || playlist.Scheme != "https" || playlist.Host != p.gatewayURL.Host || playlist.User != nil || playlist.Fragment != "" {
+	if err != nil || playlist.Scheme != "https" || playlist.Host != p.gatewayURL.Host || playlist.User != nil || playlist.Fragment != "" || !strings.HasPrefix(playlist.Path, "/stream/") {
 		http.Error(w, "invalid gateway playlist", http.StatusBadGateway)
 		return
 	}
 	gateway.Playlist = playlist.String()
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
-	json.NewEncoder(w).Encode(gateway)
+	_ = json.NewEncoder(w).Encode(gateway)
 }
 
 func (p *publisherControl) handleRevoke(w http.ResponseWriter, r *http.Request) {
@@ -223,7 +226,7 @@ func (p *publisherControl) handleRevoke(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	defer response.Body.Close()
-	io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
+	_, _ = io.Copy(io.Discard, io.LimitReader(response.Body, 4096))
 	if response.StatusCode != http.StatusNoContent && response.StatusCode != http.StatusOK && response.StatusCode != http.StatusNotFound {
 		http.Error(w, "gateway rejected revoke", http.StatusBadGateway)
 		return
@@ -232,11 +235,26 @@ func (p *publisherControl) handleRevoke(w http.ResponseWriter, r *http.Request) 
 }
 
 func (p *publisherControl) serve(addr string) error {
+	if !isLoopbackListenAddress(addr) {
+		return fmt.Errorf("publisher control listener must be loopback, got %q", addr)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc(publisherControlPath, p.handleSession)
 	mux.HandleFunc(publisherControlPath+"/", p.handleRevoke)
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 3 * time.Second, IdleTimeout: 10 * time.Second}
 	return server.ListenAndServe()
+}
+
+func isLoopbackListenAddress(addr string) bool {
+	host, _, err := net.SplitHostPort(strings.TrimSpace(addr))
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func publisherPublicKeyFingerprint(raw []byte) string {
