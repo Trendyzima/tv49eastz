@@ -1,0 +1,8 @@
+# Public HTTPS edge for the TV 49 East FadCam catalog/relay.
+# Replace stream.example.com with a DNS name you control.
+# DNS A/AAAA must point to this public edge host, and the edge must be reachable on 80/443.
+
+stream.example.com {
+    encode gzip
+    reverse_proxy 127.0.0.1:8790
+}
