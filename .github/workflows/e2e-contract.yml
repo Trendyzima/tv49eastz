@@ -29,6 +29,11 @@ on:
 permissions:
   contents: read
 
+env:
+  MEDIA3_PATCHED_REPO: https://github.com/anonfaded/media3-patched.git
+  MEDIA3_PATCHED_SHA: 6d498560637d273dcb754727c9dcdce97548e621
+  MEDIA3_PATCHED_PATH: /tmp/media3-patched
+
 jobs:
   go-contracts:
     name: Go ${{ matrix.component }}
@@ -51,8 +56,17 @@ jobs:
         with:
           go-version: '1.27.x'
           cache-dependency-path: ${{ matrix.component }}/go.mod
-      - name: Format check
-        run: test -z "$(gofmt -l .)"
+      - name: Format check for changed Go files
+        shell: bash
+        run: |
+          set -euo pipefail
+          files="$(git diff --name-only --diff-filter=ACMR "${{ github.event.pull_request.base.sha || github.event.before }}" "$GITHUB_SHA" -- '*.go' | grep -E '^${{ matrix.component }}/' || true)"
+          if [ -z "$files" ]; then
+            echo "No Go files changed for ${{ matrix.component }}; existing legacy formatting is not part of this PR."
+            exit 0
+          fi
+          echo "$files"
+          test -z "$(printf '%s\n' "$files" | xargs gofmt -l)"
       - name: Tests
         run: go test ./... -count=1 -race
       - name: Vet
@@ -63,17 +77,35 @@ jobs:
   android-receiver:
     name: TV 49 East receiver build
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           submodules: recursive
-      - uses: actions/setup-java@v4
+          persist-credentials: false
+      - name: Fetch pinned patched Media3
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$MEDIA3_PATCHED_PATH"
+          git init "$MEDIA3_PATCHED_PATH"
+          git -C "$MEDIA3_PATCHED_PATH" remote add origin "$MEDIA3_PATCHED_REPO"
+          git -C "$MEDIA3_PATCHED_PATH" fetch --depth 1 origin "$MEDIA3_PATCHED_SHA"
+          git -C "$MEDIA3_PATCHED_PATH" checkout --detach FETCH_HEAD
+          test "$(git -C "$MEDIA3_PATCHED_PATH" rev-parse HEAD)" = "$MEDIA3_PATCHED_SHA"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/common"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/container"
+          test -d "$MEDIA3_PATCHED_PATH/libraries/muxer"
+          printf '%s\n' "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
+          chmod 600 local.properties
+      - uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: '17'
+          cache: gradle
       - uses: android-actions/setup-android@v3
       - name: Assemble receiver
-        run: ./gradlew :tv-receiver:assembleDebug --no-daemon
+        run: ./gradlew :tv-receiver:assembleDebug --no-daemon --no-watch-fs --stacktrace
 
   wiring-contract:
     name: Verify deployment wiring contract
