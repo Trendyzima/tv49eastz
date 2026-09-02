@@ -18,7 +18,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-/** Fetches the server-side unified catalog. Upstream IPTV URLs never enter the APK. */
+/** Fetches the TV East catalog, exposing only authorized FadCam-originated relays. */
 public final class CatalogClient {
     public interface Listener {
         void onSuccess(List<ChannelStore.Channel> channels);
@@ -37,7 +37,7 @@ public final class CatalogClient {
 
     public void load(Listener listener) {
         if (baseUrl.isEmpty()) {
-            listener.onError(new IllegalStateException("TV East catalog server is not configured"));
+            listener.onError(new IllegalStateException("FadCam catalog server is not configured"));
             return;
         }
         Request request = new Request.Builder()
@@ -72,13 +72,23 @@ public final class CatalogClient {
         for (int i = 0; i < channels.length(); i++) {
             JSONObject o = channels.getJSONObject(i);
             String id = o.optString("id", "");
-            String name = o.optString("name", "TV East Channel");
+            String name = o.optString("name", "FadCam Channel");
             String source = o.optString("source", "");
             String stream = o.optString("stream", "");
             boolean relay = o.optBoolean("relay", false);
+
+            // Deliberately reject generic IPTV / third-party channel entries at the receiver
+            // boundary. Only server-authorized FadCam-originated relay records are admitted.
+            if (!"fadcam".equalsIgnoreCase(source)) continue;
             if (id.isEmpty() || stream.isEmpty() || !relay) continue;
             if (!stream.startsWith("/v1/relay?id=")) continue;
-            result.add(new ChannelStore.Channel(id, name, source.equals("fadcam") ? "TV East • FadCam creator" : source, baseUrl + stream, false));
+
+            result.add(new ChannelStore.Channel(
+                    id,
+                    name,
+                    "FadCam creator",
+                    baseUrl + stream,
+                    false));
         }
         return result;
     }
