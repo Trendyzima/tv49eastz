@@ -2,6 +2,12 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- TV devices are often non-touch. Keep touchscreen optional so Play/Android TV
+         does not infer a touchscreen requirement from the UI/dependency graph. -->
+    <uses-feature
+        android:name="android.hardware.touchscreen"
+        android:required="false" />
+
     <permission
         android:name="com.tv49.com.permission.PUBLISH_FADCAM"
         android:protectionLevel="signature" />
