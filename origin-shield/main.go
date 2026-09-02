@@ -568,21 +568,33 @@ func rewriteHLSLine(line, channelID string) string {
 }
 
 func rewriteTagURIs(line, channelID string) string {
-	for {
-		start := strings.Index(line, "URI=\"")
-		if start < 0 {
-			return line
+	const marker = "URI=\""
+	var out strings.Builder
+	out.Grow(len(line) + 64)
+
+	cursor := 0
+	for cursor < len(line) {
+		relative := strings.Index(line[cursor:], marker)
+		if relative < 0 {
+			out.WriteString(line[cursor:])
+			break
 		}
-		valueStart := start + len("URI=\"")
-		rest := line[valueStart:]
-		end := strings.IndexByte(rest, '"')
-		if end < 0 {
-			return line
+
+		start := cursor + relative
+		valueStart := start + len(marker)
+		endRelative := strings.IndexByte(line[valueStart:], '"')
+		if endRelative < 0 {
+			out.WriteString(line[cursor:])
+			break
 		}
-		raw := rest[:end]
-		rewritten := shieldAssetURL(raw, channelID)
-		line = line[:valueStart] + rewritten + line[valueStart+end:]
+		end := valueStart + endRelative
+
+		out.WriteString(line[cursor:valueStart])
+		out.WriteString(shieldAssetURL(line[valueStart:end], channelID))
+		out.WriteByte('"')
+		cursor = end + 1
 	}
+	return out.String()
 }
 
 func shieldAssetURL(raw, channelID string) string {
