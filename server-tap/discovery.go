@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -24,9 +23,9 @@ const (
 )
 
 // discoverFadCamUpstream locates a FadCam HTTP server without requiring an IP
-// in the deployment environment. It first checks loopback, then local
-// interface addresses, then the directly-connected IPv4 subnets. A candidate
-// is accepted only when /live.m3u8 looks like a real HLS playlist, which keeps
+// in the deployment environment. It checks loopback first, then local
+// interface addresses, then directly-connected IPv4 subnets. A candidate is
+// accepted only when /live.m3u8 looks like a real HLS playlist, which keeps
 // unrelated services on port 8080 from being selected accidentally.
 func discoverFadCamUpstream(ctx context.Context) (*url.URL, error) {
 	port := envPositiveInt("TAP_DISCOVERY_PORT", defaultFadCamPort)
@@ -164,6 +163,8 @@ func discoveryCandidates(port, maxHosts int) ([]string, error) {
 		candidates = append(candidates, host)
 	}
 
+	// Loopback is intentionally first: normal FadCam/server-tap deployments
+	// run both components on the same production device.
 	add(net.ParseIP("127.0.0.1"))
 	interfaces, err := net.Interfaces()
 	if err != nil {
@@ -209,7 +210,7 @@ func discoveryCandidates(port, maxHosts int) ([]string, error) {
 		for _, b := range n.mask {
 			for bit := byte(0x80); bit != 0; bit >>= 1 {
 				if b&bit == 0 {
-					goto networkBitsDone
+				goto networkBitsDone
 				}
 				hostBits--
 			}
@@ -223,12 +224,11 @@ func discoveryCandidates(port, maxHosts int) ([]string, error) {
 			hostCount = maxHosts
 		}
 		base := binaryIPv4(networkIP)
-		for offset := 1; offset < hostCount-1 && len(candidates) < maxHosts+1; offset++ {
+		for offset := 1; offset < hostCount-1 && len(candidates) < maxHosts; offset++ {
 			add(uint32IPv4(base + uint32(offset)))
 		}
 	}
 
-	sort.Strings(candidates)
 	return candidates, nil
 }
 
