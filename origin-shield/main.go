@@ -20,16 +20,16 @@ import (
 )
 
 type Config struct {
-	Listen               string
-	CatalogURL           string
-	CatalogKey           string
-	TunnelURL            string
-	CacheBytes           int64
-	MaxObjectBytes       int64
-	SegmentTTL           time.Duration
-	OriginTimeout        time.Duration
-	MaxOriginConcurrent  int
-	TargetTTL            time.Duration
+	Listen              string
+	CatalogURL          string
+	CatalogKey          string
+	TunnelURL           string
+	CacheBytes          int64
+	MaxObjectBytes      int64
+	SegmentTTL          time.Duration
+	OriginTimeout       time.Duration
+	MaxOriginConcurrent int
+	TargetTTL           time.Duration
 }
 
 type originTarget struct {
@@ -132,19 +132,19 @@ type flight struct {
 }
 
 type shield struct {
-	cfg          Config
-	client       *http.Client
-	cache        *cache
-	mu           sync.Mutex
-	flights      map[string]*flight
-	targets      map[string]originTarget
-	targetExp    map[string]time.Time
-	originSem    chan struct{}
-	requests     uint64
-	hits         uint64
-	misses       uint64
-	originFetches uint64
-	originErrors uint64
+	cfg             Config
+	client          *http.Client
+	cache           *cache
+	mu              sync.Mutex
+	flights         map[string]*flight
+	targets         map[string]originTarget
+	targetExp       map[string]time.Time
+	originSem       chan struct{}
+	requests        uint64
+	hits            uint64
+	misses          uint64
+	originFetches   uint64
+	originErrors    uint64
 	targetRefreshes uint64
 }
 
@@ -228,18 +228,18 @@ func getenv(key, fallback string) string {
 
 func newShield(cfg Config) *shield {
 	transport := &http.Transport{
-		Proxy: http.ProxyFromEnvironment,
-		MaxIdleConns: 512,
+		Proxy:               http.ProxyFromEnvironment,
+		MaxIdleConns:        512,
 		MaxIdleConnsPerHost: 256,
-		IdleConnTimeout: 30 * time.Second,
-		DialContext: (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
+		IdleConnTimeout:     30 * time.Second,
+		DialContext:         (&net.Dialer{Timeout: 5 * time.Second, KeepAlive: 30 * time.Second}).DialContext,
 	}
 	return &shield{
-		cfg: cfg,
-		client: &http.Client{Transport: transport},
-		cache: newCache(cfg.CacheBytes),
-		flights: make(map[string]*flight),
-		targets: make(map[string]originTarget),
+		cfg:       cfg,
+		client:    &http.Client{Transport: transport},
+		cache:     newCache(cfg.CacheBytes),
+		flights:   make(map[string]*flight),
+		targets:   make(map[string]originTarget),
 		targetExp: make(map[string]time.Time),
 		originSem: make(chan struct{}, maxInt(cfg.MaxOriginConcurrent, 1)),
 	}
@@ -617,9 +617,9 @@ func (s *shield) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	_ = json.NewEncoder(w).Encode(map[string]any{
-		"ok": true,
-		"cache_bytes": bytes,
-		"cache_objects": objects,
+		"ok":             true,
+		"cache_bytes":    bytes,
+		"cache_objects":  objects,
 		"origin_fetches": atomic.LoadUint64(&s.originFetches),
 	})
 }
