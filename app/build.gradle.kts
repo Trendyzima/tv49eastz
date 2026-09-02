@@ -29,11 +29,12 @@ android {
 
     defaultConfig {
         applicationId = "com.fadcam"
-        minSdk = 24
+        compileSdk = 36
         targetSdk = 36
+        minSdk = 24
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionCode = 52
-        versionName = "4.0.0"
+        versionCode = 53
+        versionName = "4.0.1"
         vectorDrawables.useSupportLibrary = true
 
         // Fix 16KB native library alignment for Android 15
