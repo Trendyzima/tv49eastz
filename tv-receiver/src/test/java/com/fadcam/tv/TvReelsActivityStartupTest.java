@@ -7,9 +7,8 @@ import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-import org.robolectric.android.controller.ActivityController;
-import org.robolectric.shadows.ShadowLooper;
 import org.robolectric.annotation.LooperMode;
+import org.robolectric.android.controller.ActivityController;
 
 /** Regression test for launcher-time Activity construction failures. */
 @RunWith(RobolectricTestRunner.class)
@@ -26,7 +25,5 @@ public class TvReelsActivityStartupTest {
         assertNotNull(activity.findViewById(android.R.id.content));
 
         controller.pause().stop().destroy();
-        ShadowLooper shadowLooper = org.robolectric.Shadows.shadowOf(android.os.Looper.getMainLooper());
-        shadowLooper.reset();
     }
 }
