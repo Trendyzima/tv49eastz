@@ -1,86 +1,148 @@
-# Hardened device-to-gateway tunnel
+# Hardened FadCam → TV 49 East production tunnel
 
-This component creates a **reverse, outbound-only mTLS TCP tunnel** from the device-side server tap to a gateway. The existing FadCam HTTP server is not changed and its local port `8080` is never exposed by this component.
+This component creates an **outbound-only TLS 1.3 + mTLS tunnel** from the FadCam server-room `server-tap` to the public tunnel broker. The FadCam HTTP server is not modified and its private LAN address is never published.
 
-## Gate 1 local topology
+## Production data path
 
 ```text
-FadCam local HTTP server
-       |
-       | existing local/LAN boundary
-       | TAP_UPSTREAM=http://<fadcam-local-ip>:8080
-       v
+FadCam production server :8080
+        |
+        | local/LAN GET only
+        v
 server-tap 127.0.0.1:8788
-       |
-       | device-tunnel agent
-       | outbound TLS 1.3 + client certificate
-       v
-TUNNEL_GATEWAY:<9443>
-       |
-       | authenticated device tunnel
-       v
-TUNNEL_PROXY_LISTEN=127.0.0.1:8785
-       |
-       v
-stream-gateway
-       |
-       v
-authorized Android clients
+        |
+        | outbound mTLS tunnel
+        v
+public tunnel broker :9443
+        |
+        | authenticated /device/<id>/...
+        v
+TUNNEL_PROXY_LISTEN 127.0.0.1:8785
+        |
+        v
+TV 49 East FadCam catalog + relay :8790
+        |
+        | public HTTPS hostname
+        v
+TV 49 East Android consumers worldwide
 ```
 
-**No VPS is required for the FadCam endpoint.** The FadCam server remains on its existing local IP/port. The tunnel agent connects only to `server-tap`; it never publishes the FadCam address.
+## Why the local IP is not converted
 
-The existing aggregated IPTV catalog is a separate source path and does not need to traverse this FadCam tunnel.
+A server-room address such as `192.168.x.x`, `10.x.x.x`, or `172.16-31.x.x` is private addressing. DNS cannot turn it into a public Internet address. The production design therefore uses an **outbound connection** from the server room to a public edge. Consumers connect to the public hostname; the edge sends requests back through the established tunnel.
 
-## Security properties
+This also avoids exposing the FadCam `:8080` listener or requiring inbound router port forwarding.
 
-- TLS 1.3 minimum.
-- Mutual certificate authentication; both peers require a certificate issued by the configured CA.
-- Device initiates the connection. No inbound connection to the device is required.
-- Gateway's forwarded HTTP listener binds to `127.0.0.1` by default and is not a public media proxy.
-- The tunnel has a fixed destination: the local `server-tap` address. It does not accept a user-supplied host or port.
-- Each tunnel connection serves one TCP request and is discarded afterward.
-- A small bounded idle pool prevents unbounded tunnel creation.
-- Handshake and local-connect timeouts limit resource exhaustion.
-- The protocol is deliberately tiny: `TV49-TUNNEL/1`, `OK`, `START`, then raw bytes.
+## Origin configuration
 
-## Gate 1 configuration
-
-The device side must use the same listener address as `server-tap`:
+On the server-room host:
 
 ```text
 TAP_LISTEN=127.0.0.1:8788
-TUNNEL_LOCAL_ADDR=127.0.0.1:8788
-```
-
-Point `TAP_UPSTREAM` at the **actual FadCam local HTTP server**, for example:
-
-```text
 TAP_UPSTREAM=http://<fadcam-local-ip>:8080
+
+TUNNEL_GATEWAY=<public-tunnel-host>:9443
+TUNNEL_LOCAL_ADDR=127.0.0.1:8788
+TUNNEL_DEVICE_ID=<enrolled-device-id>
+TUNNEL_CA=/secure/tunnel/ca.pem
+TUNNEL_CERT=/secure/tunnel/device.pem
+TUNNEL_KEY=/secure/tunnel/device-key.pem
 ```
 
-On the gateway host:
+The tunnel agent only dials `TUNNEL_LOCAL_ADDR`; it never accepts an arbitrary destination from a consumer.
+
+## Tunnel broker configuration
+
+On the public edge host:
 
 ```text
 TUNNEL_LISTEN=:9443
 TUNNEL_PROXY_LISTEN=127.0.0.1:8785
+DEVICE_REGISTRY_PATH=/secure/devices.json
+TUNNEL_CA=/secure/tunnel/ca.pem
+TUNNEL_CERT=/secure/tunnel/gateway.pem
+TUNNEL_KEY=/secure/tunnel/gateway-key.pem
 ```
 
-Configure `stream-gateway` to use:
+The broker verifies the device certificate, device identity, enrollment state, and channel authorization before forwarding a request.
+
+## TV 49 East relay configuration
+
+On the same public edge host (or another host that can reach `127.0.0.1:8785`):
 
 ```text
+CATALOG_LISTEN=127.0.0.1:8790
 TUNNEL_PROXY_BASE_URL=http://127.0.0.1:8785
-TAP_UPSTREAM=http://127.0.0.1:8785
+CREATOR_REGISTRY_FILE=/secure/tv49east/creators.json
+CREATOR_PUBLISH_KEY=<strong-random-secret>
+RELAY_SIGNING_SECRET=<strong-random-secret>
 ```
 
-The stream gateway must never be configured with the FadCam LAN URL. It consumes the gateway's local tunnel proxy instead.
+The catalog now contains **FadCam channels only**. For a FadCam channel, the registry stores a logical `device_id` and fixed `/live.m3u8` path rather than a public origin URL. The relay obtains the playlist and HLS resources through the device tunnel and rewrites them to short-lived signed public relay URLs.
 
-## Certificates
+## Publisher registration
 
-Use a private CA dedicated to this tunnel. Issue separate certificates for each device and the gateway. Keep private keys outside the repository. Certificate rotation should be handled by deployment automation; never commit private keys.
+A trusted production publisher registers a channel at the catalog:
 
-The tunnel is transport security only. Authentication and authorization of end users remain the responsibility of `stream-gateway`.
+```http
+POST /v1/creators/channels
+Authorization: Bearer <CREATOR_PUBLISH_KEY>
+Content-Type: application/json
+```
 
-## Operational rule
+```json
+{
+  "id": "creator-001",
+  "name": "Creator Live",
+  "owner": "Creator",
+  "country": "KE",
+  "language": "en",
+  "source": "fadcam",
+  "device_id": "fadcam-production-001",
+  "stream_path": "/live.m3u8"
+}
+```
 
-The FadCam server remains untouched. The only upstream endpoint opened by the agent is the local server-tap listener.
+The `device_id` must already be enrolled in the tunnel broker and its registry must contain `creator-001: true` in that device's allowed channel map.
+
+## Consumer path
+
+The Android receiver fetches `/v1/catalog`, selects a FadCam channel, and requests:
+
+```text
+GET /v1/relay?id=creator-001
+```
+
+The relay fetches:
+
+```text
+/device/fadcam-production-001/live.m3u8
+```
+
+through the authenticated tunnel. The playlist's segment URLs are rewritten to `/v1/relay-asset` with an HMAC capability that expires after five minutes. No private FadCam IP is sent to the Android device.
+
+## Gate 1 acceptance test
+
+Run these checks in order:
+
+```text
+FadCam /live.m3u8
+        ↓
+server-tap /live.m3u8
+        ↓
+tunnel broker /device/<id>/live.m3u8
+        ↓
+TV 49 East /v1/relay?id=<channel>
+        ↓
+rewritten /v1/relay-asset?... 
+        ↓
+TV 49 East Android player
+```
+
+The final test must be performed from a different Internet connection from the server room. A successful LAN-only test does not prove worldwide reachability.
+
+## Public edge options
+
+The public catalog/relay needs a public HTTPS hostname. If the edge host has a public IP, DNS plus a reverse proxy can publish it. Caddy can automatically obtain and renew publicly trusted HTTPS certificates for a configured hostname. If the server room itself is behind CGNAT or has no inbound connectivity, an outbound application tunnel such as Cloudflare Tunnel can publish a local service without opening inbound ports.
+
+The public edge is the Internet rendezvous point; the FadCam server remains local.
