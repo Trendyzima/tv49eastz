@@ -3,15 +3,75 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-        Keep the release APK's permission surface minimal for sideloading and
-        Play Protect. FadCam has no code path in this repository that requires
-        either broad all-files access or battery-optimization exemption.
-        Scoped storage / MediaStore and normal foreground operation remain.
+        Production release hardening.
+
+        The main manifest contains legacy/sensitive capabilities used by some
+        development variants. The production FadCam release does not need
+        broad all-files access or battery-optimization exemption, so remove
+        both from the merged release manifest.
+
+        The main manifest also contains legacy alternate launcher aliases
+        (Camera, Notes, Calculator, Weather, security-themed aliases, etc.).
+        They are not part of the production identity of FadCam and are removed
+        from the release artifact to avoid misleading launcher identities.
     -->
+
     <uses-permission
         android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
         tools:node="remove" />
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:node="remove" />
+
+    <activity-alias
+        android:name=".MainActivity.AlternativeIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.FadedIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.PalestineIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.PakistanIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.FadSecLabIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.NooristicIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.BatIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.RedBinaryIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.NotesIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.CalculatorIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.ClockIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.WeatherIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.FootballIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.CarIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.JetIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.MinimalIcon"
+        tools:node="remove" />
+    <activity-alias
+        android:name=".MainActivity.BlackIcon"
         tools:node="remove" />
 </manifest>
