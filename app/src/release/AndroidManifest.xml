@@ -14,6 +14,12 @@
         (Camera, Notes, Calculator, Weather, security-themed aliases, etc.).
         They are not part of the production identity of FadCam and are removed
         from the release artifact to avoid misleading launcher identities.
+
+        Google Play Protect can block internet-sideloaded applications that
+        expose sensitive Accessibility capabilities. FadCam's legacy screenshot
+        accessibility service is not required by the production camera/recording
+        path, so keep that service out of the release artifact while leaving the
+        protected main application source unchanged.
     -->
 
     <uses-permission
@@ -21,6 +27,10 @@
         tools:node="remove" />
     <uses-permission
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        tools:node="remove" />
+
+    <service
+        android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
         tools:node="remove" />
 
     <activity-alias
