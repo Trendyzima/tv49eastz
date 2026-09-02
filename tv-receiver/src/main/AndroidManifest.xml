@@ -14,7 +14,6 @@
         android:banner="@drawable/tv49east_banner"
         android:usesCleartextTraffic="true">
 
-        <!-- Pure platform launcher: no AppCompat, Media3, IPTV or network startup. -->
         <activity
             android:name="com.fadcam.tv.HomeActivity"
             android:exported="true"
@@ -29,8 +28,16 @@
             </intent-filter>
         </activity>
 
-        <!-- Live TV intentionally uses the platform theme. This screen is crash-isolated
-             and must not depend on AppCompatDelegate/theme initialization. -->
+        <activity
+            android:name="com.fadcam.tv.TvReelsActivityHardened"
+            android:exported="false"
+            android:theme="@style/Theme.TV49East.Platform"
+            android:screenOrientation="unspecified"
+            android:resizeableActivity="true"
+            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
+            android:windowSoftInputMode="adjustResize" />
+
+        <!-- Kept for existing deep links/backward compatibility. -->
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
             android:exported="true"
@@ -51,8 +58,6 @@
             android:exported="false"
             android:theme="@style/Theme.TV49East" />
 
-        <!-- Plain Activity bridge also gets the platform theme; it immediately
-             validates the signed handoff before entering AppCompat MainActivity. -->
         <activity
             android:name="com.fadcam.tv.FadCamHandoffActivity"
             android:exported="true"
