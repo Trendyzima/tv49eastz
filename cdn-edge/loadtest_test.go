@@ -22,7 +22,12 @@ func TestEdgeCollapsesManyConcurrentMisses(t *testing.T) {
 	defer origin.Close()
 
 	u, _ := url.Parse(origin.URL)
-	e := &Edge{cfg: Config{Origin: u, MaxCacheBytes: 1 << 20, MaxObjectBytes: 1 << 20, SegmentTTL: time.Minute, OriginTimeout: time.Second}, cache: newLRU(1 << 20), client: origin.Client()}
+	e := &Edge{
+		cfg:        Config{Origin: u, MaxCacheBytes: 1 << 20, MaxObjectBytes: 1 << 20, SegmentTTL: time.Minute, OriginTimeout: time.Second, MaxOriginConcurrent: 8},
+		cache:      newLRU(1 << 20),
+		originSem:  make(chan struct{}, 8),
+		client:     origin.Client(),
+	}
 
 	const viewers = 500
 	var wg sync.WaitGroup
