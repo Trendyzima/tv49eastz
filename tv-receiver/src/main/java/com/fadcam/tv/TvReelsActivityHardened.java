@@ -4,6 +4,7 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
+import android.graphics.SurfaceTexture;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -12,6 +13,7 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
+import android.view.TextureView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
@@ -25,14 +27,14 @@ import androidx.media3.common.PlaybackException;
 import androidx.media3.common.Player;
 import androidx.media3.datasource.DefaultHttpDataSource;
 import androidx.media3.exoplayer.DefaultLoadControl;
+import androidx.media3.exoplayer.DefaultRenderersFactory;
 import androidx.media3.exoplayer.ExoPlayer;
 import androidx.media3.exoplayer.hls.HlsMediaSource;
-import androidx.media3.ui.AspectRatioFrameLayout;
-import androidx.media3.ui.PlayerView;
 import androidx.recyclerview.widget.RecyclerView;
 import androidx.viewpager2.widget.ViewPager2;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
@@ -53,7 +55,8 @@ public final class TvReelsActivityHardened extends Activity {
     private ReelAdapter adapter;
     private IptvFeedClientV2 feedClient;
     private ExoPlayer player;
-    private PlayerView activeView;
+    private TextureView activeTexture;
+    private FrameLayout activeVideoContainer;
     private TextView status;
     private TextView feedMessage;
     private TextView retry;
@@ -95,13 +98,14 @@ public final class TvReelsActivityHardened extends Activity {
     }
 
     @Override protected void onPause() {
-        if (player != null) try { player.pause(); } catch (Throwable ignored) { }
+        releasePlayer();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
         destroyed = true;
         main.removeCallbacksAndMessages(null);
+        if (feedClient != null) feedClient.cancel();
         releasePlayer();
         super.onDestroy();
     }
@@ -211,10 +215,8 @@ public final class TvReelsActivityHardened extends Activity {
         addTitle(panel, "PLAYER", "Safe playback controls");
         addButton(panel, "▶  Play selected", v -> playPosition(pager.getCurrentItem()));
         addButton(panel, "↻  Retry selected", v -> retryCurrent());
-        addButton(panel, "🔇  Mute / unmute", v -> toggleMute());
-        addButton(panel, "□  Fit video to screen", v -> {
-            if (activeView != null) activeView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
-        });
+        addButton(panel, "Mute / unmute", v -> toggleMute());
+        addButton(panel, "□  Fit video to screen", v -> fitActiveVideo());
         return panel;
     }
 
@@ -222,11 +224,9 @@ public final class TvReelsActivityHardened extends Activity {
         LinearLayout p = new LinearLayout(this);
         p.setOrientation(LinearLayout.VERTICAL);
         p.setPadding(dp(16), dp(16), dp(16), dp(16));
-        p.setBackground(rounded(Color.argb(247, PANEL_COMPONENT[0], PANEL_COMPONENT[1], PANEL_COMPONENT[2]), 22));
+        p.setBackground(rounded(PANEL, 22));
         return p;
     }
-
-    private static final int[] PANEL_COMPONENT = {24, 19, 34};
 
     private void addTitle(LinearLayout panel, String title, String subtitle) {
         TextView a = text(title, 17, WHITE, true);
@@ -316,7 +316,7 @@ public final class TvReelsActivityHardened extends Activity {
         if (destroyed) return;
         loading = false;
         if (batch != null) for (IptvReel r : batch) addIfValid(r);
-        adapter.notifyDataSetChanged();
+        if (adapter != null) adapter.notifyDataSetChanged();
         if (visible.isEmpty() && initial) feedError();
         else if (!visible.isEmpty()) {
             hideFeedState();
@@ -326,12 +326,13 @@ public final class TvReelsActivityHardened extends Activity {
 
     private void addIfValid(IptvReel reel) {
         if (reel == null || reel.url == null || !IptvFeedClientV2.isPlayableHls(reel.url)) return;
-        for (IptvReel old : reels) if (old != null && reel.url.trim().equals(old.url)) return;
+        String normalized = reel.url.trim();
+        for (IptvReel old : reels) if (old != null && old.url != null && normalized.equals(old.url.trim())) return;
         reels.add(reel);
         visible.add(reel);
     }
 
-    /** Explicit tap only. Media3 owns stream I/O; the UI never downloads HLS bytes itself. */
+    /** Only the selected page gets a video surface. No Media3 UI surface is created while browsing the catalog. */
     private void playPosition(int position) {
         if (destroyed || position < 0 || position >= visible.size()) return;
         IptvReel item = visible.get(position);
@@ -347,7 +348,10 @@ public final class TvReelsActivityHardened extends Activity {
         releasePlayer();
         try {
             Uri uri = Uri.parse(item.url.trim());
-            if (uri.getHost() == null || uri.getScheme() == null) throw new IllegalArgumentException("Bad URI");
+            String scheme = uri.getScheme();
+            if (uri.getHost() == null || scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+                throw new IllegalArgumentException("Bad HTTP URI");
+            }
 
             DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
                     .setAllowCrossProtocolRedirects(true)
@@ -355,7 +359,7 @@ public final class TvReelsActivityHardened extends Activity {
                     .setReadTimeoutMs(15000)
                     .setUserAgent(nonEmpty(item.userAgent, "TV49East/4.0 Android"));
             if (item.referrer != null && !item.referrer.trim().isEmpty()) {
-                java.util.HashMap<String,String> headers = new java.util.HashMap<>();
+                HashMap<String, String> headers = new HashMap<>();
                 headers.put("Referer", item.referrer.trim());
                 http.setDefaultRequestProperties(headers);
             }
@@ -373,28 +377,45 @@ public final class TvReelsActivityHardened extends Activity {
             DefaultLoadControl control = new DefaultLoadControl.Builder()
                     .setBufferDurationsMs(12000, 30000, 1500, 3000)
                     .build();
-            ExoPlayer next = new ExoPlayer.Builder(this).setLoadControl(control).build();
+            DefaultRenderersFactory renderers = new DefaultRenderersFactory(this)
+                    .setEnableDecoderFallback(true);
+            ExoPlayer next = new ExoPlayer.Builder(this)
+                    .setLoadControl(control)
+                    .setRenderersFactory(renderers)
+                    .build();
             next.setVolume(muted ? 0f : 1f);
             next.addListener(new Player.Listener() {
                 @Override public void onPlayerError(@NonNull PlaybackException error) {
                     if (destroyed || next != player) return;
                     if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-                        try { next.seekToDefaultPosition(); next.prepare(); next.play(); return; }
-                        catch (Throwable ignored) { }
+                        try {
+                            next.seekToDefaultPosition();
+                            next.prepare();
+                            next.play();
+                            return;
+                        } catch (Throwable ignored) { }
                     }
                     channelError("Channel unavailable • swipe to continue");
                     detach(holder);
+                    if (player == next) releasePlayer();
                 }
             });
 
+            TextureView texture = new TextureView(this);
+            texture.setOpaque(false);
+            texture.setBackgroundColor(Color.BLACK);
+            holder.videoContainer.removeAllViews();
+            holder.videoContainer.addView(texture, new FrameLayout.LayoutParams(-1, -1));
+
             player = next;
             activePosition = position;
-            activeView = holder.playerView;
-            activeView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
-            activeView.setPlayer(next);
+            activeTexture = texture;
+            activeVideoContainer = holder.videoContainer;
+            next.setVideoTextureView(texture);
             next.setMediaSource(new HlsMediaSource.Factory(http).createMediaSource(media));
             next.prepare();
             next.play();
+            holder.play.setVisibility(View.GONE);
             setStatus("● LIVE • " + safe(item.title));
         } catch (Throwable t) {
             detach(holder);
@@ -417,19 +438,36 @@ public final class TvReelsActivityHardened extends Activity {
         toast(muted ? "Muted" : "Sound on");
     }
 
+    private void fitActiveVideo() {
+        if (activeTexture != null) activeTexture.setScaleX(1f);
+        if (activeTexture != null) activeTexture.setScaleY(1f);
+        toast("Video fitted to screen");
+    }
+
     private void detach(ReelAdapter.Holder holder) {
-        try { holder.playerView.setPlayer(null); } catch (Throwable ignored) { }
+        if (holder == null) return;
+        try {
+            if (holder.videoContainer != null) holder.videoContainer.removeAllViews();
+            if (holder.play != null) holder.play.setVisibility(View.VISIBLE);
+        } catch (Throwable ignored) { }
     }
 
     private void releasePlayer() {
-        if (activeView != null) try { activeView.setPlayer(null); } catch (Throwable ignored) { }
-        activeView = null;
-        if (player != null) {
-            try { player.stop(); } catch (Throwable ignored) { }
-            try { player.release(); } catch (Throwable ignored) { }
+        TextureView texture = activeTexture;
+        activeTexture = null;
+        activeVideoContainer = null;
+        if (texture != null) {
+            try { texture.setSurfaceTextureListener(null); } catch (Throwable ignored) { }
         }
-        player = null;
+        if (player != null) {
+            ExoPlayer old = player;
+            player = null;
+            try { old.clearVideoSurface(); } catch (Throwable ignored) { }
+            try { old.stop(); } catch (Throwable ignored) { }
+            try { old.release(); } catch (Throwable ignored) { }
+        }
         activePosition = RecyclerView.NO_POSITION;
+        if (adapter != null) adapter.notifyDataSetChanged();
     }
 
     @Nullable private ReelAdapter.Holder findHolder(int position) {
@@ -454,13 +492,19 @@ public final class TvReelsActivityHardened extends Activity {
     private void setStatus(String value) { if (status != null) status.setText(value); }
 
     private void showFeedState(String value, boolean canRetry) {
-        if (feedMessage == null) return;
+        if (feedMessage == null || retry == null) return;
         feedMessage.setText(value);
         retry.setVisibility(canRetry ? View.VISIBLE : View.GONE);
-        ((View) feedMessage.getParent()).setVisibility(View.VISIBLE);
+        View parent = (View) feedMessage.getParent();
+        if (parent != null) parent.setVisibility(View.VISIBLE);
     }
 
-    private void hideFeedState() { if (feedMessage != null) ((View) feedMessage.getParent()).setVisibility(View.GONE); }
+    private void hideFeedState() {
+        if (feedMessage != null) {
+            View parent = (View) feedMessage.getParent();
+            if (parent != null) parent.setVisibility(View.GONE);
+        }
+    }
 
     private void showSafeFallback() {
         LinearLayout root = new LinearLayout(this);
@@ -494,11 +538,10 @@ public final class TvReelsActivityHardened extends Activity {
         @NonNull @Override public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
             FrameLayout root = new FrameLayout(parent.getContext());
             root.setBackgroundColor(Color.BLACK);
-            PlayerView pv = new PlayerView(parent.getContext());
-            pv.setUseController(false);
-            pv.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT);
-            pv.setBackgroundColor(Color.BLACK);
-            root.addView(pv, new FrameLayout.LayoutParams(-1, -1));
+
+            FrameLayout video = new FrameLayout(parent.getContext());
+            video.setBackgroundColor(Color.BLACK);
+            root.addView(video, new FrameLayout.LayoutParams(-1, -1));
 
             LinearLayout overlay = new LinearLayout(parent.getContext());
             overlay.setOrientation(LinearLayout.VERTICAL);
@@ -517,13 +560,13 @@ public final class TvReelsActivityHardened extends Activity {
             play.setGravity(Gravity.CENTER);
             play.setBackground(rounded(Color.argb(175, 43, 33, 59), 40));
             root.addView(play, new FrameLayout.LayoutParams(dp(70), dp(70), Gravity.CENTER));
-            return new Holder(root, pv, title, play);
+            return new Holder(root, video, title, play);
         }
 
         @Override public void onBindViewHolder(@NonNull Holder holder, int position) {
             IptvReel item = visible.get(position);
             holder.title.setText(safe(item.title).isEmpty() ? safe(item.channel) : item.title);
-            holder.play.setVisibility(View.VISIBLE);
+            holder.play.setVisibility(activePosition == position && player != null ? View.GONE : View.VISIBLE);
             holder.play.setOnClickListener(v -> {
                 int p = holder.getBindingAdapterPosition();
                 if (p != RecyclerView.NO_POSITION) playPosition(p);
@@ -535,6 +578,7 @@ public final class TvReelsActivityHardened extends Activity {
         }
 
         @Override public void onViewRecycled(@NonNull Holder holder) {
+            if (activePosition == holder.getBindingAdapterPosition()) releasePlayer();
             detach(holder);
             super.onViewRecycled(holder);
         }
@@ -542,12 +586,12 @@ public final class TvReelsActivityHardened extends Activity {
         @Override public int getItemCount() { return visible.size(); }
 
         final class Holder extends RecyclerView.ViewHolder {
-            final PlayerView playerView;
+            final FrameLayout videoContainer;
             final TextView title;
             final TextView play;
-            Holder(View root, PlayerView playerView, TextView title, TextView play) {
+            Holder(View root, FrameLayout videoContainer, TextView title, TextView play) {
                 super(root);
-                this.playerView = playerView;
+                this.videoContainer = videoContainer;
                 this.title = title;
                 this.play = play;
             }
