@@ -14,18 +14,27 @@
         android:banner="@drawable/tv49east_banner"
         android:usesCleartextTraffic="true">
 
+        <!-- Minimal platform Activity is the launcher. It performs no network,
+             catalog or Media3 initialization during process startup. -->
         <activity
-            android:name="com.fadcam.tv.TvReelsActivity"
+            android:name="com.fadcam.tv.HomeActivity"
             android:exported="true"
             android:screenOrientation="unspecified"
             android:resizeableActivity="true"
-            android:windowSoftInputMode="adjustResize"
-            android:intentMatchingFlags="enforceIntentFilter">
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
                 <category android:name="android.intent.category.LEANBACK_LAUNCHER" />
             </intent-filter>
+        </activity>
+
+        <activity
+            android:name="com.fadcam.tv.TvReelsActivity"
+            android:exported="true"
+            android:screenOrientation="unspecified"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
