@@ -2,8 +2,8 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"container/list"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -397,55 +397,4 @@ func allowedMediaPath(p string) bool {
 	}
 	lower := strings.ToLower(path.Clean(p))
 	return strings.HasSuffix(lower, ".m3u8") || strings.HasSuffix(lower, ".m4s") || strings.HasSuffix(lower, ".mp4") || strings.HasSuffix(lower, ".ts")
-}
-
-func writeCached(w http.ResponseWriter, e cacheEntry) {
-	w.Header().Set("Content-Type", mediaContentType(e.contentType, e.key))
-	w.Header().Set("Cache-Control", "public, max-age=30, immutable")
-	w.Header().Set("X-CDN-Edge-Cache", "HIT")
-	w.Header().Set("Content-Length", strconv.Itoa(len(e.body)))
-	_, _ = w.Write(e.body)
-}
-
-func playlistContentType(ct string) string {
-	if ct != "" {
-		return ct
-	}
-	return "application/vnd.apple.mpegurl"
-}
-
-func mediaContentType(ct, p string) string {
-	if ct != "" {
-		return ct
-	}
-	p = strings.ToLower(p)
-	switch {
-	case strings.HasSuffix(p, ".m4s"):
-		return "video/iso.segment"
-	case strings.HasSuffix(p, ".mp4"):
-		return "video/mp4"
-	case strings.HasSuffix(p, ".ts"):
-		return "video/mp2t"
-	default:
-		return "application/octet-stream"
-	}
-}
-
-func joinPath(base, p string) string {
-	return path.Join("/", strings.Trim(base, "/"), strings.Trim(p, "/"))
-}
-
-func positiveInt64(s string) (int64, error) {
-	n, err := strconv.ParseInt(strings.TrimSpace(s), 10, 64)
-	if err != nil || n <= 0 {
-		return 0, errors.New("invalid positive integer")
-	}
-	return n, nil
-}
-
-func getenv(k, d string) string {
-	if v := strings.TrimSpace(os.Getenv(k)); v != "" {
-		return v
-	}
-	return d
 }
