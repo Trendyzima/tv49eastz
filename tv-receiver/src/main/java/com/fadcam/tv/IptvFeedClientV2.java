@@ -24,7 +24,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-/** Bounded, incremental IPTV catalog. Never loads the whole catalog into memory. */
+/** Bounded, incremental IPTV catalog with lifecycle-safe cancellation. */
 public final class IptvFeedClientV2 {
     public interface Listener { void onSuccess(List<IptvReel> reels); void onError(Exception error); }
 
@@ -52,8 +52,11 @@ public final class IptvFeedClientV2 {
             .build();
     private final ArrayList<String> sources = new ArrayList<>();
     private final Set<String> seenUrls = new HashSet<>();
+    private volatile Call activeCall;
+    private volatile boolean loading;
+    private volatile boolean cancelled;
+    private long generation;
     private int sourceIndex;
-    private boolean loading;
 
     public IptvFeedClientV2(Context context) {
         prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
@@ -66,73 +69,106 @@ public final class IptvFeedClientV2 {
         sources.add(US);
     }
 
+    /** Cancel in-flight catalog work. Safe to call from an Activity lifecycle callback. */
+    public synchronized void cancel() {
+        cancelled = true;
+        generation++;
+        loading = false;
+        Call call = activeCall;
+        activeCall = null;
+        if (call != null) {
+            try { call.cancel(); } catch (Throwable ignored) { }
+        }
+    }
+
     /** First homepage batch: cached entries are capped, then only one source is fetched. */
-    public void loadInitial(Listener listener) {
-        if (loading) return;
+    public synchronized void loadInitial(Listener listener) {
+        if (loading || listener == null) return;
+        cancelled = false;
+        generation++;
+        final long token = generation;
         seenUrls.clear();
         sourceIndex = 0;
         List<IptvReel> cached = readCache(INITIAL_BATCH);
-        for (IptvReel r : cached) seenUrls.add(r.url);
+        for (IptvReel r : cached) if (r != null && r.url != null) seenUrls.add(r.url);
         if (!cached.isEmpty()) listener.onSuccess(cached);
-        fetchNextSource(listener, cached.isEmpty());
+        fetchNextSource(listener, cached.isEmpty(), token);
     }
 
     /** Lazy-load the next source only when the UI approaches the end of the current batch. */
-    public void loadMore(Listener listener) {
-        if (loading) return;
-        fetchNextSource(listener, false);
+    public synchronized void loadMore(Listener listener) {
+        if (loading || listener == null) return;
+        cancelled = false;
+        generation++;
+        fetchNextSource(listener, false, generation);
     }
 
     /** Backwards-compatible entry point. */
     public void load(Listener listener) { loadInitial(listener); }
 
-    private void fetchNextSource(Listener listener, boolean reportError) {
+    private void fetchNextSource(Listener listener, boolean reportError, long token) {
+        if (cancelled || token != generation) return;
         if (sourceIndex >= sources.size()) {
-            if (reportError) listener.onError(new IOException("No playable IPTV HLS sources returned"));
+            if (reportError && !cancelled && token == generation) {
+                listener.onError(new IOException("No playable IPTV HLS sources returned"));
+            }
             return;
         }
         final String url = sources.get(sourceIndex++);
         loading = true;
-        client.newCall(request(url)).enqueue(new Callback() {
-            @Override public void onFailure(@NonNull Call call, @NonNull IOException e) {
+        final Call call = client.newCall(request(url));
+        activeCall = call;
+        call.enqueue(new Callback() {
+            @Override public void onFailure(@NonNull Call failedCall, @NonNull IOException e) {
+                if (activeCall == failedCall) activeCall = null;
                 loading = false;
-                fetchNextSource(listener, reportError);
+                if (!cancelled && token == generation) fetchNextSource(listener, reportError, token);
             }
 
-            @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
+            @Override public void onResponse(@NonNull Call responseCall, @NonNull Response response) {
                 ArrayList<IptvReel> batch = new ArrayList<>();
                 try (Response r = response) {
+                    if (cancelled || token != generation) return;
                     if (!r.isSuccessful() || r.body() == null) throw new IOException("HTTP " + r.code());
                     List<IptvReel> parsed = parseM3u(r.body().charStream(), sourceName(url), BATCH_SIZE);
                     for (IptvReel reel : parsed) {
-                        if (seenUrls.add(reel.url)) batch.add(reel);
+                        if (!cancelled && token == generation && seenUrls.add(reel.url)) batch.add(reel);
                     }
-                    if (!batch.isEmpty()) writeCache(batch);
+                    if (!batch.isEmpty() && !cancelled && token == generation) writeCache(batch);
                 } catch (Exception ignored) {
                     // A broken public source must never crash the homepage.
                 } finally {
+                    if (activeCall == responseCall) activeCall = null;
                     loading = false;
                 }
+                if (cancelled || token != generation) return;
                 if (!batch.isEmpty()) listener.onSuccess(batch);
-                else fetchNextSource(listener, reportError);
+                else fetchNextSource(listener, reportError, token);
             }
         });
     }
 
     public void loadSource(String url, String sourceName, Listener listener) {
+        if (listener == null) return;
         if (!isHttp(url)) {
             listener.onError(new IOException("Invalid playlist URL"));
             return;
         }
-        client.newCall(request(url)).enqueue(new Callback() {
-            @Override public void onFailure(@NonNull Call call, @NonNull IOException e) { listener.onError(e); }
-            @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
+        final Call call = client.newCall(request(url));
+        activeCall = call;
+        call.enqueue(new Callback() {
+            @Override public void onFailure(@NonNull Call failedCall, @NonNull IOException e) {
+                if (activeCall == failedCall) activeCall = null;
+                listener.onError(e);
+            }
+            @Override public void onResponse(@NonNull Call responseCall, @NonNull Response response) {
                 try (Response r = response) {
                     if (!r.isSuccessful() || r.body() == null) throw new IOException("playlist HTTP " + r.code());
                     List<IptvReel> parsed = parseM3u(r.body().charStream(), sourceName, MAX_CACHE);
                     if (parsed.isEmpty()) throw new IOException("No playable HLS entries found");
                     listener.onSuccess(parsed);
                 } catch (Exception e) { listener.onError(e); }
+                finally { if (activeCall == responseCall) activeCall = null; }
             }
         });
     }
@@ -230,13 +266,13 @@ public final class IptvFeedClientV2 {
             int count = 0;
             HashSet<String> urls = new HashSet<>();
             for (IptvReel r : additions) {
-                if (count >= MAX_CACHE || !urls.add(r.url)) continue;
+                if (r == null || r.url == null || count >= MAX_CACHE || !urls.add(r.url)) continue;
                 JSONObject o = toJson(r);
                 array.put(o);
                 count++;
             }
             for (IptvReel r : existing) {
-                if (count >= MAX_CACHE || !urls.add(r.url)) continue;
+                if (r == null || r.url == null || count >= MAX_CACHE || !urls.add(r.url)) continue;
                 array.put(toJson(r));
                 count++;
             }
