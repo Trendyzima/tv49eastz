@@ -1,6 +1,5 @@
 package com.fadcam.tv;
 
-import android.content.Intent;
 import android.content.res.Configuration;
 import android.graphics.Color;
 import android.graphics.Typeface;
@@ -11,7 +10,6 @@ import android.view.GestureDetector;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
-import android.view.ViewGroup;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -39,9 +37,9 @@ import java.util.UUID;
 /**
  * Responsive standalone TV 49 East receiver.
  *
- * The screen is intentionally chrome-light. Informational copy and action copy live in
- * collapsible left/right panels, while the bottom navigation can be hidden with a double tap.
- * This keeps the receiver usable as a clean full-screen TV surface without removing features.
+ * The primary surface stays visually clean. Informational copy, empty-catalog state,
+ * actions and receiver metadata live inside collapsible side panels. The side toggles
+ * are deliberately transparent touch targets: there are no visible arrow glyphs.
  */
 public final class MainActivity extends AppCompatActivity {
     private static final int BG = Color.rgb(12, 11, 16);
@@ -67,10 +65,10 @@ public final class MainActivity extends AppCompatActivity {
 
     private View leftPanel;
     private View rightPanel;
-    private TextView leftToggle;
-    private TextView rightToggle;
-    private View infoChrome;
-    private View actionChrome;
+    private View leftToggle;
+    private View rightToggle;
+    private TextView emptyTitle;
+    private TextView emptyDetail;
     private View bottomNav;
     private boolean leftOpen;
     private boolean rightOpen;
@@ -121,7 +119,9 @@ public final class MainActivity extends AppCompatActivity {
         super.onDestroy();
     }
 
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private int dp(int value) {
+        return Math.round(value * getResources().getDisplayMetrics().density);
+    }
 
     private TextView label(String value, float size, int color, boolean bold) {
         TextView v = new TextView(this);
@@ -168,13 +168,9 @@ public final class MainActivity extends AppCompatActivity {
         content.setOrientation(LinearLayout.VERTICAL);
         content.setPadding(dp(16), dp(14), dp(16), dp(96));
 
-        infoChrome = buildInfoChrome(true);
-        content.addView(infoChrome, new LinearLayout.LayoutParams(-1, -2));
         addPlayer(content);
         channelSection = buildChannelSection(false);
         content.addView(channelSection, new LinearLayout.LayoutParams(-1, -2));
-        actionChrome = buildActionChrome();
-        content.addView(actionChrome, new LinearLayout.LayoutParams(-1, -2));
 
         pageScroll.addView(content, new ScrollView.LayoutParams(-1, -2));
         root.addView(pageScroll, new FrameLayout.LayoutParams(-1, -1));
@@ -206,8 +202,6 @@ public final class MainActivity extends AppCompatActivity {
         LinearLayout main = new LinearLayout(this);
         main.setOrientation(LinearLayout.VERTICAL);
         main.setPadding(dp(10), 0, dp(10), 0);
-        infoChrome = buildInfoChrome(false);
-        main.addView(infoChrome, new LinearLayout.LayoutParams(-1, -2));
 
         LinearLayout split = new LinearLayout(this);
         split.setOrientation(LinearLayout.HORIZONTAL);
@@ -228,11 +222,8 @@ public final class MainActivity extends AppCompatActivity {
         catalog.setOrientation(LinearLayout.VERTICAL);
         catalog.setPadding(dp(12), 0, 0, 0);
         catalog.addView(channelSection, new LinearLayout.LayoutParams(-1, 0, 1f));
-        actionChrome = buildActionChrome();
-        catalog.addView(actionChrome, new LinearLayout.LayoutParams(-1, -2));
         split.addView(catalog, new LinearLayout.LayoutParams(0, -1, 1f));
 
-        main.addView(buildLandscapeHint(), new LinearLayout.LayoutParams(-1, dp(34)));
         shell.addView(buildLandscapeRail(), new LinearLayout.LayoutParams(dp(66), -1));
         shell.addView(main, new LinearLayout.LayoutParams(0, -1, 1f));
         root.addView(shell, new FrameLayout.LayoutParams(-1, -1));
@@ -247,35 +238,6 @@ public final class MainActivity extends AppCompatActivity {
         root.addView(rightToggle, edgeParams(Gravity.RIGHT));
         setContentView(root);
         applyChrome(false);
-    }
-
-    private View buildInfoChrome(boolean portrait) {
-        LinearLayout box = new LinearLayout(this);
-        box.setOrientation(LinearLayout.VERTICAL);
-        box.setPadding(dp(portrait ? 18 : 14), dp(12), dp(12), dp(10));
-        box.setBackground(surface(SURFACE, 22));
-
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        LinearLayout brand = new LinearLayout(this);
-        brand.setOrientation(LinearLayout.VERTICAL);
-        TextView title = label("TV 49 East", portrait ? 25f : 21f, TEXT, true);
-        TextView sub = label("FadCam creators  •  TV East  •  worldwide", 11f, MUTED, false);
-        brand.addView(title);
-        brand.addView(sub, new LinearLayout.LayoutParams(-1, -2));
-        row.addView(brand, new LinearLayout.LayoutParams(0, -2, 1f));
-        status = pill("SERVER NOT CONFIGURED", ERROR);
-        row.addView(status);
-        box.addView(row);
-
-        TextView featured = label("FEATURED", 10f, ACCENT, true);
-        featured.setLetterSpacing(0.12f);
-        box.addView(featured, new LinearLayout.LayoutParams(-1, dp(24)));
-        TextView heading = label("FadCam Local", portrait ? 22f : 18f, TEXT, true);
-        box.addView(heading, new LinearLayout.LayoutParams(-1, dp(32)));
-        TextView description = label("FadCam-originated channels first, followed by TV East creators and global variety.", 11f, MUTED, false);
-        box.addView(description, new LinearLayout.LayoutParams(-1, -2));
-        return box;
     }
 
     private AspectRatioFrameLayout makeVideoFrame() {
@@ -313,43 +275,8 @@ public final class MainActivity extends AppCompatActivity {
 
         channelList = new LinearLayout(this);
         channelList.setOrientation(LinearLayout.VERTICAL);
-        ScrollView list = new ScrollView(this);
-        list.setFillViewport(false);
-        list.addView(channelList, new ScrollView.LayoutParams(-1, -2));
-        section.addView(list, new LinearLayout.LayoutParams(-1, compact ? 0 : -2, compact ? 1f : 0f));
+        section.addView(channelList, new LinearLayout.LayoutParams(-1, -2));
         return section;
-    }
-
-    private LinearLayout buildActionChrome() {
-        LinearLayout actions = new LinearLayout(this);
-        actions.setOrientation(LinearLayout.VERTICAL);
-        actions.setPadding(0, dp(6), 0, 0);
-
-        LinearLayout row = new LinearLayout(this);
-        row.setGravity(Gravity.CENTER_VERTICAL);
-        Button add = actionButton("＋  Add authorized channel", SURFACE_2);
-        add.setOnClickListener(v -> showAddChannelDialog());
-        row.addView(add, new LinearLayout.LayoutParams(0, dp(50), 1f));
-        Button refresh = actionButton("Refresh", SURFACE_3);
-        refresh.setOnClickListener(v -> refreshCatalog());
-        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-2, dp(50));
-        rp.leftMargin = dp(8);
-        row.addView(refresh, rp);
-        actions.addView(row);
-
-        TextView protocol = label("Secure receiver  •  authorized HTTPS relay", 10f, MUTED, false);
-        protocol.setGravity(Gravity.CENTER);
-        actions.addView(protocol, new LinearLayout.LayoutParams(-1, dp(32)));
-
-        LinearLayout footer = new LinearLayout(this);
-        footer.setGravity(Gravity.CENTER_VERTICAL);
-        footer.addView(label("TV East • standalone receiver", 10f, MUTED, false), new LinearLayout.LayoutParams(0, -2, 1f));
-        stop = actionButton("STOP", SURFACE_2);
-        stop.setEnabled(false);
-        stop.setOnClickListener(v -> stopPlayback());
-        footer.addView(stop);
-        actions.addView(footer, new LinearLayout.LayoutParams(-1, dp(52)));
-        return actions;
     }
 
     private LinearLayout buildBottomNav() {
@@ -385,12 +312,6 @@ public final class MainActivity extends AppCompatActivity {
         return rail;
     }
 
-    private TextView buildLandscapeHint() {
-        TextView v = label("Double tap anywhere to hide/show bottom navigation • edge toggles reveal controls", 9f, MUTED, false);
-        v.setGravity(Gravity.CENTER);
-        return v;
-    }
-
     private LinearLayout navItem(String icon, String title, boolean selected, View.OnClickListener click) {
         LinearLayout item = new LinearLayout(this);
         item.setOrientation(LinearLayout.VERTICAL);
@@ -422,23 +343,73 @@ public final class MainActivity extends AppCompatActivity {
         return b;
     }
 
+    /** Left drawer contains screenshot blocks 1 and 2. */
     private LinearLayout buildLeftPanel() {
         LinearLayout p = sidePanel();
         p.addView(label("INFO", 17f, TEXT, true), new LinearLayout.LayoutParams(-1, dp(32)));
-        p.addView(label("TV 49 East", 24f, ACCENT, true), new LinearLayout.LayoutParams(-1, dp(40)));
-        p.addView(label("FadCam creators • TV East • worldwide", 12f, MUTED, false));
-        p.addView(label("Featured\nFadCam Local\n\nFadCam-originated channels first, followed by TV East creators and global variety.", 13f, TEXT, false));
-        addPanelButton(p, "Hide info", v -> { leftOpen = false; applyChrome(true); });
+
+        LinearLayout brandRow = new LinearLayout(this);
+        brandRow.setGravity(Gravity.CENTER_VERTICAL);
+        LinearLayout brand = new LinearLayout(this);
+        brand.setOrientation(LinearLayout.VERTICAL);
+        brand.addView(label("TV 49 East", 24f, TEXT, true));
+        brand.addView(label("FadCam creators • TV East • worldwide", 12f, MUTED, false));
+        brandRow.addView(brand, new LinearLayout.LayoutParams(0, -2, 1f));
+        status = pill("SERVER NOT CONFIGURED", ERROR);
+        brandRow.addView(status);
+        p.addView(brandRow, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView featured = label("FEATURED", 10f, ACCENT, true);
+        featured.setLetterSpacing(0.12f);
+        featured.setPadding(0, dp(14), 0, 0);
+        p.addView(featured, new LinearLayout.LayoutParams(-1, dp(34)));
+        p.addView(label("FadCam Local", 22f, TEXT, true), new LinearLayout.LayoutParams(-1, dp(36)));
+        p.addView(label("FadCam-originated channels first, followed by TV East creators and global variety.", 12f, MUTED, false), new LinearLayout.LayoutParams(-1, -2));
+
+        LinearLayout empty = new LinearLayout(this);
+        empty.setOrientation(LinearLayout.VERTICAL);
+        empty.setGravity(Gravity.CENTER);
+        empty.setPadding(dp(12), dp(18), dp(12), dp(18));
+        empty.setBackground(surface(SURFACE, 20));
+        emptyTitle = label("No channels cached yet", 16f, TEXT, true);
+        emptyTitle.setGravity(Gravity.CENTER);
+        empty.addView(emptyTitle);
+        emptyDetail = label("Connect to the TV East catalog or add an authorized channel.", 12f, MUTED, false);
+        emptyDetail.setGravity(Gravity.CENTER);
+        emptyDetail.setPadding(0, dp(6), 0, 0);
+        empty.addView(emptyDetail);
+        LinearLayout.LayoutParams ep = new LinearLayout.LayoutParams(-1, dp(126));
+        ep.topMargin = dp(18);
+        p.addView(empty, ep);
+
+        addPanelButton(p, "Close info", v -> { leftOpen = false; applyChrome(true); });
         return p;
     }
 
+    /** Right drawer contains screenshot blocks 3 and 4. */
     private LinearLayout buildRightPanel() {
         LinearLayout p = sidePanel();
         p.addView(label("CONTROLS", 17f, TEXT, true), new LinearLayout.LayoutParams(-1, dp(32)));
-        addPanelButton(p, "＋  Add channel", v -> showAddChannelDialog());
-        addPanelButton(p, "↻  Refresh", v -> refreshCatalog());
-        addPanelButton(p, "■  Stop playback", v -> stopPlayback());
-        addPanelButton(p, "Hide controls", v -> { rightOpen = false; applyChrome(true); });
+        addPanelButton(p, "＋  Add authorized channel", v -> showAddChannelDialog());
+        addPanelButton(p, "Refresh", v -> refreshCatalog());
+
+        TextView protocol = label("Secure receiver  •  authorized HTTPS relay", 11f, MUTED, false);
+        protocol.setGravity(Gravity.CENTER);
+        protocol.setPadding(0, dp(8), 0, dp(8));
+        p.addView(protocol, new LinearLayout.LayoutParams(-1, dp(48)));
+
+        TextView footer = label("TV East • standalone receiver", 11f, MUTED, false);
+        footer.setGravity(Gravity.CENTER);
+        p.addView(footer, new LinearLayout.LayoutParams(-1, dp(38)));
+
+        stop = actionButton("STOP", SURFACE_2);
+        stop.setEnabled(false);
+        stop.setOnClickListener(v -> stopPlayback());
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(50));
+        sp.topMargin = dp(8);
+        p.addView(stop, sp);
+
+        addPanelButton(p, "Close controls", v -> { rightOpen = false; applyChrome(true); });
         return p;
     }
 
@@ -462,34 +433,43 @@ public final class MainActivity extends AppCompatActivity {
     private FrameLayout.LayoutParams panelParams(int gravity) {
         int width = Math.min(dp(320), Math.max(dp(220), (int) (getResources().getDisplayMetrics().widthPixels * 0.78f)));
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(width, -1, gravity);
-        p.topMargin = dp(62);
+        p.topMargin = dp(8);
         p.bottomMargin = dp(8);
         return p;
     }
 
-    private FrameLayout.LayoutParams edgeParams(int gravity) {
-        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(42), dp(54), gravity | Gravity.CENTER_VERTICAL);
-        p.setMargins(dp(4), 0, dp(4), 0);
-        return p;
-    }
-
-    private TextView edgeToggle(boolean left) {
-        TextView t = label(left ? "›" : "‹", 28f, TEXT, true);
-        t.setGravity(Gravity.CENTER);
-        t.setBackground(surface(Color.argb(235, 43, 33, 59), 17));
-        t.setElevation(dp(10));
-        t.setContentDescription(left ? "Show or hide information" : "Show or hide controls");
-        t.setOnClickListener(v -> {
+    /**
+     * A completely transparent edge hit target. It has no glyph, background, ripple,
+     * elevation or alpha animation, so there is nothing visible to identify as a toggle.
+     */
+    private View edgeToggle(boolean left) {
+        View hit = new View(this);
+        hit.setBackgroundColor(Color.TRANSPARENT);
+        hit.setClickable(true);
+        hit.setFocusable(true);
+        hit.setContentDescription(left ? "Information panel toggle" : "Controls panel toggle");
+        hit.setOnClickListener(v -> {
             if (left) leftOpen = !leftOpen; else rightOpen = !rightOpen;
             applyChrome(true);
         });
-        return t;
+        return hit;
+    }
+
+    private FrameLayout.LayoutParams edgeParams(int gravity) {
+        // Keep a generous invisible touch target, but no visible affordance.
+        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(46), dp(112), gravity | Gravity.CENTER_VERTICAL);
+        if (gravity == Gravity.LEFT) {
+            p.leftMargin = 0;
+        } else {
+            p.rightMargin = 0;
+        }
+        return p;
     }
 
     private void applyChrome(boolean animate) {
         if (leftPanel == null || rightPanel == null) return;
-        int leftDistance = leftPanel.getLayoutParams().width + dp(12);
-        int rightDistance = rightPanel.getLayoutParams().width + dp(12);
+        int leftDistance = leftPanel.getLayoutParams().width + dp(8);
+        int rightDistance = rightPanel.getLayoutParams().width + dp(8);
         float lx = leftOpen ? 0f : -leftDistance;
         float rx = rightOpen ? 0f : rightDistance;
         if (animate) {
@@ -499,10 +479,6 @@ public final class MainActivity extends AppCompatActivity {
             leftPanel.setTranslationX(lx);
             rightPanel.setTranslationX(rx);
         }
-        if (leftToggle != null) leftToggle.setText(leftOpen ? "‹" : "›");
-        if (rightToggle != null) rightToggle.setText(rightOpen ? "›" : "‹");
-        if (infoChrome != null) infoChrome.setVisibility(leftOpen ? View.GONE : View.VISIBLE);
-        if (actionChrome != null) actionChrome.setVisibility(rightOpen ? View.GONE : View.VISIBLE);
     }
 
     private void toggleBottomNav() {
@@ -512,14 +488,29 @@ public final class MainActivity extends AppCompatActivity {
 
     private void applyBottomNav(boolean animate) {
         if (bottomNav == null) return;
+        bottomNav.animate().cancel();
         if (bottomNavHidden) {
-            if (animate) bottomNav.animate().translationY(bottomNav.getHeight() + dp(12)).alpha(0f).setDuration(180).start();
-            else { bottomNav.setTranslationY(dp(96)); bottomNav.setAlpha(0f); }
-            bottomNav.setVisibility(View.INVISIBLE);
+            if (!animate) {
+                bottomNav.setVisibility(View.INVISIBLE);
+                bottomNav.setTranslationY(dp(96));
+                bottomNav.setAlpha(0f);
+                return;
+            }
+            bottomNav.setVisibility(View.VISIBLE);
+            bottomNav.animate()
+                    .translationY(bottomNav.getHeight() + dp(12))
+                    .alpha(0f)
+                    .setDuration(180)
+                    .withEndAction(() -> bottomNav.setVisibility(View.INVISIBLE))
+                    .start();
         } else {
             bottomNav.setVisibility(View.VISIBLE);
-            if (animate) bottomNav.animate().translationY(0f).alpha(1f).setDuration(180).start();
-            else { bottomNav.setTranslationY(0f); bottomNav.setAlpha(1f); }
+            if (!animate) {
+                bottomNav.setTranslationY(0f);
+                bottomNav.setAlpha(1f);
+                return;
+            }
+            bottomNav.animate().translationY(0f).alpha(1f).setDuration(180).start();
         }
     }
 
@@ -534,47 +525,51 @@ public final class MainActivity extends AppCompatActivity {
                     for (ChannelStore.Channel local : store.load()) {
                         boolean duplicate = false;
                         for (ChannelStore.Channel existing : channels) {
-                            if (existing.id.equals(local.id) || existing.url.equals(local.url)) { duplicate = true; break; }
+                            if (existing.id.equals(local.id) || existing.url.equals(local.url)) {
+                                duplicate = true;
+                                break;
+                            }
                         }
                         if (!duplicate) channels.add(local);
                     }
                     renderChannels(channels);
-                    status.setText("● READY • " + channels.size());
-                    status.setTextColor(GOOD);
+                    updateStatus(channels.size());
                 });
             }
+
             @Override public void onError(Exception error) {
                 runOnUiThread(() -> {
                     if (isFinishing() || isDestroyed()) return;
                     channels.clear();
                     channels.addAll(store.load());
                     renderChannels(channels);
-                    status.setText(channels.isEmpty() ? "SERVER NOT CONFIGURED" : "● LOCAL CHANNELS");
-                    status.setTextColor(channels.isEmpty() ? ERROR : ACCENT);
+                    updateStatus(channels.size());
                 });
             }
         });
     }
 
+    private void updateStatus(int count) {
+        if (status == null) return;
+        if (count > 0) {
+            status.setText("● READY • " + count);
+            status.setTextColor(GOOD);
+            if (emptyTitle != null) emptyTitle.setText("Channels available");
+            if (emptyDetail != null) emptyDetail.setText("Open the channel list on the receiver surface.");
+        } else {
+            status.setText("SERVER NOT CONFIGURED");
+            status.setTextColor(ERROR);
+            if (emptyTitle != null) emptyTitle.setText("No channels cached yet");
+            if (emptyDetail != null) emptyDetail.setText("Connect to the TV East catalog or add an authorized channel.");
+        }
+    }
+
     private void renderChannels(List<ChannelStore.Channel> list) {
         if (channelList == null) return;
         channelList.removeAllViews();
-        if (list == null || list.isEmpty()) {
-            LinearLayout empty = new LinearLayout(this);
-            empty.setOrientation(LinearLayout.VERTICAL);
-            empty.setGravity(Gravity.CENTER);
-            empty.setPadding(dp(20), dp(22), dp(20), dp(22));
-            empty.setBackground(surface(SURFACE, 20));
-            TextView title = label("No channels cached yet", 16f, TEXT, true);
-            title.setGravity(Gravity.CENTER);
-            empty.addView(title);
-            TextView detail = label("Connect to the TV East catalog or add an authorized channel.", 12f, MUTED, false);
-            detail.setGravity(Gravity.CENTER);
-            detail.setPadding(0, dp(6), 0, 0);
-            empty.addView(detail);
-            channelList.addView(empty, new LinearLayout.LayoutParams(-1, dp(126)));
-            return;
-        }
+        boolean empty = list == null || list.isEmpty();
+        if (channelSection != null) channelSection.setVisibility(empty ? View.GONE : View.VISIBLE);
+        if (empty) return;
         for (ChannelStore.Channel channel : list) addChannelCard(channel);
     }
 
@@ -610,7 +605,9 @@ public final class MainActivity extends AppCompatActivity {
         Uri uri;
         try {
             uri = Uri.parse(channel.url.trim());
-            if (uri.getHost() == null || !("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))) throw new IllegalArgumentException("bad uri");
+            if (uri.getHost() == null || !("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))) {
+                throw new IllegalArgumentException("bad uri");
+            }
         } catch (Throwable t) {
             toast("Invalid channel URL");
             return;
@@ -621,28 +618,34 @@ public final class MainActivity extends AppCompatActivity {
             playerView.setPlayer(player);
             player.addListener(new Player.Listener() {
                 @Override public void onPlayerError(@NonNull PlaybackException error) {
-                    status.setText("● CHANNEL ERROR");
-                    status.setTextColor(ERROR);
+                    if (status != null) {
+                        status.setText("● CHANNEL ERROR");
+                        status.setTextColor(ERROR);
+                    }
                     toast("Channel unavailable");
                 }
             });
             player.setMediaItem(MediaItem.fromUri(uri));
             player.prepare();
             player.play();
-            stop.setEnabled(true);
-            status.setText("● PLAYING • " + channel.name);
-            status.setTextColor(GOOD);
+            if (stop != null) stop.setEnabled(true);
+            if (status != null) {
+                status.setText("● PLAYING • " + channel.name);
+                status.setTextColor(GOOD);
+            }
         } catch (Throwable t) {
             stopPlayback();
-            status.setText("● PLAYER ERROR");
-            status.setTextColor(ERROR);
+            if (status != null) {
+                status.setText("● PLAYER ERROR");
+                status.setTextColor(ERROR);
+            }
             toast("Playback could not start");
         }
     }
 
     private void stopPlayback() {
         if (player != null) {
-            try { playerView.setPlayer(null); } catch (Throwable ignored) { }
+            try { if (playerView != null) playerView.setPlayer(null); } catch (Throwable ignored) { }
             try { player.stop(); } catch (Throwable ignored) { }
             try { player.release(); } catch (Throwable ignored) { }
             player = null;
@@ -672,10 +675,15 @@ public final class MainActivity extends AppCompatActivity {
                 .setNegativeButton("Cancel", null)
                 .setPositiveButton("Save", (dialog, which) -> {
                     String stream = url.getText().toString().trim();
-                    if (stream.isEmpty()) { toast("A relay URL is required"); return; }
+                    if (stream.isEmpty()) {
+                        toast("A relay URL is required");
+                        return;
+                    }
                     try {
                         Uri parsed = Uri.parse(stream);
-                        if (!"https".equalsIgnoreCase(parsed.getScheme()) || parsed.getHost() == null) throw new IllegalArgumentException();
+                        if (!"https".equalsIgnoreCase(parsed.getScheme()) || parsed.getHost() == null) {
+                            throw new IllegalArgumentException();
+                        }
                     } catch (Throwable t) {
                         toast("Only authorized HTTPS relay URLs are accepted");
                         return;
@@ -695,10 +703,16 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private void scrollToChannels() {
-        if (pageScroll != null && channelSection != null) {
+        if (pageScroll != null && channelSection != null && channelSection.getVisibility() == View.VISIBLE) {
             pageScroll.post(() -> pageScroll.smoothScrollTo(0, Math.max(0, channelSection.getTop() - dp(8))));
+        } else {
+            // With an empty catalog the state lives in the hidden left drawer.
+            leftOpen = true;
+            applyChrome(true);
         }
     }
 
-    private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
+    private void toast(String value) {
+        Toast.makeText(this, value, Toast.LENGTH_SHORT).show();
+    }
 }
