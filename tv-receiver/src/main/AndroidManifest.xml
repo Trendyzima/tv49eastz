@@ -10,15 +10,15 @@
         android:allowBackup="false"
         android:label="TV 49 East"
         android:supportsRtl="true"
-        android:theme="@style/Theme.TV49East"
+        android:theme="@style/Theme.TV49East.Platform"
         android:banner="@drawable/tv49east_banner"
         android:usesCleartextTraffic="true">
 
-        <!-- Minimal platform Activity is the launcher. It performs no network,
-             catalog or Media3 initialization during process startup. -->
+        <!-- Pure platform launcher: no AppCompat, Media3, IPTV or network startup. -->
         <activity
             android:name="com.fadcam.tv.HomeActivity"
             android:exported="true"
+            android:theme="@style/Theme.TV49East.Platform"
             android:screenOrientation="unspecified"
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize">
@@ -32,6 +32,7 @@
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
             android:exported="true"
+            android:theme="@style/Theme.TV49East"
             android:screenOrientation="unspecified"
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize">
@@ -48,12 +49,14 @@
             android:exported="false"
             android:theme="@style/Theme.TV49East" />
 
+        <!-- Plain Activity bridge also gets the platform theme; it immediately
+             validates the signed handoff before entering AppCompat MainActivity. -->
         <activity
             android:name="com.fadcam.tv.FadCamHandoffActivity"
             android:exported="true"
             android:intentMatchingFlags="enforceIntentFilter"
             android:permission="com.tv49.com.permission.PUBLISH_FADCAM"
-            android:theme="@style/Theme.TV49East">
+            android:theme="@style/Theme.TV49East.Platform">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
