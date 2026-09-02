@@ -210,7 +210,7 @@ func discoveryCandidates(port, maxHosts int) ([]string, error) {
 		for _, b := range n.mask {
 			for bit := byte(0x80); bit != 0; bit >>= 1 {
 				if b&bit == 0 {
-				goto networkBitsDone
+					goto networkBitsDone
 				}
 				hostBits--
 			}
