@@ -29,10 +29,12 @@
             </intent-filter>
         </activity>
 
+        <!-- Live TV intentionally uses the platform theme. This screen is crash-isolated
+             and must not depend on AppCompatDelegate/theme initialization. -->
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
             android:exported="true"
-            android:theme="@style/Theme.TV49East"
+            android:theme="@style/Theme.TV49East.Platform"
             android:screenOrientation="unspecified"
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize">
