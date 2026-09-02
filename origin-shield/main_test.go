@@ -82,3 +82,19 @@ func TestRewritePlaylistUsesShieldPaths(t *testing.T) {
 		t.Fatalf("playlist was not fully rewritten: %s", out)
 	}
 }
+
+func TestRewriteTagURIsRewritesEveryURIWithoutLooping(t *testing.T) {
+	in := `#EXT-X-KEY:METHOD=AES-128,URI="/audio/key.m4s",IV=0x1,URI="/video/key.m4s"`
+	out := rewriteTagURIs(in, "news")
+	want := `#EXT-X-KEY:METHOD=AES-128,URI="/channel/news/audio/key.m4s",IV=0x1,URI="/channel/news/video/key.m4s"`
+	if out != want {
+		t.Fatalf("rewritten tag = %q, want %q", out, want)
+	}
+}
+
+func TestRewriteTagURIsPreservesMalformedTag(t *testing.T) {
+	in := `#EXT-X-MAP:URI="/init.mp4`
+	if got := rewriteTagURIs(in, "news"); got != in {
+		t.Fatalf("malformed tag changed: got %q, want %q", got, in)
+	}
+}
