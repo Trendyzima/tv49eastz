@@ -1,0 +1,38 @@
+name: CDN Edge
+
+on:
+  push:
+    paths:
+      - 'cdn-edge/**'
+      - '.github/workflows/cdn-edge.yml'
+  pull_request:
+    paths:
+      - 'cdn-edge/**'
+      - '.github/workflows/cdn-edge.yml'
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cdn-edge
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Race tests
+        run: go test ./... -count=1 -race
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build -trimpath ./...
+      - name: Build container
+        working-directory: .
+        run: docker build -f cdn-edge/Dockerfile cdn-edge
