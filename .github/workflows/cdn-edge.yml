@@ -25,11 +25,14 @@ jobs:
         with:
           go-version: '1.27.x'
           cache: false
-      - name: Format
-        run: gofmt -w .
-      - name: Test
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Race tests
         run: go test ./... -count=1 -race
       - name: Vet
         run: go vet ./...
       - name: Build
         run: go build -trimpath ./...
+      - name: Build container
+        working-directory: .
+        run: docker build -f cdn-edge/Dockerfile cdn-edge
