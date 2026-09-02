@@ -29,9 +29,8 @@ android {
 
     defaultConfig {
         applicationId = "com.fadcam"
-        compileSdk = 36
-        targetSdk = 36
         minSdk = 24
+        targetSdk = 36
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         versionCode = 53
         versionName = "4.0.1"
