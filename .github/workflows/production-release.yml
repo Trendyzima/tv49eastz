@@ -156,9 +156,6 @@ jobs:
 
       - name: Collect release artifacts
         shell: bash
-        env:
-          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
-          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
         run: |
           set -euo pipefail
           mkdir -p dist
@@ -169,6 +166,133 @@ jobs:
           cp "$aab" dist/FadCam.aab
           cp "$fadcam" dist/FadCam.apk
           cp "$tv" dist/TV49East.apk
+          printf '%s\n' "Collected: $aab" "Collected: $fadcam" "Collected: $tv"
+
+      - name: Production APK security gate
+        shell: bash
+        env:
+          EXPECTED_FADCAM_PACKAGE: com.fadcam
+          EXPECTED_TV_PACKAGE: com.tv49.com
+          EXPECTED_TARGET_SDK: '36'
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
+
+          apk_analyzer="$(find "$ANDROID_HOME/cmdline-tools" -type f -name apkanalyzer -print -quit 2>/dev/null || true)"
+          if [ -z "$apk_analyzer" ]; then
+            apk_analyzer="$(find "$ANDROID_HOME" -type f -name apkanalyzer -print -quit 2>/dev/null || true)"
+          fi
+          test -n "$apk_analyzer" || { echo 'FAIL: Android apkanalyzer was not found'; exit 1; }
+
+          apksigner="$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -print | sort -V | tail -n1)"
+          test -n "$apksigner" || { echo 'FAIL: Android apksigner was not found'; exit 1; }
+
+          report="dist/SECURITY-GATE.txt"
+          : > "$report"
+          printf '%s\n' 'TV 49 East production APK security gate' "Commit: $GITHUB_SHA" "Ref: $GITHUB_REF" "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$report"
+          printf '%s\n' 'Policy: build -> signature -> scheme -> target SDK -> merged manifest -> forbidden permissions/aliases -> debuggable -> package ID -> SHA-256 -> publish' >> "$report"
+
+          keystore_cert="$(keytool -list -v -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | awk -F': ' '/^\s*SHA256:/{print $2; exit}')"
+          test -n "$keystore_cert" || { echo 'FAIL: Could not read expected signing certificate from release keystore'; exit 1; }
+          keystore_cert="${keystore_cert//:/}"
+          keystore_cert="$(printf '%s' "$keystore_cert" | tr '[:lower:]' '[:upper:]')"
+          printf '%s\n' "Expected signing certificate SHA-256: $keystore_cert" >> "$report"
+
+          check_apk() {
+            local apk="$1"
+            local expected_package="$2"
+            local label="$3"
+            local manifest permissions app_id target_sdk debuggable certs aliases
+
+            echo "===== $label ====="
+            printf '%s\n' "[$label] $apk" >> "$report"
+
+            test -s "$apk" || { echo "FAIL: $label APK is empty"; exit 1; }
+
+            echo '1) Verify APK cryptographic signature'
+            "$apksigner" verify --verbose -Werr "$apk"
+            printf '%s\n' 'PASS: apksigner cryptographic verification' >> "$report"
+
+            echo '2) Verify APK signature schemes (v2 + v3 required)'
+            certs="$("$apksigner" verify --verbose --print-certs "$apk")"
+            printf '%s\n' "$certs" | tee -a "$report"
+            printf '%s\n' "$certs" | grep -Eq 'Verified using v2 scheme \(APK Signature Scheme v2\): true' || { echo "FAIL: $label is not signed with APK Signature Scheme v2"; exit 1; }
+            printf '%s\n' "$certs" | grep -Eq 'Verified using v3 scheme \(APK Signature Scheme v3\): true' || { echo "FAIL: $label is not signed with APK Signature Scheme v3"; exit 1; }
+            actual_cert="$(printf '%s\n' "$certs" | awk -F': ' '/Signer #1 certificate SHA-256 digest:/{print $2; exit}' | tr -d '[:space:]' | tr '[:lower:]' '[:upper:]')"
+            test -n "$actual_cert" || { echo "FAIL: $label signing certificate digest missing"; exit 1; }
+            test "$actual_cert" = "$keystore_cert" || { echo "FAIL: $label is signed by an unexpected certificate"; exit 1; }
+            printf '%s\n' 'PASS: v2 + v3 signature schemes and expected production certificate' >> "$report"
+
+            echo '3) Inspect final merged manifest from the built APK'
+            manifest="$("$apk_analyzer" manifest print "$apk")"
+            printf '%s\n' "$manifest" > "dist/${label// /-}-merged-manifest.xml"
+            permissions="$("$apk_analyzer" manifest permissions "$apk")"
+            app_id="$("$apk_analyzer" manifest application-id "$apk")"
+            target_sdk="$("$apk_analyzer" manifest target-sdk "$apk")"
+            debuggable="$("$apk_analyzer" manifest debuggable "$apk")"
+            aliases="$(printf '%s\n' "$manifest" | grep -E '<activity-alias([[:space:]>])' || true)"
+
+            printf '%s\n' "application-id=$app_id" "target-sdk=$target_sdk" "debuggable=$debuggable" >> "$report"
+
+            echo '4) Verify target SDK'
+            test "$target_sdk" = "$EXPECTED_TARGET_SDK" || { echo "FAIL: $label target SDK is $target_sdk, expected $EXPECTED_TARGET_SDK"; exit 1; }
+            printf '%s\n' "PASS: target SDK $EXPECTED_TARGET_SDK" >> "$report"
+
+            echo '5) FAIL on MANAGE_EXTERNAL_STORAGE'
+            if printf '%s\n' "$permissions" | grep -Fxq 'android.permission.MANAGE_EXTERNAL_STORAGE'; then
+              echo "FAIL: $label declares MANAGE_EXTERNAL_STORAGE"
+              exit 1
+            fi
+            printf '%s\n' 'PASS: MANAGE_EXTERNAL_STORAGE absent' >> "$report"
+
+            echo '6) FAIL on battery-exemption permission'
+            if printf '%s\n' "$permissions" | grep -Fxq 'android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'; then
+              echo "FAIL: $label declares REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+              exit 1
+            fi
+            if printf '%s\n' "$manifest" | grep -Fq 'android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS'; then
+              echo "FAIL: $label contains ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS in its final manifest"
+              exit 1
+            fi
+            printf '%s\n' 'PASS: battery-exemption permission/action absent' >> "$report"
+
+            echo '7) FAIL on known deceptive launcher aliases'
+            forbidden_aliases='AlternativeIcon|FadedIcon|PalestineIcon|PakistanIcon|FadSecLabIcon|NooristicIcon|BatIcon|RedBinaryIcon|NotesIcon|CalculatorIcon|ClockIcon|WeatherIcon|FootballIcon|CarIcon|JetIcon|MinimalIcon|BlackIcon'
+            if printf '%s\n' "$aliases" | grep -Eq "$forbidden_aliases"; then
+              echo "FAIL: $label contains a forbidden deceptive launcher alias"
+              printf '%s\n' "$aliases"
+              exit 1
+            fi
+            printf '%s\n' 'PASS: no known deceptive launcher aliases' >> "$report"
+
+            echo '8) Verify release APK is not debuggable'
+            test "$debuggable" = 'false' || { echo "FAIL: $label is debuggable=$debuggable"; exit 1; }
+            printf '%s\n' 'PASS: debuggable=false' >> "$report"
+
+            echo '9) Verify package/application ID'
+            test "$app_id" = "$expected_package" || { echo "FAIL: $label application ID is $app_id, expected $expected_package"; exit 1; }
+            printf '%s\n' "PASS: application ID $expected_package" >> "$report"
+
+            echo '10) Record SHA-256 of final APK'
+            sha256sum "$apk" | tee -a "$report"
+            printf '%s\n' 'PASS: final APK SHA-256 recorded' >> "$report"
+            echo "PASS: $label production security gate"
+          }
+
+          check_apk dist/FadCam.apk "$EXPECTED_FADCAM_PACKAGE" 'FadCam'
+          check_apk dist/TV49East.apk "$EXPECTED_TV_PACKAGE" 'TV49East'
+
+          echo 'Production APK security gate PASSED for both release APKs.'
+          printf '%s\n' 'RESULT: PASS - both production APKs cleared every gate.' >> "$report"
+
+      - name: Finalize release checksums and certificate report
+        shell: bash
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_RELEASE_KEY_ALIAS }}
+        run: |
+          set -euo pipefail
           sha256sum dist/FadCam.aab dist/FadCam.apk dist/TV49East.apk | tee dist/SHA256SUMS.txt
           keytool -list -v -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | grep -E 'Owner:|SHA256:' > dist/RELEASE-CERTIFICATE.txt
 
@@ -199,6 +323,9 @@ jobs:
             dist/TV49East.apk
             dist/SHA256SUMS.txt
             dist/RELEASE-CERTIFICATE.txt
+            dist/SECURITY-GATE.txt
+            dist/FadCam-merged-manifest.xml
+            dist/TV49East-merged-manifest.xml
 
       - name: Publish GitHub Release
         if: startsWith(github.ref, 'refs/tags/v')
@@ -213,6 +340,7 @@ jobs:
             dist/FadCam.aab \
             dist/SHA256SUMS.txt \
             dist/RELEASE-CERTIFICATE.txt \
+            dist/SECURITY-GATE.txt \
             --verify-tag \
             --title "TV 49 East $GITHUB_REF_NAME" \
             --generate-notes
