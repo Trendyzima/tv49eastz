@@ -4,7 +4,6 @@ import android.app.Activity;
 import android.content.Intent;
 import android.graphics.Color;
 import android.graphics.Typeface;
-import android.graphics.SurfaceTexture;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
@@ -13,11 +12,9 @@ import android.os.Looper;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
-import android.view.TextureView;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -38,7 +35,13 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 
-/** Crash-isolated, responsive IPTV reels surface. */
+/**
+ * Crash-isolated, responsive IPTV reels surface.
+ *
+ * The catalog is deliberately media-free: RecyclerView/ViewPager2 pages never own a
+ * Media3 surface or player. Playback is hosted by one overlay owned by the Activity.
+ * This prevents player/surface lifetime from being coupled to RecyclerView recycling.
+ */
 public final class TvReelsActivityHardened extends Activity {
     private static final int BG = Color.rgb(5, 5, 7);
     private static final int PANEL = Color.rgb(24, 19, 34);
@@ -51,12 +54,12 @@ public final class TvReelsActivityHardened extends Activity {
     private final List<IptvReel> reels = new ArrayList<>();
     private final List<IptvReel> visible = new ArrayList<>();
 
+    private FrameLayout root;
+    private FrameLayout playerOverlay;
     private ViewPager2 pager;
     private ReelAdapter adapter;
     private IptvFeedClientV2 feedClient;
     private ExoPlayer player;
-    private TextureView activeTexture;
-    private FrameLayout activeVideoContainer;
     private TextView status;
     private TextView feedMessage;
     private TextView retry;
@@ -129,7 +132,7 @@ public final class TvReelsActivityHardened extends Activity {
     }
 
     private void buildUi() {
-        FrameLayout root = new FrameLayout(this);
+        root = new FrameLayout(this);
         root.setBackgroundColor(BG);
 
         pager = new ViewPager2(this);
@@ -139,6 +142,12 @@ public final class TvReelsActivityHardened extends Activity {
         adapter = new ReelAdapter();
         pager.setAdapter(adapter);
         root.addView(pager, new FrameLayout.LayoutParams(-1, -1));
+
+        // One Activity-owned playback surface. It is never a child of a recycled page.
+        playerOverlay = new FrameLayout(this);
+        playerOverlay.setBackgroundColor(Color.BLACK);
+        playerOverlay.setVisibility(View.GONE);
+        root.addView(playerOverlay, new FrameLayout.LayoutParams(-1, -1));
 
         root.addView(buildTopBar(), new FrameLayout.LayoutParams(-1, dp(70), Gravity.TOP));
         root.addView(buildFeedState(), new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
@@ -157,6 +166,7 @@ public final class TvReelsActivityHardened extends Activity {
 
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override public void onPageSelected(int position) {
+                // Do not mutate the adapter from this callback. Only stop the independent player.
                 releasePlayer();
                 if (!visible.isEmpty() && position >= visible.size() - 2) loadMoreFeed();
                 setStatus(visible.isEmpty() ? "● NO CHANNELS" : "● READY • " + (position + 1) + "/" + visible.size());
@@ -216,7 +226,7 @@ public final class TvReelsActivityHardened extends Activity {
         addButton(panel, "▶  Play selected", v -> playPosition(pager.getCurrentItem()));
         addButton(panel, "↻  Retry selected", v -> retryCurrent());
         addButton(panel, "Mute / unmute", v -> toggleMute());
-        addButton(panel, "□  Fit video to screen", v -> fitActiveVideo());
+        addButton(panel, "□  Close video", v -> releasePlayer());
         return panel;
     }
 
@@ -248,7 +258,7 @@ public final class TvReelsActivityHardened extends Activity {
     }
 
     private FrameLayout.LayoutParams panelParams(int gravity) {
-        int width = Math.min(dp(320), Math.max(dp(210), (int)(getResources().getDisplayMetrics().widthPixels * 0.76f)));
+        int width = Math.min(dp(320), Math.max(dp(210), (int) (getResources().getDisplayMetrics().widthPixels * 0.76f)));
         FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(width, -1, gravity);
         p.topMargin = dp(62);
         p.bottomMargin = dp(8);
@@ -315,8 +325,13 @@ public final class TvReelsActivityHardened extends Activity {
     private void acceptBatch(List<IptvReel> batch, boolean initial) {
         if (destroyed) return;
         loading = false;
+        int oldCount = visible.size();
         if (batch != null) for (IptvReel r : batch) addIfValid(r);
-        if (adapter != null) adapter.notifyDataSetChanged();
+        int added = visible.size() - oldCount;
+        if (adapter != null && added > 0) {
+            // Range notification is safer for ViewPager2 than notifyDataSetChanged during page callbacks.
+            adapter.notifyItemRangeInserted(oldCount, added);
+        }
         if (visible.isEmpty() && initial) feedError();
         else if (!visible.isEmpty()) {
             hideFeedState();
@@ -332,17 +347,12 @@ public final class TvReelsActivityHardened extends Activity {
         visible.add(reel);
     }
 
-    /** Only the selected page gets a video surface. No Media3 UI surface is created while browsing the catalog. */
+    /** Starts exactly one Media3 player in an Activity-owned overlay, never inside a recycled page. */
     private void playPosition(int position) {
         if (destroyed || position < 0 || position >= visible.size()) return;
         IptvReel item = visible.get(position);
         if (item == null || !IptvFeedClientV2.isPlayableHls(item.url)) {
             channelError("Invalid IPTV stream");
-            return;
-        }
-        ReelAdapter.Holder holder = findHolder(position);
-        if (holder == null) {
-            channelError("Video surface is not ready");
             return;
         }
         releasePlayer();
@@ -379,7 +389,7 @@ public final class TvReelsActivityHardened extends Activity {
                     .build();
             DefaultRenderersFactory renderers = new DefaultRenderersFactory(this)
                     .setEnableDecoderFallback(true);
-            ExoPlayer next = new ExoPlayer.Builder(this)
+            final ExoPlayer next = new ExoPlayer.Builder(this)
                     .setLoadControl(control)
                     .setRenderersFactory(renderers)
                     .build();
@@ -396,29 +406,23 @@ public final class TvReelsActivityHardened extends Activity {
                         } catch (Throwable ignored) { }
                     }
                     channelError("Channel unavailable • swipe to continue");
-                    detach(holder);
-                    if (player == next) releasePlayer();
+                    releasePlayer();
                 }
             });
 
-            TextureView texture = new TextureView(this);
-            texture.setOpaque(false);
-            texture.setBackgroundColor(Color.BLACK);
-            holder.videoContainer.removeAllViews();
-            holder.videoContainer.addView(texture, new FrameLayout.LayoutParams(-1, -1));
+            playerOverlay.removeAllViews();
+            TextView loadingLabel = text("Connecting to live channel…", 13, MUTED, true);
+            loadingLabel.setGravity(Gravity.CENTER);
+            playerOverlay.addView(loadingLabel, new FrameLayout.LayoutParams(-1, -1));
+            playerOverlay.setVisibility(View.VISIBLE);
 
             player = next;
             activePosition = position;
-            activeTexture = texture;
-            activeVideoContainer = holder.videoContainer;
-            next.setVideoTextureView(texture);
             next.setMediaSource(new HlsMediaSource.Factory(http).createMediaSource(media));
             next.prepare();
             next.play();
-            holder.play.setVisibility(View.GONE);
-            setStatus("● LIVE • " + safe(item.title));
+            setStatus("● CONNECTING • " + safe(item.title));
         } catch (Throwable t) {
-            detach(holder);
             releasePlayer();
             channelError("Channel could not start • swipe to continue");
         }
@@ -438,27 +442,8 @@ public final class TvReelsActivityHardened extends Activity {
         toast(muted ? "Muted" : "Sound on");
     }
 
-    private void fitActiveVideo() {
-        if (activeTexture != null) activeTexture.setScaleX(1f);
-        if (activeTexture != null) activeTexture.setScaleY(1f);
-        toast("Video fitted to screen");
-    }
-
-    private void detach(ReelAdapter.Holder holder) {
-        if (holder == null) return;
-        try {
-            if (holder.videoContainer != null) holder.videoContainer.removeAllViews();
-            if (holder.play != null) holder.play.setVisibility(View.VISIBLE);
-        } catch (Throwable ignored) { }
-    }
-
     private void releasePlayer() {
-        TextureView texture = activeTexture;
-        activeTexture = null;
-        activeVideoContainer = null;
-        if (texture != null) {
-            try { texture.setSurfaceTextureListener(null); } catch (Throwable ignored) { }
-        }
+        activePosition = RecyclerView.NO_POSITION;
         if (player != null) {
             ExoPlayer old = player;
             player = null;
@@ -466,16 +451,12 @@ public final class TvReelsActivityHardened extends Activity {
             try { old.stop(); } catch (Throwable ignored) { }
             try { old.release(); } catch (Throwable ignored) { }
         }
-        activePosition = RecyclerView.NO_POSITION;
-        if (adapter != null) adapter.notifyDataSetChanged();
-    }
-
-    @Nullable private ReelAdapter.Holder findHolder(int position) {
-        if (pager == null) return null;
-        View child = pager.getChildAt(0);
-        if (!(child instanceof RecyclerView)) return null;
-        RecyclerView.ViewHolder holder = ((RecyclerView) child).findViewHolderForAdapterPosition(position);
-        return holder instanceof ReelAdapter.Holder ? (ReelAdapter.Holder) holder : null;
+        if (playerOverlay != null) {
+            try {
+                playerOverlay.removeAllViews();
+                playerOverlay.setVisibility(View.GONE);
+            } catch (Throwable ignored) { }
+        }
     }
 
     private void feedError() {
@@ -507,24 +488,24 @@ public final class TvReelsActivityHardened extends Activity {
     }
 
     private void showSafeFallback() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setGravity(Gravity.CENTER);
-        root.setPadding(dp(24), dp(24), dp(24), dp(24));
-        root.setBackgroundColor(BG);
+        LinearLayout safeRoot = new LinearLayout(this);
+        safeRoot.setOrientation(LinearLayout.VERTICAL);
+        safeRoot.setGravity(Gravity.CENTER);
+        safeRoot.setPadding(dp(24), dp(24), dp(24), dp(24));
+        safeRoot.setBackgroundColor(BG);
         TextView title = text("Live TV is temporarily unavailable", 20, WHITE, true);
         title.setGravity(Gravity.CENTER);
-        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        safeRoot.addView(title, new LinearLayout.LayoutParams(-1, -2));
         TextView detail = text("The optional player surface failed safely. Your receiver remains available.", 13, MUTED, false);
         detail.setGravity(Gravity.CENTER);
         detail.setPadding(0, dp(10), 0, dp(18));
-        root.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        safeRoot.addView(detail, new LinearLayout.LayoutParams(-1, -2));
         TextView open = text("OPEN RECEIVER", 13, Color.BLACK, true);
         open.setGravity(Gravity.CENTER);
         open.setBackground(rounded(ACCENT, 18));
         open.setOnClickListener(v -> openReceiver());
-        root.addView(open, new LinearLayout.LayoutParams(-1, dp(52)));
-        setContentView(root);
+        safeRoot.addView(open, new LinearLayout.LayoutParams(-1, dp(52)));
+        setContentView(safeRoot);
     }
 
     private void openReceiver() {
@@ -535,13 +516,17 @@ public final class TvReelsActivityHardened extends Activity {
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
 
     private final class ReelAdapter extends RecyclerView.Adapter<ReelAdapter.Holder> {
-        @NonNull @Override public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            FrameLayout root = new FrameLayout(parent.getContext());
-            root.setBackgroundColor(Color.BLACK);
+        ReelAdapter() { setHasStableIds(true); }
 
-            FrameLayout video = new FrameLayout(parent.getContext());
-            video.setBackgroundColor(Color.BLACK);
-            root.addView(video, new FrameLayout.LayoutParams(-1, -1));
+        @Override public long getItemId(int position) {
+            IptvReel item = visible.get(position);
+            String key = item == null ? String.valueOf(position) : safe(item.url);
+            return key.hashCode() & 0xffffffffL;
+        }
+
+        @NonNull @Override public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
+            FrameLayout page = new FrameLayout(parent.getContext());
+            page.setBackgroundColor(Color.BLACK);
 
             LinearLayout overlay = new LinearLayout(parent.getContext());
             overlay.setOrientation(LinearLayout.VERTICAL);
@@ -554,13 +539,13 @@ public final class TvReelsActivityHardened extends Activity {
             TextView hint = text("Tap to play • swipe for next", 11, MUTED, false);
             hint.setPadding(0, dp(6), 0, 0);
             overlay.addView(hint, new LinearLayout.LayoutParams(-1, -2));
-            root.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+            page.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
 
             TextView play = text("▶", 28, WHITE, true);
             play.setGravity(Gravity.CENTER);
             play.setBackground(rounded(Color.argb(175, 43, 33, 59), 40));
-            root.addView(play, new FrameLayout.LayoutParams(dp(70), dp(70), Gravity.CENTER));
-            return new Holder(root, video, title, play);
+            page.addView(play, new FrameLayout.LayoutParams(dp(70), dp(70), Gravity.CENTER));
+            return new Holder(page, title, play);
         }
 
         @Override public void onBindViewHolder(@NonNull Holder holder, int position) {
@@ -578,20 +563,19 @@ public final class TvReelsActivityHardened extends Activity {
         }
 
         @Override public void onViewRecycled(@NonNull Holder holder) {
-            if (activePosition == holder.getBindingAdapterPosition()) releasePlayer();
-            detach(holder);
+            // Pages contain no player/surface, so recycling is intentionally side-effect free.
+            holder.play.setOnClickListener(null);
+            holder.itemView.setOnClickListener(null);
             super.onViewRecycled(holder);
         }
 
         @Override public int getItemCount() { return visible.size(); }
 
         final class Holder extends RecyclerView.ViewHolder {
-            final FrameLayout videoContainer;
             final TextView title;
             final TextView play;
-            Holder(View root, FrameLayout videoContainer, TextView title, TextView play) {
+            Holder(View root, TextView title, TextView play) {
                 super(root);
-                this.videoContainer = videoContainer;
                 this.title = title;
                 this.play = play;
             }
