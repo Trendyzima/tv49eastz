@@ -8,7 +8,9 @@ import androidx.annotation.NonNull;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
 import java.io.IOException;
+import java.io.Reader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -38,6 +40,8 @@ public final class IptvFeedClientV2 {
     private static final String CACHE = "reels";
     private static final int MAX_REELS = 240;
     private static final int PER_SOURCE = 55;
+    // Never split an entire remote playlist into a String[]: some public playlists are large.
+    private static final long MAX_PLAYLIST_CHARS = 6L * 1024L * 1024L;
 
     private final SharedPreferences prefs;
     private final OkHttpClient client = new OkHttpClient.Builder()
@@ -52,7 +56,7 @@ public final class IptvFeedClientV2 {
         prefs = context.getApplicationContext().getSharedPreferences(PREFS, Context.MODE_PRIVATE);
     }
 
-    /** Returns cached channels immediately, then refreshes from multiple independent playlists. */
+    /** Returns cached channels immediately, then refreshes sources one at a time. */
     public void load(Listener listener) {
         List<IptvReel> cached = readCache();
         if (!cached.isEmpty()) listener.onSuccess(cached);
@@ -65,7 +69,44 @@ public final class IptvFeedClientV2 {
         sources.add(SPORTS);
         sources.add(UK);
         sources.add(US);
-        loadSources(sources, listener, cached.isEmpty());
+        loadSourceSequence(sources, 0, listener, cached.isEmpty(),
+                Collections.synchronizedList(new ArrayList<>()),
+                Collections.synchronizedSet(new HashSet<>()));
+    }
+
+    private void loadSourceSequence(List<String> urls, int index, Listener listener,
+                                    boolean mustReturnError, List<IptvReel> merged, Set<String> seen) {
+        if (index >= urls.size()) {
+            if (merged.isEmpty() && mustReturnError) listener.onError(new IOException("No playable IPTV HLS sources returned"));
+            return;
+        }
+
+        String url = urls.get(index);
+        client.newCall(request(url)).enqueue(new Callback() {
+            @Override public void onFailure(@NonNull Call call, @NonNull IOException e) {
+                loadSourceSequence(urls, index + 1, listener, mustReturnError, merged, seen);
+            }
+
+            @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
+                try (Response r = response) {
+                    if (!r.isSuccessful() || r.body() == null) throw new IOException("HTTP " + r.code());
+                    List<IptvReel> parsed = parseM3u(r.body().charStream(), sourceName(url), PER_SOURCE);
+                    synchronized (merged) {
+                        for (IptvReel reel : parsed) {
+                            if (merged.size() >= MAX_REELS) break;
+                            if (seen.add(reel.url)) merged.add(reel);
+                        }
+                        if (!merged.isEmpty()) {
+                            writeCache(merged);
+                            listener.onSuccess(new ArrayList<>(merged));
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // Continue with the next independent source.
+                }
+                loadSourceSequence(urls, index + 1, listener, mustReturnError, merged, seen);
+            }
+        });
     }
 
     public void loadSource(String url, String sourceName, Listener listener) {
@@ -78,64 +119,12 @@ public final class IptvFeedClientV2 {
             @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
                 try (Response r = response) {
                     if (!r.isSuccessful() || r.body() == null) throw new IOException("playlist HTTP " + r.code());
-                    List<IptvReel> parsed = parseM3u(r.body().string(), sourceName, MAX_REELS);
+                    List<IptvReel> parsed = parseM3u(r.body().charStream(), sourceName, MAX_REELS);
                     if (parsed.isEmpty()) throw new IOException("No playable HLS entries found");
                     listener.onSuccess(parsed);
                 } catch (Exception e) { listener.onError(e); }
             }
         });
-    }
-
-    private void loadSources(List<String> urls, Listener listener, boolean mustReturnError) {
-        List<IptvReel> merged = Collections.synchronizedList(new ArrayList<>());
-        Set<String> seen = Collections.synchronizedSet(new HashSet<>());
-        final int[] remaining = {urls.size()};
-        final boolean[] delivered = {false};
-
-        for (String url : urls) {
-            client.newCall(request(url)).enqueue(new Callback() {
-                @Override public void onFailure(@NonNull Call call, @NonNull IOException e) { finish(); }
-
-                @Override public void onResponse(@NonNull Call call, @NonNull Response response) {
-                    try (Response r = response) {
-                        if (!r.isSuccessful() || r.body() == null) throw new IOException("HTTP " + r.code());
-                        List<IptvReel> parsed = parseM3u(r.body().string(), sourceName(url), PER_SOURCE);
-                        synchronized (merged) {
-                            for (IptvReel reel : parsed) {
-                                if (merged.size() >= MAX_REELS) break;
-                                if (seen.add(reel.url)) merged.add(reel);
-                            }
-                            // Do not wait for every remote source. One healthy source is enough to start playback.
-                            if (!delivered[0] && merged.size() >= 8) {
-                                delivered[0] = true;
-                                writeCache(merged);
-                                listener.onSuccess(new ArrayList<>(merged));
-                            }
-                        }
-                    } catch (Exception ignored) {
-                        // Another source can still populate the feed.
-                    }
-                    finish();
-                }
-
-                private void finish() {
-                    synchronized (remaining) {
-                        remaining[0]--;
-                        if (remaining[0] == 0) {
-                            synchronized (merged) {
-                                if (!merged.isEmpty()) {
-                                    delivered[0] = true;
-                                    writeCache(merged);
-                                    listener.onSuccess(new ArrayList<>(merged));
-                                } else if (mustReturnError && !delivered[0]) {
-                                    listener.onError(new IOException("No playable IPTV HLS sources returned"));
-                                }
-                            }
-                        }
-                    }
-                }
-            });
-        }
     }
 
     private Request request(String url) {
@@ -158,39 +147,44 @@ public final class IptvFeedClientV2 {
         return "IPTV";
     }
 
-    private List<IptvReel> parseM3u(String body, String source, int limit) {
+    private List<IptvReel> parseM3u(Reader sourceReader, String source, int limit) throws IOException {
         ArrayList<IptvReel> result = new ArrayList<>();
-        if (body == null || body.trim().isEmpty()) return result;
+        if (sourceReader == null) return result;
 
         String title = source;
         String referrer = "";
         String userAgent = "";
         int index = 0;
-        String[] lines = body.split("\\r?\\n");
+        long charsRead = 0;
 
-        for (String raw : lines) {
-            String line = raw.trim();
-            if (line.startsWith("#EXTINF:")) {
-                int comma = line.indexOf(',');
-                title = comma >= 0 ? line.substring(comma + 1).trim() : source;
-                referrer = firstAttribute(line, "http-referrer", "referrer");
-                userAgent = firstAttribute(line, "http-user-agent", "user-agent");
-            } else if (line.regionMatches(true, 0, "#EXTVLCOPT:http-referrer=", 0, 25)) {
-                referrer = line.substring(25).trim();
-            } else if (line.regionMatches(true, 0, "#EXTVLCOPT:http-user-agent=", 0, 27)) {
-                userAgent = line.substring(27).trim();
-            } else if (isPlayableHls(line)) {
-                result.add(new IptvReel(
-                        source + "-" + index,
-                        source,
-                        safe(title, "Live channel"),
-                        line,
-                        "Live",
-                        referrer,
-                        userAgent,
-                        source));
-                index++;
-                if (result.size() >= limit) break;
+        try (BufferedReader reader = new BufferedReader(sourceReader, 16 * 1024)) {
+            String raw;
+            while ((raw = reader.readLine()) != null) {
+                charsRead += raw.length() + 1L;
+                if (charsRead > MAX_PLAYLIST_CHARS) break;
+                String line = raw.trim();
+                if (line.startsWith("#EXTINF:")) {
+                    int comma = line.indexOf(',');
+                    title = comma >= 0 ? line.substring(comma + 1).trim() : source;
+                    referrer = firstAttribute(line, "http-referrer", "referrer");
+                    userAgent = firstAttribute(line, "http-user-agent", "user-agent");
+                } else if (line.regionMatches(true, 0, "#EXTVLCOPT:http-referrer=", 0, 25)) {
+                    referrer = line.substring(25).trim();
+                } else if (line.regionMatches(true, 0, "#EXTVLCOPT:http-user-agent=", 0, 27)) {
+                    userAgent = line.substring(27).trim();
+                } else if (isPlayableHls(line)) {
+                    result.add(new IptvReel(
+                            source + "-" + index,
+                            source,
+                            safe(title, "Live channel"),
+                            line,
+                            "Live",
+                            referrer,
+                            userAgent,
+                            source));
+                    index++;
+                    if (result.size() >= limit) break;
+                }
             }
         }
         return result;
