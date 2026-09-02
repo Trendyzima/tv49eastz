@@ -1,0 +1,101 @@
+name: End-to-end streaming contract
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'app/**'
+      - 'tv-receiver/**'
+      - 'server-tap/**'
+      - 'device-tunnel/**'
+      - 'stream-catalog/**'
+      - 'stream-gateway/**'
+      - 'origin-shield/**'
+      - 'deploy/edge/**'
+      - '.github/workflows/e2e-contract.yml'
+  pull_request:
+    paths:
+      - 'app/**'
+      - 'tv-receiver/**'
+      - 'server-tap/**'
+      - 'device-tunnel/**'
+      - 'stream-catalog/**'
+      - 'stream-gateway/**'
+      - 'origin-shield/**'
+      - 'deploy/edge/**'
+      - '.github/workflows/e2e-contract.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  go-contracts:
+    name: Go ${{ matrix.component }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - server-tap
+          - device-tunnel
+          - stream-catalog
+          - stream-gateway
+          - origin-shield
+    defaults:
+      run:
+        working-directory: ${{ matrix.component }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+          cache-dependency-path: ${{ matrix.component }}/go.mod
+      - name: Format check
+        run: test -z "$(gofmt -l .)"
+      - name: Tests
+        run: go test ./... -count=1 -race
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build -trimpath ./...
+
+  android-receiver:
+    name: TV 49 East receiver build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: android-actions/setup-android@v3
+      - name: Assemble receiver
+        run: ./gradlew :tv-receiver:assembleDebug --no-daemon
+
+  wiring-contract:
+    name: Verify deployment wiring contract
+    runs-on: ubuntu-latest
+    needs: [go-contracts, android-receiver]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required integration boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -f server-tap/go.mod
+          test -f device-tunnel/go.mod
+          test -f stream-catalog/go.mod
+          test -f stream-gateway/go.mod
+          test -f origin-shield/go.mod
+          test -f tv-receiver/build.gradle.kts
+          grep -q 'TUNNEL_PROXY_BASE_URL' deploy/edge/.env.example
+          grep -q 'CREATOR_REGISTRY_FILE' deploy/edge/.env.example
+          grep -q 'RELAY_SIGNING_SECRET' deploy/edge/.env.example
+          grep -q 'TV_EAST_CATALOG_URL' deploy/edge/.env.example
+          grep -q '/v1/catalog' deploy/edge/README.md
+          grep -q '/v1/relay?id=' deploy/edge/README.md
+          grep -q '/live.m3u8' deploy/edge/README.md
+          echo 'E2E wiring contract is structurally present.'
