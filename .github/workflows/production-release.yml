@@ -193,7 +193,7 @@ jobs:
           printf '%s\n' 'TV 49 East production APK security gate' "Commit: $GITHUB_SHA" "Ref: $GITHUB_REF" "Date: $(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$report"
           printf '%s\n' 'Policy: build -> signature -> scheme -> target SDK -> merged manifest -> forbidden permissions/aliases -> debuggable -> package ID -> SHA-256 -> publish' >> "$report"
 
-          keystore_cert="$(keytool -list -v -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | awk -F': ' '/^\s*SHA256:/{print $2; exit}')"
+          keystore_cert="$(keytool -list -v -keystore /tmp/tv49eastz-release.jks -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | awk -F': ' '/^[[:space:]]*SHA256:/{print $2; exit}')"
           test -n "$keystore_cert" || { echo 'FAIL: Could not read expected signing certificate from release keystore'; exit 1; }
           keystore_cert="${keystore_cert//:/}"
           keystore_cert="$(printf '%s' "$keystore_cert" | tr '[:lower:]' '[:upper:]')"
@@ -203,7 +203,7 @@ jobs:
             local apk="$1"
             local expected_package="$2"
             local label="$3"
-            local manifest permissions app_id target_sdk debuggable certs aliases
+            local manifest permissions app_id target_sdk debuggable aliases certs actual_cert
 
             echo "===== $label ====="
             printf '%s\n' "[$label] $apk" >> "$report"
@@ -319,8 +319,8 @@ jobs:
           retention-days: 30
           path: |
             dist/FadCam.aab
-            dist/FadCam.apk
             dist/TV49East.apk
+            dist/FadCam.apk
             dist/SHA256SUMS.txt
             dist/RELEASE-CERTIFICATE.txt
             dist/SECURITY-GATE.txt
