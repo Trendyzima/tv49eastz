@@ -5,7 +5,8 @@ import android.graphics.Typeface;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Bundle;
-import android.view.GestureDetector;
+import android.os.Handler;
+import android.os.Looper;
 import android.view.Gravity;
 import android.view.MotionEvent;
 import android.view.View;
@@ -33,13 +34,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * TV 49 East receiver surface.
- *
- * The video viewport deliberately has no forced 16:9 parent. It fills the actual app window
- * in portrait and landscape. Media3 keeps the source fitted inside that viewport so a camera
- * stream is not geometrically stretched. The receiver catalog is FadCam-only.
- */
+/** TV 49 East receiver surface: full-window viewport, FadCam-only catalog and auto-hiding chrome. */
 public final class MainActivity extends AppCompatActivity {
     private static final int BG = Color.rgb(12, 11, 16);
     private static final int SURFACE = Color.rgb(29, 23, 45);
@@ -50,26 +45,29 @@ public final class MainActivity extends AppCompatActivity {
     private static final int MUTED = Color.rgb(190, 184, 205);
     private static final int GOOD = Color.rgb(119, 221, 119);
     private static final int ERROR = Color.rgb(244, 91, 91);
+    private static final long NAV_HIDE_DELAY_MS = 3000L;
+
+    private final Handler chromeHandler = new Handler(Looper.getMainLooper());
+    private final Runnable hideBottomNavRunnable = () -> {
+        bottomNavHidden = true;
+        applyBottomNav(true);
+    };
 
     private ExoPlayer player;
     private PlayerView playerView;
     private TextView status;
     private Button stop;
     private LinearLayout channelList;
-    private ScrollView channelScroll;
     private CatalogClient catalogClient;
     private ChannelStore store;
     private final List<ChannelStore.Channel> channels = new ArrayList<>();
 
     private View leftPanel;
     private View rightPanel;
-    private View leftToggle;
-    private View rightToggle;
     private View bottomNav;
     private boolean leftOpen;
     private boolean rightOpen;
-    private boolean bottomNavHidden;
-    private GestureDetector gestureDetector;
+    private boolean bottomNavHidden = true;
 
     @Override protected void onCreate(@Nullable Bundle state) {
         super.onCreate(state);
@@ -78,39 +76,33 @@ public final class MainActivity extends AppCompatActivity {
         if (state != null) {
             leftOpen = state.getBoolean("left_open", false);
             rightOpen = state.getBoolean("right_open", false);
-            bottomNavHidden = state.getBoolean("bottom_hidden", false);
         }
         store = new ChannelStore(this);
         catalogClient = new CatalogClient(BuildConfig.TV_EAST_CATALOG_URL);
-        gestureDetector = new GestureDetector(this, new GestureDetector.SimpleOnGestureListener() {
-            @Override public boolean onDown(MotionEvent e) { return true; }
-            @Override public boolean onDoubleTap(MotionEvent e) {
-                toggleBottomNav();
-                return true;
-            }
-        });
         buildUi();
         refreshCatalog();
     }
 
+    /** Every real screen touch reveals the bottom navigation and restarts its 3-second timer. */
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
-        try { gestureDetector.onTouchEvent(event); } catch (Throwable ignored) { }
+        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) showBottomNavForInteraction();
         return super.dispatchTouchEvent(event);
     }
 
     @Override protected void onSaveInstanceState(@NonNull Bundle out) {
         out.putBoolean("left_open", leftOpen);
         out.putBoolean("right_open", rightOpen);
-        out.putBoolean("bottom_hidden", bottomNavHidden);
         super.onSaveInstanceState(out);
     }
 
     @Override protected void onPause() {
+        chromeHandler.removeCallbacks(hideBottomNavRunnable);
         stopPlayback();
         super.onPause();
     }
 
     @Override protected void onDestroy() {
+        chromeHandler.removeCallbacks(hideBottomNavRunnable);
         stopPlayback();
         super.onDestroy();
     }
@@ -145,9 +137,7 @@ public final class MainActivity extends AppCompatActivity {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BG);
 
-        // Full physical-window viewport. There is intentionally no AspectRatioFrameLayout here:
-        // the device/window dimensions define the screen area. PlayerView FIT protects the
-        // actual stream from stretching while allowing the black viewport to match the phone.
+        // No forced 16:9 parent. The physical app window defines the viewport in every orientation.
         FrameLayout videoFrame = new FrameLayout(this);
         videoFrame.setBackgroundColor(Color.BLACK);
         playerView = new PlayerView(this);
@@ -164,26 +154,25 @@ public final class MainActivity extends AppCompatActivity {
         root.addView(leftPanel, panelParams(Gravity.LEFT));
         root.addView(rightPanel, panelParams(Gravity.RIGHT));
 
-        // Transparent edge targets: the controls remain usable without visible arrows or tabs.
-        leftToggle = edgeToggle(true);
-        rightToggle = edgeToggle(false);
-        root.addView(leftToggle, edgeParams(Gravity.LEFT));
-        root.addView(rightToggle, edgeParams(Gravity.RIGHT));
+        // Invisible edge hit areas keep the side drawers accessible without visible arrows.
+        root.addView(edgeToggle(true), edgeParams(Gravity.LEFT));
+        root.addView(edgeToggle(false), edgeParams(Gravity.RIGHT));
 
         bottomNav = buildBottomNav();
         root.addView(bottomNav, new FrameLayout.LayoutParams(-1, dp(76), Gravity.BOTTOM));
         setContentView(root);
         applyChrome(false);
+        bottomNavHidden = true;
         applyBottomNav(false);
     }
 
-    /** Left drawer contains identity and only FadCam-originated streams. */
     private LinearLayout buildLeftPanel() {
         LinearLayout p = sidePanel();
         p.addView(label("TV 49 EAST", 17f, TEXT, true), new LinearLayout.LayoutParams(-1, dp(32)));
         p.addView(label("FadCam-originated streams", 13f, ACCENT, true), new LinearLayout.LayoutParams(-1, dp(30)));
         status = pill("SERVER NOT CONFIGURED", ERROR);
         p.addView(status, new LinearLayout.LayoutParams(-2, dp(32)));
+
         TextView note = label("Only authorized FadCam creator streams are shown. IPTV aggregation is not part of this receiver.", 12f, MUTED, false);
         note.setPadding(0, dp(14), 0, dp(12));
         p.addView(note, new LinearLayout.LayoutParams(-1, -2));
@@ -192,17 +181,16 @@ public final class MainActivity extends AppCompatActivity {
         heading.setLetterSpacing(0.12f);
         p.addView(heading, new LinearLayout.LayoutParams(-1, dp(28)));
 
-        channelScroll = new ScrollView(this);
+        ScrollView scroll = new ScrollView(this);
         channelList = new LinearLayout(this);
         channelList.setOrientation(LinearLayout.VERTICAL);
-        channelScroll.addView(channelList, new ScrollView.LayoutParams(-1, -2));
-        p.addView(channelScroll, new LinearLayout.LayoutParams(-1, 0, 1f));
+        scroll.addView(channelList, new ScrollView.LayoutParams(-1, -2));
+        p.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
 
         addPanelButton(p, "Close", v -> { leftOpen = false; applyChrome(true); });
         return p;
     }
 
-    /** Right drawer contains receiver controls, not IPTV controls. */
     private LinearLayout buildRightPanel() {
         LinearLayout p = sidePanel();
         p.addView(label("CONTROLS", 17f, TEXT, true), new LinearLayout.LayoutParams(-1, dp(32)));
@@ -210,7 +198,6 @@ public final class MainActivity extends AppCompatActivity {
         addPanelButton(p, "Refresh FadCam catalog", v -> refreshCatalog());
         TextView protocol = label("Authorized HTTPS FadCam relay only", 11f, MUTED, false);
         protocol.setGravity(Gravity.CENTER);
-        protocol.setPadding(0, dp(8), 0, dp(8));
         p.addView(protocol, new LinearLayout.LayoutParams(-1, dp(48)));
         stop = actionButton("STOP PLAYBACK", SURFACE_2);
         stop.setEnabled(false);
@@ -227,8 +214,8 @@ public final class MainActivity extends AppCompatActivity {
         nav.setPadding(dp(8), dp(6), dp(8), dp(7));
         nav.setBackground(surface(Color.rgb(20, 18, 25), 22));
         nav.addView(navItem("⌂", "Home", true, v -> { leftOpen = false; rightOpen = false; applyChrome(true); }));
-        nav.addView(navItem("TV", "FadCam", false, v -> { leftOpen = true; applyChrome(true); }));
-        nav.addView(navItem("＋", "Add", false, v -> { rightOpen = true; applyChrome(true); }));
+        nav.addView(navItem("TV", "FadCam", false, v -> { leftOpen = true; rightOpen = false; applyChrome(true); }));
+        nav.addView(navItem("＋", "Add", false, v -> { rightOpen = true; leftOpen = false; applyChrome(true); }));
         nav.addView(navItem("■", "Stop", false, v -> stopPlayback()));
         return nav;
     }
@@ -286,7 +273,6 @@ public final class MainActivity extends AppCompatActivity {
         return new FrameLayout.LayoutParams(width, -1, gravity);
     }
 
-    /** Completely transparent touch target. There is no visible arrow, pill or ripple. */
     private View edgeToggle(boolean left) {
         View hit = new View(this);
         hit.setBackgroundColor(Color.TRANSPARENT);
@@ -301,9 +287,7 @@ public final class MainActivity extends AppCompatActivity {
     }
 
     private FrameLayout.LayoutParams edgeParams(int gravity) {
-        FrameLayout.LayoutParams p = new FrameLayout.LayoutParams(dp(46), dp(120), gravity | Gravity.CENTER_VERTICAL);
-        if (gravity == Gravity.LEFT) p.leftMargin = 0; else p.rightMargin = 0;
-        return p;
+        return new FrameLayout.LayoutParams(dp(46), dp(120), gravity | Gravity.CENTER_VERTICAL);
     }
 
     private void applyChrome(boolean animate) {
@@ -321,9 +305,18 @@ public final class MainActivity extends AppCompatActivity {
         }
     }
 
-    private void toggleBottomNav() {
-        bottomNavHidden = !bottomNavHidden;
-        applyBottomNav(true);
+    private void showBottomNavForInteraction() {
+        chromeHandler.removeCallbacks(hideBottomNavRunnable);
+        if (bottomNav == null) return;
+        if (bottomNavHidden) {
+            bottomNavHidden = false;
+            applyBottomNav(true);
+        } else {
+            bottomNav.setVisibility(View.VISIBLE);
+            bottomNav.setAlpha(1f);
+            bottomNav.setTranslationY(0f);
+        }
+        chromeHandler.postDelayed(hideBottomNavRunnable, NAV_HIDE_DELAY_MS);
     }
 
     private void applyBottomNav(boolean animate) {
@@ -331,28 +324,33 @@ public final class MainActivity extends AppCompatActivity {
         bottomNav.animate().cancel();
         if (bottomNavHidden) {
             bottomNav.setVisibility(View.VISIBLE);
-            if (!animate) {
+            if (animate) {
+                bottomNav.animate()
+                        .translationY(bottomNav.getHeight() + dp(12))
+                        .alpha(0f)
+                        .setDuration(180)
+                        .withEndAction(() -> bottomNav.setVisibility(View.INVISIBLE))
+                        .start();
+            } else {
                 bottomNav.setTranslationY(dp(96));
                 bottomNav.setAlpha(0f);
                 bottomNav.setVisibility(View.INVISIBLE);
-                return;
             }
-            bottomNav.animate().translationY(bottomNav.getHeight() + dp(12)).alpha(0f).setDuration(180)
-                    .withEndAction(() -> bottomNav.setVisibility(View.INVISIBLE)).start();
         } else {
             bottomNav.setVisibility(View.VISIBLE);
-            if (!animate) {
+            if (animate) {
+                bottomNav.setTranslationY(bottomNav.getHeight() + dp(12));
+                bottomNav.setAlpha(0f);
+                bottomNav.animate().translationY(0f).alpha(1f).setDuration(180).start();
+            } else {
                 bottomNav.setTranslationY(0f);
                 bottomNav.setAlpha(1f);
-                return;
             }
-            bottomNav.animate().translationY(0f).alpha(1f).setDuration(180).start();
         }
     }
 
     private void refreshCatalog() {
         if (store == null || catalogClient == null) return;
-        // Local store remains available for explicitly authorized FadCam relays added by the user.
         renderChannels(store.load());
         catalogClient.load(new CatalogClient.Listener() {
             @Override public void onSuccess(List<ChannelStore.Channel> remote) {
@@ -422,7 +420,6 @@ public final class MainActivity extends AppCompatActivity {
         TextView play = label("▶", 17f, ACCENT, true);
         play.setGravity(Gravity.CENTER);
         card.addView(play, new LinearLayout.LayoutParams(dp(44), dp(44)));
-
         LinearLayout.LayoutParams p = new LinearLayout.LayoutParams(-1, dp(66));
         p.topMargin = dp(7);
         channelList.addView(card, p);
@@ -436,7 +433,8 @@ public final class MainActivity extends AppCompatActivity {
         Uri uri;
         try {
             uri = Uri.parse(channel.url.trim());
-            if (uri.getHost() == null || !("https".equalsIgnoreCase(uri.getScheme()) || "http".equalsIgnoreCase(uri.getScheme()))) throw new IllegalArgumentException();
+            String scheme = uri.getScheme();
+            if (uri.getHost() == null || !("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))) throw new IllegalArgumentException();
         } catch (Throwable t) {
             toast("Invalid FadCam relay URL");
             return;
