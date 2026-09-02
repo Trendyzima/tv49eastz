@@ -13,7 +13,7 @@ import java.security.spec.X509EncodedKeySpec;
 import java.util.HashSet;
 import java.util.Set;
 
-/** Validates the signed, short-lived FadCam → TV handoff contract. */
+/** Validates the signed, short-lived FadCam -> TV handoff contract. */
 public final class FadCamHandoffVerifier {
     private static final long MAX_CLOCK_SKEW_MS = 30_000L;
     private static final long MAX_LIFETIME_MS = 60_000L;
@@ -52,7 +52,7 @@ public final class FadCamHandoffVerifier {
         if (!"com.fadcam".equals(packageName) && !"com.fadcam.beta".equals(packageName)) {
             return Result.reject("unexpected publisher package");
         }
-        if (!isHttps(streamUrl)) return Result.reject("stream must be HTTPS");
+        if (!isPublicHttps(streamUrl)) return Result.reject("stream must use a public HTTPS origin");
 
         long issuedAt;
         long expiresAt;
@@ -88,9 +88,6 @@ public final class FadCamHandoffVerifier {
             verifier.update(canonical.getBytes(StandardCharsets.UTF_8));
             if (!verifier.verify(signatureBytes)) return Result.reject("invalid signature");
 
-            // Commit the nonce only after the signature is valid, but re-check while
-            // holding the same lock used by the initial lookup. This closes the TOCTOU
-            // window where two concurrent handoffs with the same nonce could both pass.
             synchronized (LOCK) {
                 if (USED_NONCES.contains(nonce)) return Result.reject("replayed nonce");
                 USED_NONCES.add(nonce);
@@ -146,16 +143,51 @@ public final class FadCamHandoffVerifier {
         }
     }
 
-    private static boolean isHttps(String value) {
+    private static boolean isPublicHttps(String value) {
         try {
             Uri parsed = Uri.parse(value.trim());
-            return "https".equalsIgnoreCase(parsed.getScheme())
-                    && parsed.getHost() != null
-                    && parsed.getUserInfo() == null
-                    && parsed.getFragment() == null;
+            if (!"https".equalsIgnoreCase(parsed.getScheme())
+                    || parsed.getHost() == null
+                    || parsed.getUserInfo() != null
+                    || parsed.getFragment() != null) {
+                return false;
+            }
+            String host = parsed.getHost();
+            if ("localhost".equalsIgnoreCase(host) || host.endsWith(".local")) return false;
+            if (looksLikeIpv4(host)) {
+                String[] octets = host.split("\\.");
+                int a = Integer.parseInt(octets[0]);
+                int b = Integer.parseInt(octets[1]);
+                if (a == 10 || a == 127 || (a == 169 && b == 254)
+                        || (a == 172 && b >= 16 && b <= 31)
+                        || (a == 192 && b == 168) || a == 0) {
+                    return false;
+                }
+            }
+            if (host.contains(":")) {
+                String lower = host.toLowerCase();
+                if (lower.equals("::1") || lower.startsWith("fc") || lower.startsWith("fd")
+                        || lower.startsWith("fe8") || lower.startsWith("fe9")
+                        || lower.startsWith("fea") || lower.startsWith("feb")) return false;
+            }
+            return true;
         } catch (Exception ignored) {
             return false;
         }
+    }
+
+    private static boolean looksLikeIpv4(String host) {
+        String[] parts = host.split("\\.", -1);
+        if (parts.length != 4) return false;
+        for (String part : parts) {
+            if (part.isEmpty() || part.length() > 3) return false;
+            for (int i = 0; i < part.length(); i++) {
+                if (!Character.isDigit(part.charAt(i))) return false;
+            }
+            int value = Integer.parseInt(part);
+            if (value > 255) return false;
+        }
+        return true;
     }
 
     private static boolean empty(String value) {
