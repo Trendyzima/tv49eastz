@@ -2,19 +2,17 @@ package com.fadcam.tv;
 
 import static org.junit.Assert.assertNotNull;
 
-import android.app.Activity;
-import android.os.Looper;
-
-import androidx.test.core.app.ActivityController;
-
 import org.junit.Test;
 import org.junit.runner.RunWith;
 import org.robolectric.Robolectric;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
-import org.robolectric.shadows.ShadowLooper;
+import org.robolectric.annotation.LooperMode;
+import org.robolectric.android.controller.ActivityController;
 
+/** Regression test for the actual Android launcher activity. */
 @RunWith(RobolectricTestRunner.class)
+@LooperMode(LooperMode.Mode.PAUSED)
 @Config(sdk = 35)
 public class HomeActivityStartupTest {
     @Test
@@ -27,6 +25,5 @@ public class HomeActivityStartupTest {
         assertNotNull(activity.findViewById(android.R.id.content));
 
         controller.pause().stop().destroy();
-        ShadowLooper.runUiThreadTasksIncludingDelayedTasks();
     }
 }
