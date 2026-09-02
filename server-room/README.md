@@ -5,17 +5,17 @@ This is the production boundary between the existing FadCam local HTTP producer 
 ## End-to-end topology
 
 ```text
-FadCam production server :8080
+FadCam production device :8080
         |
         | local/LAN only
         v
-server-tap 127.0.0.1:8788
+server-tap (AUTO-DISCOVERS FadCam)
         |
-        | outbound TLS 1.3 + device mTLS
+        | 127.0.0.1:8788
         v
 FadCam device-tunnel agent
         |
-        | outbound connection; no inbound port at origin
+        | outbound TLS 1.3 + device mTLS
         v
 public tunnel broker :9443
         |
@@ -33,22 +33,46 @@ Worldwide TV 49 East consumers
 
 The private FadCam address is never published to consumers. A private address such as `192.168.x.x`, `10.x.x.x`, or `172.16-31.x.x` cannot be converted into a globally routable address. The production solution is an outbound tunnel to a public edge, then HTTPS/DNS for consumers.
 
+## Zero manual FadCam IP configuration
+
+`FADCAM_LOCAL_IP` is **not required**.
+
+`server-tap` automatically discovers the FadCam HLS endpoint. It checks loopback first, then active local interfaces, then directly connected IPv4 LAN hosts on the FadCam HTTP port. A host is accepted only after `/live.m3u8` returns a valid HLS playlist with media/init-segment content. If FadCam is not ready when the service starts, discovery keeps retrying.
+
+Default discovery target:
+
+```text
+port = 8080
+playlist = /live.m3u8
+```
+
+Therefore a normal deployment can move between DHCP-assigned private addresses without editing an IP variable or rebuilding the tunnel configuration.
+
 ## Required production wiring
 
 ### Origin/server-room host
 
-Run the existing FadCam server unchanged on its local address, for example:
+Run the existing FadCam server normally. Do **not** copy its changing private IP into TV 49 East configuration.
 
-```text
-FadCam: http://192.168.1.50:8080
-```
-
-Configure server-tap:
+Run server-tap with only its local listener and normal limits:
 
 ```text
 TAP_LISTEN=127.0.0.1:8788
-TAP_UPSTREAM=http://192.168.1.50:8080
+TAP_TIMEOUT=10s
+TAP_MAX_PLAYLIST_BYTES=1048576
+TAP_MAX_PROXY_BODY_BYTES=67108864
 ```
+
+Optional discovery tuning:
+
+```text
+TAP_DISCOVERY_PORT=8080
+TAP_DISCOVERY_TIMEOUT=800ms
+TAP_DISCOVERY_WORKERS=32
+TAP_DISCOVERY_MAX_HOSTS=512
+```
+
+Leave `TAP_UPSTREAM` unset in production so discovery remains automatic.
 
 Configure the device-tunnel agent:
 
@@ -90,11 +114,11 @@ CREATOR_PUBLISH_KEY=<strong-random-publisher-secret>
 RELAY_SIGNING_SECRET=<strong-random-relay-secret>
 ```
 
-The relay now treats `source=fadcam` as a tunnel-backed origin. It does not require or accept a public FadCam origin URL. HLS playlists are rewritten so segments return through the same public relay and are capability-signed for a short lifetime.
+The relay treats `source=fadcam` as a tunnel-backed origin. It does not require or accept a public FadCam origin URL. HLS playlists are rewritten so segments return through the same public relay and are capability-signed for a short lifetime.
 
 ## Publishing a FadCam channel
 
-A trusted publisher registers the channel with the catalog using `POST /v1/creators/channels` and the publisher bearer secret.
+A trusted publisher registers the logical channel with `POST /v1/creators/channels` and the publisher bearer secret.
 
 Payload:
 
@@ -111,15 +135,15 @@ Payload:
 }
 ```
 
-The `device_id` must match the enrolled tunnel identity and the tunnel broker registry must authorize the channel for that device. The FadCam stream itself remains local.
+The `device_id` identifies the enrolled tunnel, not its changing LAN IP. The tunnel broker authorizes that device/channel mapping. The FadCam stream itself remains local.
 
-The public catalog then exposes only the logical relay URL:
+The public catalog exposes only the logical relay URL:
 
 ```text
 https://<public-tv49east-host>/v1/relay?id=creator-001
 ```
 
-Consumers never receive `192.168.1.50:8080` or any other private origin address.
+Consumers never receive the FadCam private IP.
 
 ## Public Internet exposure
 
@@ -129,23 +153,24 @@ The `:8790` catalog/relay service should not be exposed directly. Put a public H
 https://stream.example.com
 ```
 
-For a server with a public IP, DNS can point the hostname to that public IP and a reverse proxy such as Caddy can terminate HTTPS and forward to `127.0.0.1:8790`. Caddy supports automatic publicly trusted HTTPS for a configured public hostname.
+For a server with a public IP, DNS can point the hostname to that public IP and a reverse proxy such as Caddy can terminate HTTPS and forward to `127.0.0.1:8790`.
 
-If the server room is behind CGNAT, has no stable public IP, or inbound ports are undesirable, use an outbound public tunnel such as Cloudflare Tunnel. The connector runs inside the server room and establishes outbound connections; consumers use the public hostname and never need the private IP.
+If the server room is behind CGNAT, has no stable public IP, or inbound ports are undesirable, use an outbound public tunnel. The connector runs inside the server room and establishes outbound connections; consumers use the public hostname and never need the private IP.
 
 ## Gate 1 verification
 
 Do not call production complete until this exact chain succeeds:
 
-1. FadCam local `/live.m3u8` works from the server-room host.
-2. `server-tap` can read it on `127.0.0.1:8788`.
+1. FadCam local `/live.m3u8` works.
+2. `server-tap` discovers it without `FADCAM_LOCAL_IP` and serves it on `127.0.0.1:8788`.
 3. The device-tunnel agent is connected and the broker reports the device online.
 4. The broker proxy can reach `/device/<device-id>/live.m3u8`.
 5. The creator registry contains the same `device_id` and channel authorization.
 6. `GET /v1/catalog` returns the FadCam channel with `source=fadcam` and `relay=true`.
 7. `GET /v1/relay?id=<channel>` returns a rewritten M3U8, not the private origin URL.
 8. The rewritten segment URL returns media through `/v1/relay-asset`.
-9. A TV 49 East APK on a different Internet connection can play the public relay URL.
+9. A TV 49 East APK on a completely different Internet connection can play the public relay URL.
+10. Change/reconnect the FadCam LAN address and confirm the server-tap rediscovers it without configuration changes.
 
 ## Important scaling note
 
