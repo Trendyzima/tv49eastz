@@ -15,6 +15,7 @@ import android.view.ViewGroup;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
@@ -33,7 +34,6 @@ import androidx.viewpager2.widget.ViewPager2;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * Crash-isolated, responsive IPTV reels surface.
@@ -143,7 +143,6 @@ public final class TvReelsActivityHardened extends Activity {
         pager.setAdapter(adapter);
         root.addView(pager, new FrameLayout.LayoutParams(-1, -1));
 
-        // One Activity-owned playback surface. It is never a child of a recycled page.
         playerOverlay = new FrameLayout(this);
         playerOverlay.setBackgroundColor(Color.BLACK);
         playerOverlay.setVisibility(View.GONE);
@@ -166,7 +165,6 @@ public final class TvReelsActivityHardened extends Activity {
 
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override public void onPageSelected(int position) {
-                // Do not mutate the adapter from this callback. Only stop the independent player.
                 releasePlayer();
                 if (!visible.isEmpty() && position >= visible.size() - 2) loadMoreFeed();
                 setStatus(visible.isEmpty() ? "● NO CHANNELS" : "● READY • " + (position + 1) + "/" + visible.size());
@@ -328,10 +326,7 @@ public final class TvReelsActivityHardened extends Activity {
         int oldCount = visible.size();
         if (batch != null) for (IptvReel r : batch) addIfValid(r);
         int added = visible.size() - oldCount;
-        if (adapter != null && added > 0) {
-            // Range notification is safer for ViewPager2 than notifyDataSetChanged during page callbacks.
-            adapter.notifyItemRangeInserted(oldCount, added);
-        }
+        if (adapter != null && added > 0) adapter.notifyItemRangeInserted(oldCount, added);
         if (visible.isEmpty() && initial) feedError();
         else if (!visible.isEmpty()) {
             hideFeedState();
@@ -347,7 +342,6 @@ public final class TvReelsActivityHardened extends Activity {
         visible.add(reel);
     }
 
-    /** Starts exactly one Media3 player in an Activity-owned overlay, never inside a recycled page. */
     private void playPosition(int position) {
         if (destroyed || position < 0 || position >= visible.size()) return;
         IptvReel item = visible.get(position);
@@ -359,10 +353,7 @@ public final class TvReelsActivityHardened extends Activity {
         try {
             Uri uri = Uri.parse(item.url.trim());
             String scheme = uri.getScheme();
-            if (uri.getHost() == null || scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
-                throw new IllegalArgumentException("Bad HTTP URI");
-            }
-
+            if (uri.getHost() == null || scheme == null || !("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) throw new IllegalArgumentException("Bad HTTP URI");
             DefaultHttpDataSource.Factory http = new DefaultHttpDataSource.Factory()
                     .setAllowCrossProtocolRedirects(true)
                     .setConnectTimeoutMs(8000)
@@ -373,49 +364,27 @@ public final class TvReelsActivityHardened extends Activity {
                 headers.put("Referer", item.referrer.trim());
                 http.setDefaultRequestProperties(headers);
             }
-
-            MediaItem media = new MediaItem.Builder()
-                    .setUri(uri)
-                    .setMimeType(MimeTypes.APPLICATION_M3U8)
-                    .setLiveConfiguration(new MediaItem.LiveConfiguration.Builder()
-                            .setTargetOffsetMs(3000)
-                            .setMinPlaybackSpeed(0.98f)
-                            .setMaxPlaybackSpeed(1.02f)
-                            .build())
-                    .build();
-
-            DefaultLoadControl control = new DefaultLoadControl.Builder()
-                    .setBufferDurationsMs(12000, 30000, 1500, 3000)
-                    .build();
-            DefaultRenderersFactory renderers = new DefaultRenderersFactory(this)
-                    .setEnableDecoderFallback(true);
-            final ExoPlayer next = new ExoPlayer.Builder(this)
-                    .setLoadControl(control)
-                    .setRenderersFactory(renderers)
-                    .build();
+            MediaItem media = new MediaItem.Builder().setUri(uri).setMimeType(MimeTypes.APPLICATION_M3U8)
+                    .setLiveConfiguration(new MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(3000).setMinPlaybackSpeed(0.98f).setMaxPlaybackSpeed(1.02f).build()).build();
+            DefaultLoadControl control = new DefaultLoadControl.Builder().setBufferDurationsMs(12000, 30000, 1500, 3000).build();
+            DefaultRenderersFactory renderers = new DefaultRenderersFactory(this).setEnableDecoderFallback(true);
+            final ExoPlayer next = new ExoPlayer.Builder(this).setLoadControl(control).setRenderersFactory(renderers).build();
             next.setVolume(muted ? 0f : 1f);
             next.addListener(new Player.Listener() {
                 @Override public void onPlayerError(@NonNull PlaybackException error) {
                     if (destroyed || next != player) return;
                     if (error.errorCode == PlaybackException.ERROR_CODE_BEHIND_LIVE_WINDOW) {
-                        try {
-                            next.seekToDefaultPosition();
-                            next.prepare();
-                            next.play();
-                            return;
-                        } catch (Throwable ignored) { }
+                        try { next.seekToDefaultPosition(); next.prepare(); next.play(); return; } catch (Throwable ignored) { }
                     }
                     channelError("Channel unavailable • swipe to continue");
                     releasePlayer();
                 }
             });
-
             playerOverlay.removeAllViews();
             TextView loadingLabel = text("Connecting to live channel…", 13, MUTED, true);
             loadingLabel.setGravity(Gravity.CENTER);
             playerOverlay.addView(loadingLabel, new FrameLayout.LayoutParams(-1, -1));
             playerOverlay.setVisibility(View.VISIBLE);
-
             player = next;
             activePosition = position;
             next.setMediaSource(new HlsMediaSource.Factory(http).createMediaSource(media));
@@ -430,18 +399,8 @@ public final class TvReelsActivityHardened extends Activity {
 
     private String nonEmpty(String value, String fallback) { return value == null || value.trim().isEmpty() ? fallback : value.trim(); }
     private String safe(String value) { return value == null ? "" : value; }
-
-    private void retryCurrent() {
-        int p = activePosition == RecyclerView.NO_POSITION ? pager.getCurrentItem() : activePosition;
-        playPosition(p);
-    }
-
-    private void toggleMute() {
-        muted = !muted;
-        if (player != null) try { player.setVolume(muted ? 0f : 1f); } catch (Throwable ignored) { }
-        toast(muted ? "Muted" : "Sound on");
-    }
-
+    private void retryCurrent() { int p = activePosition == RecyclerView.NO_POSITION ? pager.getCurrentItem() : activePosition; playPosition(p); }
+    private void toggleMute() { muted = !muted; if (player != null) try { player.setVolume(muted ? 0f : 1f); } catch (Throwable ignored) { } toast(muted ? "Muted" : "Sound on"); }
     private void releasePlayer() {
         activePosition = RecyclerView.NO_POSITION;
         if (player != null) {
@@ -451,134 +410,37 @@ public final class TvReelsActivityHardened extends Activity {
             try { old.stop(); } catch (Throwable ignored) { }
             try { old.release(); } catch (Throwable ignored) { }
         }
-        if (playerOverlay != null) {
-            try {
-                playerOverlay.removeAllViews();
-                playerOverlay.setVisibility(View.GONE);
-            } catch (Throwable ignored) { }
-        }
+        if (playerOverlay != null) try { playerOverlay.removeAllViews(); playerOverlay.setVisibility(View.GONE); } catch (Throwable ignored) { }
     }
-
-    private void feedError() {
-        loading = false;
-        setStatus("● FEED UNAVAILABLE");
-        showFeedState("No live channels available right now.\nThe receiver is still safe.", true);
-    }
-
-    private void channelError(String message) {
-        setStatus("● CHANNEL ERROR");
-        toast(message);
-    }
-
+    private void feedError() { loading = false; setStatus("● FEED UNAVAILABLE"); showFeedState("No live channels available right now.\nThe receiver is still safe.", true); }
+    private void channelError(String message) { setStatus("● CHANNEL ERROR"); toast(message); }
     private void setStatus(String value) { if (status != null) status.setText(value); }
-
-    private void showFeedState(String value, boolean canRetry) {
-        if (feedMessage == null || retry == null) return;
-        feedMessage.setText(value);
-        retry.setVisibility(canRetry ? View.VISIBLE : View.GONE);
-        View parent = (View) feedMessage.getParent();
-        if (parent != null) parent.setVisibility(View.VISIBLE);
-    }
-
-    private void hideFeedState() {
-        if (feedMessage != null) {
-            View parent = (View) feedMessage.getParent();
-            if (parent != null) parent.setVisibility(View.GONE);
-        }
-    }
-
+    private void showFeedState(String value, boolean canRetry) { if (feedMessage == null || retry == null) return; feedMessage.setText(value); retry.setVisibility(canRetry ? View.VISIBLE : View.GONE); View parent = (View) feedMessage.getParent(); if (parent != null) parent.setVisibility(View.VISIBLE); }
+    private void hideFeedState() { if (feedMessage != null) { View parent = (View) feedMessage.getParent(); if (parent != null) parent.setVisibility(View.GONE); } }
     private void showSafeFallback() {
-        LinearLayout safeRoot = new LinearLayout(this);
-        safeRoot.setOrientation(LinearLayout.VERTICAL);
-        safeRoot.setGravity(Gravity.CENTER);
-        safeRoot.setPadding(dp(24), dp(24), dp(24), dp(24));
-        safeRoot.setBackgroundColor(BG);
-        TextView title = text("Live TV is temporarily unavailable", 20, WHITE, true);
-        title.setGravity(Gravity.CENTER);
-        safeRoot.addView(title, new LinearLayout.LayoutParams(-1, -2));
-        TextView detail = text("The optional player surface failed safely. Your receiver remains available.", 13, MUTED, false);
-        detail.setGravity(Gravity.CENTER);
-        detail.setPadding(0, dp(10), 0, dp(18));
-        safeRoot.addView(detail, new LinearLayout.LayoutParams(-1, -2));
-        TextView open = text("OPEN RECEIVER", 13, Color.BLACK, true);
-        open.setGravity(Gravity.CENTER);
-        open.setBackground(rounded(ACCENT, 18));
-        open.setOnClickListener(v -> openReceiver());
-        safeRoot.addView(open, new LinearLayout.LayoutParams(-1, dp(52)));
-        setContentView(safeRoot);
+        LinearLayout safeRoot = new LinearLayout(this); safeRoot.setOrientation(LinearLayout.VERTICAL); safeRoot.setGravity(Gravity.CENTER); safeRoot.setPadding(dp(24), dp(24), dp(24), dp(24)); safeRoot.setBackgroundColor(BG);
+        TextView title = text("Live TV is temporarily unavailable", 20, WHITE, true); title.setGravity(Gravity.CENTER); safeRoot.addView(title, new LinearLayout.LayoutParams(-1, -2));
+        TextView detail = text("The optional player surface failed safely. Your receiver remains available.", 13, MUTED, false); detail.setGravity(Gravity.CENTER); detail.setPadding(0, dp(10), 0, dp(18)); safeRoot.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+        TextView open = text("OPEN RECEIVER", 13, Color.BLACK, true); open.setGravity(Gravity.CENTER); open.setBackground(rounded(ACCENT, 18)); open.setOnClickListener(v -> openReceiver()); safeRoot.addView(open, new LinearLayout.LayoutParams(-1, dp(52))); setContentView(safeRoot);
     }
-
-    private void openReceiver() {
-        try { startActivity(new Intent(this, MainActivity.class)); finish(); }
-        catch (Throwable t) { toast("Receiver could not be opened"); }
-    }
-
+    private void openReceiver() { try { startActivity(new Intent(this, MainActivity.class)); finish(); } catch (Throwable t) { toast("Receiver could not be opened"); } }
     private void toast(String value) { Toast.makeText(this, value, Toast.LENGTH_SHORT).show(); }
 
     private final class ReelAdapter extends RecyclerView.Adapter<ReelAdapter.Holder> {
         ReelAdapter() { setHasStableIds(true); }
-
-        @Override public long getItemId(int position) {
-            IptvReel item = visible.get(position);
-            String key = item == null ? String.valueOf(position) : safe(item.url);
-            return key.hashCode() & 0xffffffffL;
-        }
-
+        @Override public long getItemId(int position) { IptvReel item = visible.get(position); String key = item == null ? String.valueOf(position) : safe(item.url); return key.hashCode() & 0xffffffffL; }
         @NonNull @Override public Holder onCreateViewHolder(@NonNull ViewGroup parent, int viewType) {
-            FrameLayout page = new FrameLayout(parent.getContext());
-            page.setBackgroundColor(Color.BLACK);
-
-            LinearLayout overlay = new LinearLayout(parent.getContext());
-            overlay.setOrientation(LinearLayout.VERTICAL);
-            overlay.setGravity(Gravity.BOTTOM);
-            overlay.setPadding(dp(18), dp(40), dp(18), dp(90));
-            overlay.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP,
-                    new int[]{Color.argb(215, 0, 0, 0), Color.TRANSPARENT}));
-            TextView title = text("", 18, WHITE, true);
-            overlay.addView(title, new LinearLayout.LayoutParams(-1, -2));
-            TextView hint = text("Tap to play • swipe for next", 11, MUTED, false);
-            hint.setPadding(0, dp(6), 0, 0);
-            overlay.addView(hint, new LinearLayout.LayoutParams(-1, -2));
-            page.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
-
-            TextView play = text("▶", 28, WHITE, true);
-            play.setGravity(Gravity.CENTER);
-            play.setBackground(rounded(Color.argb(175, 43, 33, 59), 40));
-            page.addView(play, new FrameLayout.LayoutParams(dp(70), dp(70), Gravity.CENTER));
-            return new Holder(page, title, play);
+            FrameLayout page = new FrameLayout(parent.getContext()); page.setBackgroundColor(Color.BLACK);
+            LinearLayout overlay = new LinearLayout(parent.getContext()); overlay.setOrientation(LinearLayout.VERTICAL); overlay.setGravity(Gravity.BOTTOM); overlay.setPadding(dp(18), dp(40), dp(18), dp(90)); overlay.setBackground(new GradientDrawable(GradientDrawable.Orientation.BOTTOM_TOP, new int[]{Color.argb(215, 0, 0, 0), Color.TRANSPARENT}));
+            TextView title = text("", 18, WHITE, true); overlay.addView(title, new LinearLayout.LayoutParams(-1, -2)); TextView hint = text("Tap to play • swipe for next", 11, MUTED, false); hint.setPadding(0, dp(6), 0, 0); overlay.addView(hint, new LinearLayout.LayoutParams(-1, -2)); page.addView(overlay, new FrameLayout.LayoutParams(-1, -1));
+            TextView play = text("▶", 28, WHITE, true); play.setGravity(Gravity.CENTER); play.setBackground(rounded(Color.argb(175, 43, 33, 59), 40)); page.addView(play, new FrameLayout.LayoutParams(dp(70), dp(70), Gravity.CENTER)); return new Holder(page, title, play);
         }
-
         @Override public void onBindViewHolder(@NonNull Holder holder, int position) {
-            IptvReel item = visible.get(position);
-            holder.title.setText(safe(item.title).isEmpty() ? safe(item.channel) : item.title);
-            holder.play.setVisibility(activePosition == position && player != null ? View.GONE : View.VISIBLE);
-            holder.play.setOnClickListener(v -> {
-                int p = holder.getBindingAdapterPosition();
-                if (p != RecyclerView.NO_POSITION) playPosition(p);
-            });
-            holder.itemView.setOnClickListener(v -> {
-                int p = holder.getBindingAdapterPosition();
-                if (p != RecyclerView.NO_POSITION) playPosition(p);
-            });
+            IptvReel item = visible.get(position); holder.title.setText(safe(item.title).isEmpty() ? safe(item.channel) : item.title); holder.play.setVisibility(activePosition == position && player != null ? View.GONE : View.VISIBLE);
+            holder.play.setOnClickListener(v -> { int p = holder.getBindingAdapterPosition(); if (p != RecyclerView.NO_POSITION) playPosition(p); }); holder.itemView.setOnClickListener(v -> { int p = holder.getBindingAdapterPosition(); if (p != RecyclerView.NO_POSITION) playPosition(p); });
         }
-
-        @Override public void onViewRecycled(@NonNull Holder holder) {
-            // Pages contain no player/surface, so recycling is intentionally side-effect free.
-            holder.play.setOnClickListener(null);
-            holder.itemView.setOnClickListener(null);
-            super.onViewRecycled(holder);
-        }
-
+        @Override public void onViewRecycled(@NonNull Holder holder) { holder.play.setOnClickListener(null); holder.itemView.setOnClickListener(null); super.onViewRecycled(holder); }
         @Override public int getItemCount() { return visible.size(); }
-
-        final class Holder extends RecyclerView.ViewHolder {
-            final TextView title;
-            final TextView play;
-            Holder(View root, TextView title, TextView play) {
-                super(root);
-                this.title = title;
-                this.play = play;
-            }
-        }
+        final class Holder extends RecyclerView.ViewHolder { final TextView title; final TextView play; Holder(View root, TextView title, TextView play) { super(root); this.title = title; this.play = play; } }
     }
 }
