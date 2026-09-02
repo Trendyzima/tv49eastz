@@ -11,13 +11,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/**
- * Crash-isolation launcher for the TV receiver.
- *
- * Startup intentionally performs no Media3 construction, no IPTV/network work,
- * no catalog parsing and no persistence access. Those systems are entered only
- * after the user explicitly chooses Live TV.
- */
+/** Crash-isolation launcher for the TV receiver. */
 public final class HomeActivity extends Activity {
     private static final int BG = Color.rgb(9, 9, 12);
     private static final int CARD = Color.rgb(25, 23, 31);
@@ -46,7 +40,6 @@ public final class HomeActivity extends Activity {
     private void buildHome() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BG);
-
         LinearLayout content = new LinearLayout(this);
         content.setOrientation(LinearLayout.VERTICAL);
         content.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -55,11 +48,9 @@ public final class HomeActivity extends Activity {
         TextView logo = label("49", 42, ACCENT, true);
         logo.setGravity(Gravity.CENTER);
         content.addView(logo, new LinearLayout.LayoutParams(-1, dp(70)));
-
         TextView title = label("TV 49 East", 30, TEXT, true);
         title.setGravity(Gravity.CENTER);
         content.addView(title, new LinearLayout.LayoutParams(-1, dp(48)));
-
         TextView subtitle = label("Live TV • FadCam • Worldwide channels", 14, MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
         content.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(40)));
@@ -76,7 +67,6 @@ public final class HomeActivity extends Activity {
         TextView ready = label("RECEIVER READY", 13, ACCENT, true);
         ready.setGravity(Gravity.CENTER);
         card.addView(ready, new LinearLayout.LayoutParams(-1, dp(30)));
-
         TextView detail = label("Homepage startup is kept independent from playback and network services.", 13, MUTED, false);
         detail.setGravity(Gravity.CENTER);
         detail.setPadding(0, dp(6), 0, dp(16));
@@ -106,15 +96,14 @@ public final class HomeActivity extends Activity {
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, -2);
         fp.topMargin = dp(28);
         content.addView(footer, fp);
-
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
     }
 
     private void openLiveTv() {
         try {
-            startActivity(new android.content.Intent(this, TvReelsActivity.class));
-        } catch (RuntimeException e) {
+            startActivity(new android.content.Intent(this, TvReelsActivityHardened.class));
+        } catch (Throwable e) {
             openReceiver();
         }
     }
@@ -122,8 +111,6 @@ public final class HomeActivity extends Activity {
     private void openReceiver() {
         try {
             startActivity(new android.content.Intent(this, MainActivity.class));
-        } catch (RuntimeException e) {
-            // Keep the crash isolated to the optional receiver screen; the launcher remains alive.
-        }
+        } catch (Throwable ignored) { }
     }
 }
