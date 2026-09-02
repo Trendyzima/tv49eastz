@@ -38,14 +38,12 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Low-memory IPTV reels screen. Catalog and video playback are both lazy. */
+/** Low-memory IPTV reels screen. Home catalog is isolated from Media3 startup. */
 public final class TvReelsActivity extends AppCompatActivity {
     private static final int BG = Color.rgb(5, 5, 7);
-    private static final int PANEL = Color.rgb(18, 18, 23);
     private static final int WHITE = Color.WHITE;
     private static final int MUTED = Color.rgb(190, 190, 198);
     private static final int ACCENT = Color.rgb(235, 61, 126);
-    private static final int INITIAL_VISIBLE = 8;
 
     private ViewPager2 pager;
     private ReelAdapter adapter;
@@ -55,11 +53,8 @@ public final class TvReelsActivity extends AppCompatActivity {
     private final Set<String> liked = new HashSet<>();
     private final Set<String> saved = new HashSet<>();
     private final Set<String> followed = new HashSet<>();
-
-    // Exactly one decoder exists. No background/preload decoder is created on Home.
     private ExoPlayer activePlayer;
     private ReelAdapter.Holder activeHolder;
-    private int currentPosition;
     private boolean muted;
     private boolean loading;
     private boolean followingOnly;
@@ -71,13 +66,13 @@ public final class TvReelsActivity extends AppCompatActivity {
 
     @Override protected void onCreate(@Nullable Bundle state) {
         super.onCreate(state);
+        destroyed = false;
         feedClient = new IptvFeedClientV2(getApplicationContext());
         Window w = getWindow();
         w.setStatusBarColor(Color.BLACK);
         w.setNavigationBarColor(Color.BLACK);
         buildUi();
-        // Let the first frame render. Network work starts after the UI is visible.
-        pager.postDelayed(() -> loadInitialFeed(), 350);
+        pager.postDelayed(this::loadInitialFeed, 350);
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
@@ -98,7 +93,6 @@ public final class TvReelsActivity extends AppCompatActivity {
         root.setBackgroundColor(BG);
         pager = new ViewPager2(this);
         pager.setOrientation(ViewPager2.ORIENTATION_VERTICAL);
-        // One adjacent page is enough for a smooth swipe without creating a player.
         pager.setOffscreenPageLimit(1);
         pager.setUserInputEnabled(true);
         adapter = new ReelAdapter(this);
@@ -109,9 +103,7 @@ public final class TvReelsActivity extends AppCompatActivity {
         root.addView(buildFeedState(), new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER));
         pager.registerOnPageChangeCallback(new ViewPager2.OnPageChangeCallback() {
             @Override public void onPageSelected(int position) {
-                currentPosition = position;
                 releaseActivePlayer();
-                pager.postDelayed(() -> activateCurrent(position), 180);
                 if (!visible.isEmpty() && position >= visible.size() - 2) loadMoreFeed();
             }
         });
@@ -169,7 +161,8 @@ public final class TvReelsActivity extends AppCompatActivity {
         try {
             feedClient.loadInitial(new IptvFeedClientV2.Listener() {
                 @Override public void onSuccess(List<IptvReel> batch) { runOnUiThread(() -> acceptBatch(batch, true)); }
-                @Override public void onError(Exception error) { runOnUiThread(() -> feedError()); }
+                @Override public void onError(Exception error) { runOnUiThread(this::ignore); }
+                private void ignore() { feedError(); }
             });
         } catch (RuntimeException e) { feedError(); }
     }
@@ -180,7 +173,7 @@ public final class TvReelsActivity extends AppCompatActivity {
         try {
             feedClient.loadMore(new IptvFeedClientV2.Listener() {
                 @Override public void onSuccess(List<IptvReel> batch) { runOnUiThread(() -> acceptBatch(batch, false)); }
-                @Override public void onError(Exception error) { runOnUiThread(() -> { loading = false; }); }
+                @Override public void onError(Exception error) { runOnUiThread(() -> loading = false); }
             });
         } catch (RuntimeException e) { loading = false; }
     }
@@ -193,7 +186,6 @@ public final class TvReelsActivity extends AppCompatActivity {
         adapter.notifyDataSetChanged();
         if (!visible.isEmpty()) {
             hideFeedState();
-            if (initial) pager.postDelayed(() -> activateCurrent(currentPosition), 250);
             setStatus("LIVE • " + visible.size());
         }
     }
@@ -220,17 +212,17 @@ public final class TvReelsActivity extends AppCompatActivity {
         }
     }
 
-    private IptvReel itemForPosition(int position) {
-        return position >= 0 && position < visible.size() ? visible.get(position) : null;
-    }
+    private IptvReel itemForPosition(int position) { return position >= 0 && position < visible.size() ? visible.get(position) : null; }
 
-    /** Creates Media3 only for the page the user is actually viewing. */
-    private void activateCurrent(int position) {
-        if (destroyed || visible.isEmpty() || position != pager.getCurrentItem()) return;
-        IptvReel item = itemForPosition(position); if (item == null) return;
+    /** Playback is fully deferred until the user taps a channel. */
+    private void playCurrent(int position) {
+        if (destroyed || visible.isEmpty()) return;
+        IptvReel item = itemForPosition(position);
+        if (item == null) return;
         ReelAdapter.Holder holder = findHolder(position);
-        if (holder == null) { pager.postDelayed(() -> activateCurrent(position), 120); return; }
+        if (holder == null) return;
         try {
+            releaseActivePlayer();
             ExoPlayer player = buildPlayer(item);
             holder.playerView.setPlayer(player);
             player.setVolume(muted ? 0f : 1f);
@@ -252,21 +244,14 @@ public final class TvReelsActivity extends AppCompatActivity {
                 .setConnectTimeoutMs(7000)
                 .setReadTimeoutMs(12000)
                 .setUserAgent(item.userAgent == null || item.userAgent.trim().isEmpty() ? "TV49East/3.1 Android" : item.userAgent.trim());
-        if (item.referrer != null && !item.referrer.trim().isEmpty()) {
-            http.setDefaultRequestProperties(java.util.Collections.singletonMap("Referer", item.referrer.trim()));
-        }
+        if (item.referrer != null && !item.referrer.trim().isEmpty()) http.setDefaultRequestProperties(java.util.Collections.singletonMap("Referer", item.referrer.trim()));
         MediaItem media = new MediaItem.Builder().setUri(Uri.parse(item.url)).setMimeType(MimeTypes.APPLICATION_M3U8)
-                .setLiveConfiguration(new MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(2500)
-                        .setMinPlaybackSpeed(0.98f).setMaxPlaybackSpeed(1.02f).build()).build();
-        ExoPlayer p = new ExoPlayer.Builder(this)
-                .setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http))
-                .build();
+                .setLiveConfiguration(new MediaItem.LiveConfiguration.Builder().setTargetOffsetMs(2500).setMinPlaybackSpeed(0.98f).setMaxPlaybackSpeed(1.02f).build()).build();
+        ExoPlayer p = new ExoPlayer.Builder(this).setMediaSourceFactory(new DefaultMediaSourceFactory(this).setDataSourceFactory(http)).build();
         p.setRepeatMode(Player.REPEAT_MODE_OFF);
         p.setMediaItem(media);
         p.addListener(new Player.Listener() {
-            @Override public void onPlayerError(@NonNull PlaybackException error) {
-                if (p == activePlayer && !destroyed) setStatus("CHANNEL UNAVAILABLE • SWIPE");
-            }
+            @Override public void onPlayerError(@NonNull PlaybackException error) { if (p == activePlayer && !destroyed) setStatus("CHANNEL UNAVAILABLE • SWIPE"); }
         });
         return p;
     }
@@ -303,7 +288,7 @@ public final class TvReelsActivity extends AppCompatActivity {
         addIfNew(new IptvReel("handoff-" + url.hashCode(), "FadCam", name == null ? "FadCam Live" : name, url, "Live", "", "", "FadCam"));
     }
 
-    private void showHome() { followingOnly = false; activeQuery = ""; rebuildVisible(); adapter.notifyDataSetChanged(); if (!visible.isEmpty()) pager.setCurrentItem(0, false); }
+    private void showHome() { followingOnly = false; activeQuery = ""; releaseActivePlayer(); rebuildVisible(); adapter.notifyDataSetChanged(); if (!visible.isEmpty()) pager.setCurrentItem(0, false); }
 
     private void showSearch() {
         EditText input = new EditText(this); input.setSingleLine(true); input.setHint("Channel, station, country…"); input.setTextColor(WHITE); input.setHintTextColor(MUTED);
@@ -332,7 +317,7 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private void showProfile() {
-        new AlertDialog.Builder(this).setTitle("TV 49 East").setMessage("Live channels: " + reels.size() + "\nFollowing: " + followed.size() + "\nLiked: " + liked.size() + "\nSaved: " + saved.size() + "\n\nLazy catalog: ON\nOne active player: ON")
+        new AlertDialog.Builder(this).setTitle("TV 49 East").setMessage("Live channels: " + reels.size() + "\nFollowing: " + followed.size() + "\nLiked: " + liked.size() + "\nSaved: " + saved.size() + "\n\nLazy catalog: ON\nPlayback: tap to start")
                 .setPositiveButton("OK", null).show();
     }
 
@@ -359,10 +344,11 @@ public final class TvReelsActivity extends AppCompatActivity {
         final PlayerView playerView; final TextView title; final TextView meta; final TextView follow; final TextView like; final TextView save; final TextView mute;
         IptvReel item;
         ReelPage(Context context) {
-            super(context); setBackgroundColor(Color.BLACK);
+            super(context); setBackgroundColor(Color.BLACK); setClickable(true);
             playerView = new PlayerView(context); playerView.setUseController(false); playerView.setResizeMode(AspectRatioFrameLayout.RESIZE_MODE_FIT); playerView.setShutterBackgroundColor(Color.BLACK); playerView.setShowBuffering(PlayerView.SHOW_BUFFERING_WHEN_PLAYING);
             addView(playerView, new FrameLayout.LayoutParams(-1, -1));
             addView(scrim(true), new FrameLayout.LayoutParams(-1, dp(190), Gravity.TOP)); addView(scrim(false), new FrameLayout.LayoutParams(-1, dp(370), Gravity.BOTTOM));
+            setOnClickListener(v -> { if (getAdapterPositionSafe() >= 0) playCurrent(getAdapterPositionSafe()); });
             LinearLayout actions = new LinearLayout(context); actions.setOrientation(LinearLayout.VERTICAL); actions.setGravity(Gravity.CENTER);
             like = action("♡", "Like"); TextView info = action("◌", "Info"); save = action("▣", "Save"); TextView share = action("↗", "Share"); mute = action("🔊", "Sound");
             like.setOnClickListener(v -> { toggleLike(item); bind(item); }); info.setOnClickListener(v -> showProfile()); save.setOnClickListener(v -> { toggleSave(item); bind(item); }); share.setOnClickListener(v -> TvReelsActivity.this.share(item)); mute.setOnClickListener(v -> { toggleMute(); bind(item); });
@@ -373,6 +359,7 @@ public final class TvReelsActivity extends AppCompatActivity {
             TextView name = text("  TV 49 East",15,WHITE,true); creator.addView(name,new LinearLayout.LayoutParams(0,dp(42),1)); follow=text("Follow",12,WHITE,true); follow.setGravity(Gravity.CENTER); follow.setPadding(dp(12),0,dp(12),0); follow.setBackground(bg(ACCENT,18)); follow.setOnClickListener(v->{toggleFollow(item);bind(item);}); creator.addView(follow,new LinearLayout.LayoutParams(-2,dp(38))); content.addView(creator);
             title=text("Live channel",18,WHITE,true); title.setPadding(0,dp(8),0,dp(3)); content.addView(title); meta=text("Live stream",12,MUTED,false); content.addView(meta);
         }
+        private int getAdapterPositionSafe() { return pager == null ? -1 : ((androidx.recyclerview.widget.RecyclerView) pager.getChildAt(0)).getChildAdapterPosition(this); }
         private View scrim(boolean top) { View v=new View(TvReelsActivity.this); v.setBackground(new GradientDrawable(top?GradientDrawable.Orientation.TOP_BOTTOM:GradientDrawable.Orientation.BOTTOM_TOP,new int[]{Color.argb(220,0,0,0),Color.TRANSPARENT})); return v; }
         private TextView action(String icon,String label) { TextView v=text(icon+"\n"+label,13,WHITE,true); v.setGravity(Gravity.CENTER); v.setPadding(0,dp(5),0,dp(5)); v.setMinHeight(dp(58)); return v; }
         void bind(IptvReel reel) { item=reel; if(reel==null)return; title.setText(reel.title); meta.setText(reel.source+"  •  LIVE"); follow.setText(followed.contains(reel.channel)?"Following":"Follow"); like.setText(liked.contains(reel.id)?"♥\nLiked":"♡\nLike"); save.setText(saved.contains(reel.id)?"✓\nSaved":"▣\nSave"); mute.setText(muted?"🔇\nMuted":"🔊\nSound"); }
