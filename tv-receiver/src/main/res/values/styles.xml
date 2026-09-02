@@ -1,11 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!--
-        MainActivity extends AndroidX AppCompatActivity, so this MUST be an
-        AppCompat descendant. The previous platform Theme.Material parent
-        caused the installed release APK to crash during Activity startup
-        with AppCompat's theme-enforcement check.
-    -->
+    <!-- MainActivity is an AndroidX AppCompatActivity and uses this theme. -->
     <style name="Theme.TV49East" parent="Theme.AppCompat.NoActionBar">
         <item name="android:fontFamily">sans</item>
         <item name="android:windowActionModeOverlay">true</item>
@@ -15,6 +10,20 @@
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:statusBarColor">#111113</item>
         <item name="android:navigationBarColor">#0B0B0D</item>
+        <item name="android:windowLightNavigationBar">false</item>
+        <item name="android:windowNoTitle">true</item>
+    </style>
+
+    <!-- Plain android.app.Activity components must never inherit AppCompat's
+         theme contract. This is deliberately platform-only so launcher and
+         FadCam handoff startup cannot fail in AppCompatDelegate. -->
+    <style name="Theme.TV49East.Platform" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">#09090C</item>
+        <item name="android:colorAccent">#CFBAFD</item>
+        <item name="android:statusBarColor">#000000</item>
+        <item name="android:navigationBarColor">#000000</item>
+        <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowNoTitle">true</item>
     </style>
