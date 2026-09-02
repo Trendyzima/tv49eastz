@@ -1,0 +1,37 @@
+name: Origin Shield
+
+on:
+  push:
+    paths:
+      - 'origin-shield/**'
+      - '.github/workflows/origin-shield.yml'
+  pull_request:
+    paths:
+      - 'origin-shield/**'
+      - '.github/workflows/origin-shield.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: origin-shield
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.x'
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Test race
+        run: go test ./... -count=1 -race
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build -trimpath ./...
+      - name: Container build
+        run: docker build -t tv49east-origin-shield:ci .
