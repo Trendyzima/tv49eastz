@@ -80,14 +80,28 @@ func main() {
 }
 
 func loadConfig() (Config, error) {
-	rawUpstream := getenv("TAP_UPSTREAM", "http://127.0.0.1:8080")
-	u, err := url.Parse(rawUpstream)
-	if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" || u.User != nil {
-		return Config{}, fmt.Errorf("invalid TAP_UPSTREAM: %q", rawUpstream)
-	}
-	u.Path = strings.TrimRight(u.Path, "/")
-	if u.RawQuery != "" || u.Fragment != "" {
-		return Config{}, errors.New("TAP_UPSTREAM must not contain a query or fragment")
+	rawUpstream := strings.TrimSpace(os.Getenv("TAP_UPSTREAM"))
+	var u *url.URL
+	var err error
+	if rawUpstream != "" {
+		u, err = url.Parse(rawUpstream)
+		if err != nil || u.Scheme != "http" && u.Scheme != "https" || u.Host == "" || u.User != nil {
+			return Config{}, fmt.Errorf("invalid TAP_UPSTREAM: %q", rawUpstream)
+		}
+		u.Path = strings.TrimRight(u.Path, "/")
+		if u.RawQuery != "" || u.Fragment != "" {
+			return Config{}, errors.New("TAP_UPSTREAM must not contain a query or fragment")
+		}
+		log.Printf("server-tap using explicit TAP_UPSTREAM=%s", u.String())
+	} else {
+		// Zero-configuration production path: discover the FadCam HLS server
+		// locally. This removes the need to provision a changing phone/LAN IP.
+		// The discovery code checks loopback first, then directly-connected LANs.
+		u, err = discoverFadCamWithRetry(context.Background())
+		if err != nil {
+			return Config{}, err
+		}
+		log.Printf("server-tap auto-discovered FadCam upstream=%s", u.String())
 	}
 
 	timeout, err := time.ParseDuration(getenv("TAP_TIMEOUT", "10s"))
@@ -112,6 +126,24 @@ func loadConfig() (Config, error) {
 		MaxPlaylistBytes:  maxPlaylist,
 		MaxProxyBodyBytes: maxBody,
 	}, nil
+}
+
+func discoverFadCamWithRetry(ctx context.Context) (*url.URL, error) {
+	for {
+		u, err := discoverFadCamUpstream(ctx)
+		if err == nil {
+			return u, nil
+		}
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		log.Printf("FadCam auto-discovery: %v; retrying", err)
+		select {
+		case <-time.After(2 * time.Second):
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {
