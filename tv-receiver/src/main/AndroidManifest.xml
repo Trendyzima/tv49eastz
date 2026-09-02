@@ -34,10 +34,9 @@
             android:theme="@style/Theme.TV49East.Platform"
             android:screenOrientation="unspecified"
             android:resizeableActivity="true"
-            android:configChanges="orientation|screenSize|smallestScreenSize|screenLayout"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- Kept for existing deep links/backward compatibility. -->
+        <!-- Existing deep links remain supported. -->
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
             android:exported="true"
