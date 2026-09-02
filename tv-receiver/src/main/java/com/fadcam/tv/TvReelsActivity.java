@@ -48,7 +48,9 @@ public final class TvReelsActivity extends AppCompatActivity {
 
     private ViewPager2 pager;
     private ReelAdapter adapter;
-    private final IptvFeedClientV2 feedClient = new IptvFeedClientV2(this);
+    // Activity instances are constructed before Android attaches their base Context.
+    // Never touch Activity context from a field initializer; doing so can crash before onCreate.
+    private IptvFeedClientV2 feedClient;
     private final List<IptvReel> reels = new ArrayList<>();
     private final List<IptvReel> visible = new ArrayList<>();
     private final Set<String> liked = new HashSet<>();
@@ -71,6 +73,8 @@ public final class TvReelsActivity extends AppCompatActivity {
 
     @Override protected void onCreate(@Nullable Bundle state) {
         super.onCreate(state);
+        // Safe point: Activity is now attached, so application Context is valid.
+        feedClient = new IptvFeedClientV2(getApplicationContext());
         Window w = getWindow();
         w.setStatusBarColor(Color.BLACK);
         w.setNavigationBarColor(Color.BLACK);
@@ -300,7 +304,6 @@ public final class TvReelsActivity extends AppCompatActivity {
             prepareNext(position + 1);
             updateStatus(item.title);
         } catch (RuntimeException error) {
-            // A bad upstream stream must never terminate the Activity.
             if (activePlayer != null) {
                 try { activePlayer.release(); } catch (RuntimeException ignored) { }
                 activePlayer = null;
@@ -343,8 +346,6 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private ExoPlayer buildPlayer() {
-        // Deliberately use Media3's validated defaults here. Custom buffer values were
-        // able to crash the release binary before the first frame on some Media3 builds.
         ExoPlayer p = new ExoPlayer.Builder(this).build();
         p.setRepeatMode(Player.REPEAT_MODE_OFF);
         p.addListener(new Player.Listener() {
