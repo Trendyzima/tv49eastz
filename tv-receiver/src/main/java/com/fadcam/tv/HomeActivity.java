@@ -11,7 +11,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Crash-isolation launcher for the TV receiver. */
+/** Crash-isolation launcher for the TV 49 East receiver. */
 public final class HomeActivity extends Activity {
     private static final int BG = Color.rgb(9, 9, 12);
     private static final int CARD = Color.rgb(25, 23, 31);
@@ -51,7 +51,7 @@ public final class HomeActivity extends Activity {
         TextView title = label("TV 49 East", 30, TEXT, true);
         title.setGravity(Gravity.CENTER);
         content.addView(title, new LinearLayout.LayoutParams(-1, dp(48)));
-        TextView subtitle = label("Live TV • FadCam • Worldwide channels", 14, MUTED, false);
+        TextView subtitle = label("FadCam creator streams • authorized relays", 14, MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
         content.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(40)));
 
@@ -64,48 +64,30 @@ public final class HomeActivity extends Activity {
         cp.topMargin = dp(28);
         content.addView(card, cp);
 
-        TextView ready = label("RECEIVER READY", 13, ACCENT, true);
+        TextView ready = label("FADCAM RECEIVER READY", 13, ACCENT, true);
         ready.setGravity(Gravity.CENTER);
         card.addView(ready, new LinearLayout.LayoutParams(-1, dp(30)));
-        TextView detail = label("Homepage startup is kept independent from playback and network services.", 13, MUTED, false);
+        TextView detail = label("The receiver surface is dedicated to authorized FadCam-originated streams.", 13, MUTED, false);
         detail.setGravity(Gravity.CENTER);
         detail.setPadding(0, dp(6), 0, dp(16));
         card.addView(detail, new LinearLayout.LayoutParams(-1, -2));
 
-        Button live = new Button(this);
-        live.setText("OPEN LIVE TV");
-        live.setTextColor(Color.BLACK);
-        live.setTextSize(14);
-        live.setAllCaps(false);
-        live.setBackgroundColor(ACCENT);
-        live.setOnClickListener(v -> openLiveTv());
-        card.addView(live, new LinearLayout.LayoutParams(-1, dp(52)));
+        Button open = new Button(this);
+        open.setText("OPEN FADCAM RECEIVER");
+        open.setTextColor(Color.BLACK);
+        open.setTextSize(14);
+        open.setAllCaps(false);
+        open.setBackgroundColor(ACCENT);
+        open.setOnClickListener(v -> openReceiver());
+        card.addView(open, new LinearLayout.LayoutParams(-1, dp(52)));
 
-        Button legacy = new Button(this);
-        legacy.setText("OPEN RECEIVER");
-        legacy.setTextColor(TEXT);
-        legacy.setTextSize(13);
-        legacy.setAllCaps(false);
-        legacy.setOnClickListener(v -> openReceiver());
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, dp(48));
-        lp.topMargin = dp(10);
-        card.addView(legacy, lp);
-
-        TextView footer = label("Safe startup mode • playback loads on demand", 11, MUTED, false);
+        TextView footer = label("Clean device-adaptive viewport • IPTV catalog not included", 11, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, -2);
         fp.topMargin = dp(28);
         content.addView(footer, fp);
         root.addView(content, new FrameLayout.LayoutParams(-1, -1));
         setContentView(root);
-    }
-
-    private void openLiveTv() {
-        try {
-            startActivity(new android.content.Intent(this, TvReelsActivityHardened.class));
-        } catch (Throwable e) {
-            openReceiver();
-        }
     }
 
     private void openReceiver() {
