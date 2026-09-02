@@ -1,4 +1,24 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+
     <uses-permission android:name="com.tv49.com.permission.PUBLISH_FADCAM" />
+
+    <!--
+        Production/default-variant hardening.
+
+        FadRecScreenshotAccessibilityService is a legacy screenshot shortcut
+        implemented as an Android AccessibilityService. It is not required by
+        the camera, recording, playback, or media-management paths.
+
+        Google Play Protect treats sideloaded applications exposing sensitive
+        Accessibility capabilities as high-risk. Remove the service from the
+        packaged default APK while keeping the protected main source manifest
+        and Java implementation intact.
+    -->
+    <application>
+        <service
+            android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
+            tools:node="remove" />
+    </application>
 </manifest>
