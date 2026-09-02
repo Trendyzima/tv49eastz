@@ -1,5 +1,7 @@
 package com.fadcam.tv;
 
+import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Color;
@@ -19,8 +21,6 @@ import android.widget.Toast;
 
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
-import androidx.appcompat.app.AlertDialog;
-import androidx.appcompat.app.AppCompatActivity;
 import androidx.media3.common.MediaItem;
 import androidx.media3.common.MimeTypes;
 import androidx.media3.common.PlaybackException;
@@ -38,8 +38,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
-/** Low-memory IPTV reels screen. Home catalog is isolated from Media3 startup. */
-public final class TvReelsActivity extends AppCompatActivity {
+/** Low-memory IPTV reels screen. Startup is isolated from playback and AppCompat theme state. */
+public final class TvReelsActivity extends Activity {
     private static final int BG = Color.rgb(5, 5, 7);
     private static final int WHITE = Color.WHITE;
     private static final int MUTED = Color.rgb(190, 190, 198);
@@ -67,12 +67,17 @@ public final class TvReelsActivity extends AppCompatActivity {
     @Override protected void onCreate(@Nullable Bundle state) {
         super.onCreate(state);
         destroyed = false;
-        feedClient = new IptvFeedClientV2(getApplicationContext());
-        Window w = getWindow();
-        w.setStatusBarColor(Color.BLACK);
-        w.setNavigationBarColor(Color.BLACK);
-        buildUi();
-        pager.postDelayed(this::loadInitialFeed, 350);
+        getWindow().setStatusBarColor(Color.BLACK);
+        getWindow().setNavigationBarColor(Color.BLACK);
+
+        try {
+            feedClient = new IptvFeedClientV2(getApplicationContext());
+            buildUi();
+            if (pager != null) pager.postDelayed(this::loadInitialFeed, 350);
+        } catch (Throwable startupFailure) {
+            // Live TV is an optional surface. A failure here must never take down the receiver.
+            showSafeFallback(startupFailure);
+        }
     }
 
     private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
@@ -109,6 +114,48 @@ public final class TvReelsActivity extends AppCompatActivity {
         });
         setContentView(root);
         handleIntent(getIntent());
+    }
+
+    private void showSafeFallback(Throwable failure) {
+        try { releaseActivePlayer(); } catch (Throwable ignored) {}
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        root.setGravity(Gravity.CENTER);
+        root.setPadding(dp(24), dp(24), dp(24), dp(24));
+        root.setBackgroundColor(BG);
+
+        TextView title = text("Live TV is temporarily unavailable", 20, WHITE, true);
+        title.setGravity(Gravity.CENTER);
+        root.addView(title, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView detail = text("The live-TV screen could not start safely. Your receiver is still available.", 13, MUTED, false);
+        detail.setGravity(Gravity.CENTER);
+        detail.setPadding(0, dp(10), 0, dp(18));
+        root.addView(detail, new LinearLayout.LayoutParams(-1, -2));
+
+        TextView retryButton = text("TRY LIVE TV AGAIN", 13, Color.BLACK, true);
+        retryButton.setGravity(Gravity.CENTER);
+        retryButton.setBackground(bg(Color.rgb(207, 186, 253), 18));
+        retryButton.setPadding(dp(18), dp(12), dp(18), dp(12));
+        retryButton.setOnClickListener(v -> recreate());
+        root.addView(retryButton, new LinearLayout.LayoutParams(-1, dp(50)));
+
+        TextView receiver = text("OPEN RECEIVER", 13, WHITE, true);
+        receiver.setGravity(Gravity.CENTER);
+        receiver.setBackground(bg(Color.rgb(49, 39, 70), 18));
+        receiver.setPadding(dp(18), dp(12), dp(18), dp(12));
+        receiver.setOnClickListener(v -> {
+            try {
+                startActivity(new Intent(this, MainActivity.class));
+                finish();
+            } catch (Throwable ignored) {
+                Toast.makeText(this, "Receiver could not be opened", Toast.LENGTH_LONG).show();
+            }
+        });
+        LinearLayout.LayoutParams rp = new LinearLayout.LayoutParams(-1, dp(50));
+        rp.topMargin = dp(10);
+        root.addView(receiver, rp);
+        setContentView(root);
     }
 
     private LinearLayout buildTopBar() {
@@ -156,26 +203,25 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private void loadInitialFeed() {
-        if (destroyed || loading) return;
+        if (destroyed || loading || feedClient == null) return;
         loading = true; showFeedState("Loading live channels…", false);
         try {
             feedClient.loadInitial(new IptvFeedClientV2.Listener() {
                 @Override public void onSuccess(List<IptvReel> batch) { runOnUiThread(() -> acceptBatch(batch, true)); }
-                @Override public void onError(Exception error) { runOnUiThread(this::ignore); }
-                private void ignore() { feedError(); }
+                @Override public void onError(Exception error) { runOnUiThread(() -> feedError()); }
             });
-        } catch (RuntimeException e) { feedError(); }
+        } catch (Throwable e) { feedError(); }
     }
 
     private void loadMoreFeed() {
-        if (destroyed || loading || followingOnly) return;
+        if (destroyed || loading || followingOnly || feedClient == null) return;
         loading = true;
         try {
             feedClient.loadMore(new IptvFeedClientV2.Listener() {
                 @Override public void onSuccess(List<IptvReel> batch) { runOnUiThread(() -> acceptBatch(batch, false)); }
                 @Override public void onError(Exception error) { runOnUiThread(() -> loading = false); }
             });
-        } catch (RuntimeException e) { loading = false; }
+        } catch (Throwable e) { loading = false; }
     }
 
     private void acceptBatch(List<IptvReel> batch, boolean initial) {
@@ -183,10 +229,12 @@ public final class TvReelsActivity extends AppCompatActivity {
         loading = false;
         if (batch != null) for (IptvReel r : batch) addIfNew(r);
         rebuildVisible();
-        adapter.notifyDataSetChanged();
+        if (adapter != null) adapter.notifyDataSetChanged();
         if (!visible.isEmpty()) {
             hideFeedState();
             setStatus("LIVE • " + visible.size());
+        } else if (initial) {
+            feedError();
         }
     }
 
@@ -197,7 +245,7 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private void addIfNew(IptvReel reel) {
-        if (reel == null || !IptvFeedClientV2.isPlayableHls(reel.url)) return;
+        if (reel == null || reel.url == null || !IptvFeedClientV2.isPlayableHls(reel.url)) return;
         for (IptvReel existing : reels) if (existing.url.equals(reel.url)) return;
         reels.add(reel);
     }
@@ -205,12 +253,15 @@ public final class TvReelsActivity extends AppCompatActivity {
     private void rebuildVisible() {
         visible.clear(); String q = activeQuery.toLowerCase(Locale.US).trim();
         for (IptvReel r : reels) {
+            if (r == null) continue;
             if (followingOnly && !followed.contains(r.channel)) continue;
-            String searchable = (r.title + " " + r.channel + " " + r.source).toLowerCase(Locale.US);
+            String searchable = (safe(r.title) + " " + safe(r.channel) + " " + safe(r.source)).toLowerCase(Locale.US);
             if (!q.isEmpty() && !searchable.contains(q)) continue;
             visible.add(r);
         }
     }
+
+    private String safe(String value) { return value == null ? "" : value; }
 
     private IptvReel itemForPosition(int position) { return position >= 0 && position < visible.size() ? visible.get(position) : null; }
 
@@ -218,7 +269,7 @@ public final class TvReelsActivity extends AppCompatActivity {
     private void playCurrent(int position) {
         if (destroyed || visible.isEmpty()) return;
         IptvReel item = itemForPosition(position);
-        if (item == null) return;
+        if (item == null || !IptvFeedClientV2.isPlayableHls(item.url)) return;
         ReelAdapter.Holder holder = findHolder(position);
         if (holder == null) return;
         try {
@@ -230,9 +281,9 @@ public final class TvReelsActivity extends AppCompatActivity {
             player.play();
             activePlayer = player;
             activeHolder = holder;
-            setStatus("LIVE • " + item.title);
-        } catch (RuntimeException error) {
-            holder.playerView.setPlayer(null);
+            setStatus("LIVE • " + safe(item.title));
+        } catch (Throwable error) {
+            try { holder.playerView.setPlayer(null); } catch (Throwable ignored) {}
             setStatus("CHANNEL UNAVAILABLE • SWIPE");
             releaseActivePlayer();
         }
@@ -257,8 +308,8 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private void releaseActivePlayer() {
-        if (activeHolder != null) { try { activeHolder.playerView.setPlayer(null); } catch (RuntimeException ignored) {} activeHolder = null; }
-        if (activePlayer != null) { try { activePlayer.stop(); } catch (RuntimeException ignored) {} try { activePlayer.release(); } catch (RuntimeException ignored) {} activePlayer = null; }
+        if (activeHolder != null) { try { activeHolder.playerView.setPlayer(null); } catch (Throwable ignored) {} activeHolder = null; }
+        if (activePlayer != null) { try { activePlayer.stop(); } catch (Throwable ignored) {} try { activePlayer.release(); } catch (Throwable ignored) {} activePlayer = null; }
     }
 
     @Nullable private ReelAdapter.Holder findHolder(int position) {
@@ -288,13 +339,13 @@ public final class TvReelsActivity extends AppCompatActivity {
         addIfNew(new IptvReel("handoff-" + url.hashCode(), "FadCam", name == null ? "FadCam Live" : name, url, "Live", "", "", "FadCam"));
     }
 
-    private void showHome() { followingOnly = false; activeQuery = ""; releaseActivePlayer(); rebuildVisible(); adapter.notifyDataSetChanged(); if (!visible.isEmpty()) pager.setCurrentItem(0, false); }
+    private void showHome() { followingOnly = false; activeQuery = ""; releaseActivePlayer(); rebuildVisible(); if (adapter != null) adapter.notifyDataSetChanged(); if (!visible.isEmpty() && pager != null) pager.setCurrentItem(0, false); }
 
     private void showSearch() {
         EditText input = new EditText(this); input.setSingleLine(true); input.setHint("Channel, station, country…"); input.setTextColor(WHITE); input.setHintTextColor(MUTED);
         new AlertDialog.Builder(this).setTitle("Discover live TV").setView(input).setPositiveButton("Search", (d, w) -> {
-            activeQuery = input.getText().toString().trim(); followingOnly = false; releaseActivePlayer(); rebuildVisible(); adapter.notifyDataSetChanged();
-            if (!visible.isEmpty()) pager.setCurrentItem(0, false); else showFeedState("No live channel matched.", false);
+            activeQuery = input.getText().toString().trim(); followingOnly = false; releaseActivePlayer(); rebuildVisible(); if (adapter != null) adapter.notifyDataSetChanged();
+            if (!visible.isEmpty() && pager != null) pager.setCurrentItem(0, false); else showFeedState("No live channel matched.", false);
         }).setNegativeButton("Cancel", null).show();
     }
 
@@ -311,9 +362,9 @@ public final class TvReelsActivity extends AppCompatActivity {
     }
 
     private void showFollowing() {
-        followingOnly = true; activeQuery = ""; releaseActivePlayer(); rebuildVisible(); adapter.notifyDataSetChanged();
+        followingOnly = true; activeQuery = ""; releaseActivePlayer(); rebuildVisible(); if (adapter != null) adapter.notifyDataSetChanged();
         if (visible.isEmpty()) { followingOnly = false; rebuildVisible(); Toast.makeText(this, "Follow channels to build this list", Toast.LENGTH_SHORT).show(); return; }
-        pager.setCurrentItem(0, false);
+        if (pager != null) pager.setCurrentItem(0, false);
     }
 
     private void showProfile() {
@@ -359,13 +410,13 @@ public final class TvReelsActivity extends AppCompatActivity {
             TextView name = text("  TV 49 East",15,WHITE,true); creator.addView(name,new LinearLayout.LayoutParams(0,dp(42),1)); follow=text("Follow",12,WHITE,true); follow.setGravity(Gravity.CENTER); follow.setPadding(dp(12),0,dp(12),0); follow.setBackground(bg(ACCENT,18)); follow.setOnClickListener(v->{toggleFollow(item);bind(item);}); creator.addView(follow,new LinearLayout.LayoutParams(-2,dp(38))); content.addView(creator);
             title=text("Live channel",18,WHITE,true); title.setPadding(0,dp(8),0,dp(3)); content.addView(title); meta=text("Live stream",12,MUTED,false); content.addView(meta);
         }
-        private int getAdapterPositionSafe() { return pager == null ? -1 : ((androidx.recyclerview.widget.RecyclerView) pager.getChildAt(0)).getChildAdapterPosition(this); }
+        private int getAdapterPositionSafe() { if (pager == null || pager.getChildAt(0) == null || !(pager.getChildAt(0) instanceof androidx.recyclerview.widget.RecyclerView)) return -1; return ((androidx.recyclerview.widget.RecyclerView) pager.getChildAt(0)).getChildAdapterPosition(this); }
         private View scrim(boolean top) { View v=new View(TvReelsActivity.this); v.setBackground(new GradientDrawable(top?GradientDrawable.Orientation.TOP_BOTTOM:GradientDrawable.Orientation.BOTTOM_TOP,new int[]{Color.argb(220,0,0,0),Color.TRANSPARENT})); return v; }
         private TextView action(String icon,String label) { TextView v=text(icon+"\n"+label,13,WHITE,true); v.setGravity(Gravity.CENTER); v.setPadding(0,dp(5),0,dp(5)); v.setMinHeight(dp(58)); return v; }
-        void bind(IptvReel reel) { item=reel; if(reel==null)return; title.setText(reel.title); meta.setText(reel.source+"  •  LIVE"); follow.setText(followed.contains(reel.channel)?"Following":"Follow"); like.setText(liked.contains(reel.id)?"♥\nLiked":"♡\nLike"); save.setText(saved.contains(reel.id)?"✓\nSaved":"▣\nSave"); mute.setText(muted?"🔇\nMuted":"🔊\nSound"); }
+        void bind(IptvReel reel) { item=reel; if(reel==null)return; title.setText(safe(reel.title)); meta.setText(safe(reel.source)+"  •  LIVE"); follow.setText(followed.contains(reel.channel)?"Following":"Follow"); like.setText(liked.contains(reel.id)?"♥\nLiked":"♡\nLike"); save.setText(saved.contains(reel.id)?"✓\nSaved":"▣\nSave"); mute.setText(muted?"🔇\nMuted":"🔊\nSound"); }
     }
 
-    @Override protected void onPause() { super.onPause(); if(activePlayer!=null) activePlayer.pause(); }
-    @Override protected void onResume() { super.onResume(); if(!destroyed && activePlayer!=null) pager.postDelayed(()->{if(activePlayer!=null)activePlayer.play();},150); }
+    @Override protected void onPause() { super.onPause(); if(activePlayer!=null) { try { activePlayer.pause(); } catch (Throwable ignored) {} } }
+    @Override protected void onResume() { super.onResume(); if(!destroyed && activePlayer!=null && pager != null) pager.postDelayed(()->{if(activePlayer!=null) { try { activePlayer.play(); } catch (Throwable ignored) {} }},150); }
     @Override protected void onDestroy() { destroyed=true; releaseActivePlayer(); super.onDestroy(); }
 }
