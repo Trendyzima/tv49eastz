@@ -4,12 +4,15 @@ import android.Manifest;
 import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.SurfaceTexture;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
+import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
+import android.media.MediaRecorder;
 import android.os.Build;
 import android.os.PowerManager;
 import android.util.Range;
@@ -25,7 +28,6 @@ import com.fadcam.FLog;
 import com.fadcam.VideoCodec;
 
 import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -33,21 +35,16 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * Hardware-first camera capability scanner and recording profile selector.
- *
- * <p>This class deliberately does not assume that 4K/8K, 60/90fps or HEVC exist.
- * It queries the active Camera2 device and MediaCodec encoders, then persists only
- * a profile that is supported by both sides. The existing RecordingService already
- * consumes the persisted resolution/FPS/codec preferences, so this is a safe
- * preflight integration point that does not replace the recording engine.</p>
+ * Hardware-first recording profile selector for the existing Camera2/MediaRecorder engine.
+ * It never assumes that 4K/8K, 60/90fps or HEVC exist. It queries camera stream sizes,
+ * AE FPS ranges and platform video encoders, then persists the highest jointly supported
+ * profile. RecordingService already consumes these preferences, so this is additive.
  */
 public final class AdaptiveCameraProfile {
     private static final String TAG = "AdaptiveCameraProfile";
     private static final String PREFS = "FadCamAdaptiveCamera";
     private static final String KEY_LAST_REPORT = "last_report";
-
     private static final int[] PREFERRED_FPS = {90, 60, 30, 24};
-    private static final int[] FALLBACK_FPS = {30, 24};
 
     private AdaptiveCameraProfile() {}
 
@@ -103,82 +100,50 @@ public final class AdaptiveCameraProfile {
         }
 
         public String summary() {
-            return "camera=" + cameraId
-                    + " sizes=" + mediaRecorderSizes.size()
-                    + " codecs=" + supportedCodecs
-                    + " fps=" + supportedFps
-                    + " EIS=" + eis
-                    + " OIS=" + ois
-                    + " selected=" + selected;
+            return "camera=" + cameraId + " sizes=" + mediaRecorderSizes.size()
+                    + " codecs=" + supportedCodecs + " fps=" + supportedFps
+                    + " EIS=" + eis + " OIS=" + ois + " selected=" + selected;
         }
     }
 
-    /**
-     * Scans the selected physical camera and persists the best verified profile.
-     * Returns null when camera permission is unavailable or the camera cannot be queried.
-     */
     @Nullable
     public static Report applyBestAvailableProfile(@NonNull Context context,
                                                     @NonNull CameraType cameraType) {
-        if (cameraType == CameraType.DUAL_PIP) {
-            FLog.i(TAG, "Skipping single-camera adaptive profile for Dual PiP");
-            return null;
-        }
+        if (cameraType == CameraType.DUAL_PIP) return null;
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.CAMERA)
                 != PackageManager.PERMISSION_GRANTED) {
-            FLog.w(TAG, "Camera permission unavailable; adaptive preflight skipped");
+            FLog.w(TAG, "Camera permission unavailable; skipping adaptive preflight");
             return null;
         }
-
         CameraManager manager = (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
-        if (manager == null) {
-            FLog.w(TAG, "CameraManager unavailable; adaptive preflight skipped");
-            return null;
-        }
-
+        if (manager == null) return null;
         try {
             String cameraId = findCameraId(manager, cameraType);
-            if (cameraId == null) {
-                FLog.w(TAG, "No Camera2 id found for " + cameraType);
-                return null;
-            }
-
+            if (cameraId == null) return null;
             CameraCharacteristics c = manager.getCameraCharacteristics(cameraId);
             StreamConfigurationMap map = c.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
-            if (map == null) {
-                FLog.w(TAG, "No StreamConfigurationMap for camera " + cameraId);
-                return null;
-            }
+            if (map == null) return null;
 
-            Size[] rawSizes = map.getOutputSizes(android.media.MediaRecorder.class);
-            List<Size> sizes = filterVideoSizes(rawSizes);
-            if (sizes.isEmpty()) {
-                // Some HALs do not expose MediaRecorder.class but do expose SurfaceTexture.
-                rawSizes = map.getOutputSizes(android.graphics.SurfaceTexture.class);
-                sizes = filterVideoSizes(rawSizes);
-            }
+            List<Size> sizes = filterVideoSizes(map.getOutputSizes(MediaRecorder.class));
+            if (sizes.isEmpty()) sizes = filterVideoSizes(map.getOutputSizes(SurfaceTexture.class));
 
             Set<VideoCodec> codecs = detectEncoders(sizes);
-            List<Integer> fps = detectFps(c, sizes);
-
-            boolean eis = hasMode(
-                    c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES),
-                    CameraCharacteristics.CONTROL_VIDEO_STABILIZATION_MODE_ON);
-            boolean ois = hasMode(
-                    c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION),
-                    CameraCharacteristics.LENS_OPTICAL_STABILIZATION_MODE_ON);
-
+            List<Integer> fps = detectFps(c);
+            boolean eis = hasMode(c.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES),
+                    CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_ON);
+            boolean ois = hasMode(c.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION),
+                    CameraMetadata.LENS_OPTICAL_STABILIZATION_MODE_ON);
             boolean thermalReduced = isThermalConstrained(context);
-            Profile selected = selectProfile(cameraId, sizes, codecs, fps, eis, ois, thermalReduced);
-            if (selected == null) {
-                FLog.w(TAG, "No jointly supported size/FPS/codec profile found for " + cameraId);
-                return new Report(cameraId, sizes, codecs, fps, eis, ois, null);
-            }
 
-            persistProfile(context, cameraType, selected);
+            Profile selected = selectProfile(cameraId, sizes, codecs, fps, eis, ois, thermalReduced);
             Report report = new Report(cameraId, sizes, codecs, fps, eis, ois, selected);
             persistReport(context, report);
-            FLog.i(TAG, "Adaptive camera profile applied: " + report.summary());
+            if (selected != null) {
+                persistProfile(context, cameraType, selected);
+                FLog.i(TAG, "Applied verified camera profile: " + selected);
+            } else {
+                FLog.w(TAG, "No jointly supported camera/encoder profile; retaining saved settings");
+            }
             return report;
         } catch (SecurityException e) {
             FLog.w(TAG, "Camera permission revoked during adaptive scan", e);
@@ -187,7 +152,6 @@ public final class AdaptiveCameraProfile {
             FLog.w(TAG, "Camera characteristics unavailable during adaptive scan", e);
             return null;
         } catch (Throwable t) {
-            // A capability scan must never prevent normal recording.
             FLog.w(TAG, "Adaptive scan failed safely: " + t.getClass().getSimpleName(), t);
             return null;
         }
@@ -196,15 +160,13 @@ public final class AdaptiveCameraProfile {
     @Nullable
     private static String findCameraId(CameraManager manager, CameraType type)
             throws CameraAccessException {
-        int wantedFacing = type == CameraType.FRONT
+        int wanted = type == CameraType.FRONT
                 ? CameraCharacteristics.LENS_FACING_FRONT
                 : CameraCharacteristics.LENS_FACING_BACK;
         for (String id : manager.getCameraIdList()) {
-            CameraCharacteristics c = manager.getCameraCharacteristics(id);
-            Integer facing = c.get(CameraCharacteristics.LENS_FACING);
-            if (facing != null && facing == wantedFacing) {
-                return id;
-            }
+            Integer facing = manager.getCameraCharacteristics(id)
+                    .get(CameraCharacteristics.LENS_FACING);
+            if (facing != null && facing == wanted) return id;
         }
         return null;
     }
@@ -214,74 +176,62 @@ public final class AdaptiveCameraProfile {
         List<Size> out = new ArrayList<>();
         for (Size s : raw) {
             if (s == null || s.getWidth() < 320 || s.getHeight() < 240) continue;
-            // Ignore extreme portrait/landscape ratios that are normally still-photo outputs.
             double ratio = (double) Math.max(s.getWidth(), s.getHeight())
                     / Math.max(1, Math.min(s.getWidth(), s.getHeight()));
-            if (ratio > 2.4d) continue;
-            out.add(s);
+            if (ratio <= 2.4d) out.add(s);
         }
         Collections.sort(out, new Comparator<Size>() {
             @Override public int compare(Size a, Size b) {
-                long pa = (long) a.getWidth() * a.getHeight();
-                long pb = (long) b.getWidth() * b.getHeight();
-                return Long.compare(pb, pa);
+                return Long.compare((long) b.getWidth() * b.getHeight(),
+                        (long) a.getWidth() * a.getHeight());
             }
         });
         return out;
     }
 
-    private static Set<VideoCodec> detectEncoders(List<Size> candidateSizes) {
+    private static Set<VideoCodec> detectEncoders(List<Size> sizes) {
         Set<VideoCodec> result = new HashSet<>();
-        MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);
-        MediaCodecInfo[] infos = list.getCodecInfos();
+        MediaCodecInfo[] infos = new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos();
         for (VideoCodec codec : new VideoCodec[]{VideoCodec.HEVC, VideoCodec.AVC}) {
             for (MediaCodecInfo info : infos) {
-                if (!info.isEncoder()) continue;
-                String[] types = info.getSupportedTypes();
-                boolean mime = false;
-                for (String type : types) {
-                    if (codec.getMimeType().equalsIgnoreCase(type)) {
-                        mime = true;
-                        break;
-                    }
-                }
-                if (!mime) continue;
+                if (!info.isEncoder() || !supportsMime(info, codec.getMimeType())) continue;
                 try {
-                    MediaCodecInfo.CodecCapabilities caps = info.getCapabilitiesForType(codec.getMimeType());
-                    MediaCodecInfo.VideoCapabilities vc = caps.getVideoCapabilities();
+                    MediaCodecInfo.VideoCapabilities vc = info
+                            .getCapabilitiesForType(codec.getMimeType()).getVideoCapabilities();
                     if (vc == null) continue;
-                    for (Size size : candidateSizes) {
+                    for (Size size : sizes) {
                         if (vc.isSizeSupported(size.getWidth(), size.getHeight())) {
                             result.add(codec);
                             break;
                         }
                     }
-                } catch (Throwable ignored) {
-                    // One broken vendor codec entry must not poison the whole scan.
-                }
+                } catch (Throwable ignored) {}
                 if (result.contains(codec)) break;
             }
         }
         return result;
     }
 
-    private static List<Integer> detectFps(CameraCharacteristics c, List<Size> sizes) {
+    private static List<Integer> detectFps(CameraCharacteristics c) {
         Set<Integer> supported = new HashSet<>();
         Range<Integer>[] ranges = c.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
         if (ranges != null) {
             for (Range<Integer> r : ranges) {
                 if (r == null) continue;
-                for (int preferred : PREFERRED_FPS) {
-                    if (r.getLower() <= preferred && r.getUpper() >= preferred) {
-                        supported.add(preferred);
-                    }
+                for (int candidate : PREFERRED_FPS) {
+                    if (r.getLower() <= candidate && r.getUpper() >= candidate) supported.add(candidate);
                 }
             }
         }
         List<Integer> out = new ArrayList<>(supported);
         Collections.sort(out, Collections.reverseOrder());
-        if (out.isEmpty()) out.addAll(Arrays.asList(FALLBACK_FPS));
+        if (out.isEmpty()) out.add(30);
         return out;
+    }
+
+    private static boolean supportsMime(MediaCodecInfo info, String mime) {
+        for (String type : info.getSupportedTypes()) if (mime.equalsIgnoreCase(type)) return true;
+        return false;
     }
 
     private static boolean hasMode(@Nullable int[] modes, int wanted) {
@@ -295,32 +245,20 @@ public final class AdaptiveCameraProfile {
                                          Set<VideoCodec> codecs, List<Integer> fps,
                                          boolean eis, boolean ois, boolean thermalReduced) {
         if (sizes.isEmpty() || codecs.isEmpty() || fps.isEmpty()) return null;
-
-        // Thermal-constrained starts intentionally avoid the most expensive tier.
-        int maxPixels = thermalReduced ? 3840 * 2160 : Integer.MAX_VALUE;
+        long maxPixels = thermalReduced ? 3840L * 2160L : Long.MAX_VALUE;
         for (Size size : sizes) {
-            long pixels = (long) size.getWidth() * size.getHeight();
-            if (pixels > maxPixels) continue;
+            if ((long) size.getWidth() * size.getHeight() > maxPixels) continue;
             VideoCodec codec = codecs.contains(VideoCodec.HEVC) ? VideoCodec.HEVC
                     : (codecs.contains(VideoCodec.AVC) ? VideoCodec.AVC : null);
-            if (codec == null || !encoderSupports(codec, size)) continue;
-
-            int chosenFps = chooseFps(fps, size, codec, thermalReduced);
-            if (chosenFps <= 0) continue;
-            return new Profile(size, chosenFps, codec, eis, ois, thermalReduced, cameraId);
-        }
-
-        // If thermal policy excluded everything, choose the safest 1080p-ish profile.
-        for (Size size : sizes) {
-            VideoCodec codec = codecs.contains(VideoCodec.HEVC) ? VideoCodec.HEVC : VideoCodec.AVC;
-            if (!encoderSupports(codec, size)) continue;
-            int chosenFps = chooseFps(fps, size, codec, true);
-            if (chosenFps > 0) return new Profile(size, chosenFps, codec, eis, ois, true, cameraId);
+            if (codec == null || !encoderSupportsSize(codec, size)) continue;
+            int chosenFps = chooseFps(codec, size, fps, thermalReduced);
+            if (chosenFps > 0) return new Profile(size, chosenFps, codec, eis, ois, thermalReduced, cameraId);
         }
         return null;
     }
 
-    private static int chooseFps(List<Integer> fps, Size size, VideoCodec codec, boolean thermalReduced) {
+    private static int chooseFps(VideoCodec codec, Size size, List<Integer> fps,
+                                 boolean thermalReduced) {
         for (int candidate : fps) {
             if (thermalReduced && candidate > 30) continue;
             if (encoderSupportsFps(codec, size, candidate)) return candidate;
@@ -328,16 +266,10 @@ public final class AdaptiveCameraProfile {
         return 0;
     }
 
-    private static boolean encoderSupports(VideoCodec codec, Size size) {
+    private static boolean encoderSupportsSize(VideoCodec codec, Size size) {
         try {
-            MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);
-            for (MediaCodecInfo info : list.getCodecInfos()) {
-                if (!info.isEncoder()) continue;
-                boolean mime = false;
-                for (String type : info.getSupportedTypes()) {
-                    if (codec.getMimeType().equalsIgnoreCase(type)) { mime = true; break; }
-                }
-                if (!mime) continue;
+            for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos()) {
+                if (!info.isEncoder() || !supportsMime(info, codec.getMimeType())) continue;
                 MediaCodecInfo.VideoCapabilities vc = info.getCapabilitiesForType(codec.getMimeType()).getVideoCapabilities();
                 if (vc != null && vc.isSizeSupported(size.getWidth(), size.getHeight())) return true;
             }
@@ -347,18 +279,12 @@ public final class AdaptiveCameraProfile {
 
     private static boolean encoderSupportsFps(VideoCodec codec, Size size, int fps) {
         try {
-            MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);
-            for (MediaCodecInfo info : list.getCodecInfos()) {
-                if (!info.isEncoder()) continue;
-                boolean mime = false;
-                for (String type : info.getSupportedTypes()) {
-                    if (codec.getMimeType().equalsIgnoreCase(type)) { mime = true; break; }
-                }
-                if (!mime) continue;
+            for (MediaCodecInfo info : new MediaCodecList(MediaCodecList.ALL_CODECS).getCodecInfos()) {
+                if (!info.isEncoder() || !supportsMime(info, codec.getMimeType())) continue;
                 MediaCodecInfo.VideoCapabilities vc = info.getCapabilitiesForType(codec.getMimeType()).getVideoCapabilities();
                 if (vc == null || !vc.isSizeSupported(size.getWidth(), size.getHeight())) continue;
-                Range<Double> fr = vc.getSupportedFrameRatesFor(size.getWidth(), size.getHeight());
-                if (fr != null && fr.contains((double) fps)) return true;
+                Range<Double> rates = vc.getSupportedFrameRatesFor(size.getWidth(), size.getHeight());
+                if (rates != null && rates.contains((double) fps)) return true;
             }
         } catch (Throwable ignored) {}
         return false;
@@ -368,9 +294,7 @@ public final class AdaptiveCameraProfile {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.Q) return false;
         try {
             PowerManager pm = (PowerManager) context.getSystemService(Context.POWER_SERVICE);
-            if (pm == null) return false;
-            int status = pm.getCurrentThermalStatus();
-            return status >= PowerManager.THERMAL_STATUS_MODERATE;
+            return pm != null && pm.getCurrentThermalStatus() >= PowerManager.THERMAL_STATUS_MODERATE;
         } catch (Throwable ignored) {
             return false;
         }
@@ -379,8 +303,7 @@ public final class AdaptiveCameraProfile {
     private static void persistProfile(Context context, CameraType cameraType, Profile p) {
         SharedPreferences prefs = context.getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE);
         String fpsKey = cameraType == CameraType.FRONT
-                ? Constants.PREF_VIDEO_FRAME_RATE_FRONT
-                : Constants.PREF_VIDEO_FRAME_RATE_BACK;
+                ? Constants.PREF_VIDEO_FRAME_RATE_FRONT : Constants.PREF_VIDEO_FRAME_RATE_BACK;
         prefs.edit()
                 .putInt(Constants.PREF_VIDEO_RESOLUTION_WIDTH, p.size.getWidth())
                 .putInt(Constants.PREF_VIDEO_RESOLUTION_HEIGHT, p.size.getHeight())
@@ -391,9 +314,8 @@ public final class AdaptiveCameraProfile {
     }
 
     private static void persistReport(Context context, Report report) {
-        String summary = report.summary();
         context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .edit().putString(KEY_LAST_REPORT, summary).apply();
+                .edit().putString(KEY_LAST_REPORT, report.summary()).apply();
     }
 
     @Nullable
