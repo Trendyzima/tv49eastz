@@ -35,9 +35,7 @@
             android:action="android.intent.action.VIEW"
             android:targetClass="com.fadcam.RecordingStartActivity"
             android:targetPackage="com.fadcam">
-            <extra
-                android:name="shortcut_camera_mode"
-                android:value="back" />
+            <extra android:name="shortcut_camera_mode" android:value="back" />
         </intent>
     </shortcut>
 
@@ -51,9 +49,7 @@
             android:action="android.intent.action.VIEW"
             android:targetClass="com.fadcam.RecordingStartActivity"
             android:targetPackage="com.fadcam">
-            <extra
-                android:name="shortcut_camera_mode"
-                android:value="front" />
+            <extra android:name="shortcut_camera_mode" android:value="front" />
         </intent>
     </shortcut>
 
@@ -67,9 +63,7 @@
             android:action="android.intent.action.VIEW"
             android:targetClass="com.fadcam.RecordingStartActivity"
             android:targetPackage="com.fadcam">
-            <extra
-                android:name="shortcut_camera_mode"
-                android:value="current" />
+            <extra android:name="shortcut_camera_mode" android:value="current" />
         </intent>
     </shortcut>
 
@@ -83,9 +77,24 @@
             android:action="android.intent.action.VIEW"
             android:targetClass="com.fadcam.RecordingStartActivity"
             android:targetPackage="com.fadcam">
-            <extra
-                android:name="shortcut_camera_mode"
-                android:value="dual" />
+            <extra android:name="shortcut_camera_mode" android:value="dual" />
+        </intent>
+    </shortcut>
+
+    <!-- Long-press the FadCam launcher icon and choose this entry to start a
+         dual-camera PiP interview and publish the resulting HLS stream to
+         the TV 49 East receiver on the same LAN. -->
+    <shortcut
+        android:id="@+id/live_interview"
+        android:enabled="true"
+        android:icon="@drawable/start_dual_shortcut"
+        android:shortcutShortLabel="Live Interview"
+        android:shortcutLongLabel="Live Interview • TV 49 East">
+        <intent
+            android:action="android.intent.action.VIEW"
+            android:targetClass="com.fadcam.RecordingStartActivity"
+            android:targetPackage="com.fadcam">
+            <extra android:name="shortcut_camera_mode" android:value="live_interview" />
         </intent>
     </shortcut>
 
@@ -123,9 +132,7 @@
             android:action="android.intent.action.VIEW"
             android:targetClass="com.fadcam.PhotoCaptureActivity"
             android:targetPackage="com.fadcam">
-            <extra
-                android:name="shortcut_photo_camera_mode"
-                android:value="front" />
+            <extra android:name="shortcut_photo_camera_mode" android:value="front" />
         </intent>
     </shortcut>
 
