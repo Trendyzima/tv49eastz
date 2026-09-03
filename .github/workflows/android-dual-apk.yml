@@ -53,6 +53,50 @@ jobs:
           printf '%s\n' "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
           chmod 600 local.properties
 
+      - name: Normalize pinned Media3 manifests
+        shell: bash
+        run: |
+          set -euo pipefail
+          for module in common container muxer; do
+            manifest="$MEDIA3_PATCHED_PATH/libraries/$module/src/main/AndroidManifest.xml"
+            test -f "$manifest"
+            sed -i -E 's/[[:space:]]+package="androidx\.media3\.[^"]+"//' "$manifest"
+            ! grep -Eq '^[[:space:]]*<manifest[^>]*package=' "$manifest"
+          done
+
+      - name: Validate Android string resources
+        shell: python
+        run: |
+          import pathlib
+          import re
+          import xml.etree.ElementTree as ET
+
+          roots = [pathlib.Path("app/src"), pathlib.Path("tv-receiver/src")]
+          bad = []
+          valid_escapes = re.compile(r"\\(?:n|t|r|\\|'|\"|@|\?|#|u[0-9A-Fa-f]{4})")
+          slash = re.compile(r"\\")
+
+          for root in roots:
+              if not root.exists():
+                  continue
+              for path in root.rglob("res/values/*.xml"):
+                  try:
+                      ET.parse(path)
+                  except ET.ParseError as exc:
+                      bad.append(f"{path}: XML parse error: {exc}")
+                      continue
+                  text = path.read_text(encoding="utf-8")
+                  for match in slash.finditer(text):
+                      prefix = text[max(0, match.start() - 40):match.start() + 12]
+                      if not valid_escapes.match(text, match.start()):
+                          bad.append(f"{path}: unsupported Android string escape near {prefix!r}")
+
+          if bad:
+              print("Invalid Android resources detected:")
+              print("\n".join(bad))
+              raise SystemExit(1)
+          print("Android XML/string-resource preflight passed.")
+
       - name: Set up JDK 17
         uses: actions/setup-java@v5
         with:
@@ -104,7 +148,7 @@ jobs:
           done
 
       - name: Run Android tests
-        run: ./gradlew :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
+        run: ./gradlew clean :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
       # Do not package both Android applications in one Gradle invocation.
       # The FadCam APK contains a large native dependency set and its release
