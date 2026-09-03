@@ -1,0 +1,24 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "tv49eastz-relay",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-27",
+  "workers_dev": true,
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "RELAY_TUNNEL",
+        "class_name": "RelayTunnel"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["RelayTunnel"]
+    }
+  ],
+  "vars": {
+    "PUBLIC_STREAM_ID": "creator-001"
+  }
+}
