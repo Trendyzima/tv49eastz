@@ -4,27 +4,25 @@ import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
 import org.gradle.api.provider.Provider;
+import org.gradle.api.tasks.Task;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.compile.JavaCompile;
-import org.gradle.api.tasks.Task;
 
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.StandardCopyOption;
 
 /**
  * Build-only source overlay for TV 49 East producer mode.
  *
- * <p>The upstream FadCam camera/GL implementation is intentionally kept byte-for-byte
- * in the protected application tree. This plugin creates generated compile inputs with
- * the small producer-mode additions, so the server-room protection boundary is not
- * rewritten just to add the TV producer feature.</p>
+ * <p>The upstream FadCam camera/GL source remains byte-for-byte in the protected
+ * application tree. This plugin creates generated compile inputs with the small
+ * producer additions and compiles those instead, preserving the server-room
+ * source boundary while keeping the runtime feature in the APK.</p>
  */
 public final class ProducerCompositorPlugin implements Plugin<Project> {
     private static final String SERVICE = "src/main/java/com/fadcam/dualcam/service/DualCameraRecordingService.java";
-    private static final String RENDERER = "src/main/java/com/fadcam/opengl/GLWatermarkRenderer.java";
 
     @Override
     public void apply(Project project) {
@@ -36,38 +34,23 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
 
         project.getTasks().withType(JavaCompile.class).configureEach(task -> {
             String name = task.getName();
-            if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) {
-                return;
-            }
+            if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
             File service = new File(project.getProjectDir(), SERVICE);
-            File renderer = new File(project.getProjectDir(), RENDERER);
             File generatedService = new File(output.get().getAsFile(), "com/fadcam/dualcam/service/DualCameraRecordingService.java");
-            File generatedRenderer = new File(output.get().getAsFile(), "com/fadcam/opengl/GLWatermarkRenderer.java");
-            task.setSource(task.getSource()
-                    .minus(project.files(service, renderer))
-                    .plus(project.files(generatedService, generatedRenderer)));
+            task.setSource(task.getSource().minus(project.files(service)).plus(project.files(generatedService)));
         });
     }
 
     private static void generate(Project project, File out) {
         try {
-            File serviceSource = new File(project.getProjectDir(), SERVICE);
-            File rendererSource = new File(project.getProjectDir(), RENDERER);
-            File serviceOut = new File(out, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
-            File rendererOut = new File(out, "com/fadcam/opengl/GLWatermarkRenderer.java");
-            Files.createDirectories(serviceOut.getParentFile().toPath());
-            Files.createDirectories(rendererOut.getParentFile().toPath());
-
-            String service = Files.readString(serviceSource.toPath(), StandardCharsets.UTF_8);
-            service = patchService(service);
-            Files.writeString(serviceOut.toPath(), service, StandardCharsets.UTF_8);
-
-            String renderer = Files.readString(rendererSource.toPath(), StandardCharsets.UTF_8);
-            renderer = patchRenderer(renderer);
-            Files.writeString(rendererOut.toPath(), renderer, StandardCharsets.UTF_8);
+            File source = new File(project.getProjectDir(), SERVICE);
+            File generated = new File(out, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
+            Files.createDirectories(generated.getParentFile().toPath());
+            String patched = patchService(Files.readString(source.toPath(), StandardCharsets.UTF_8));
+            Files.writeString(generated.toPath(), patched, StandardCharsets.UTF_8);
         } catch (IOException e) {
-            throw new RuntimeException("Unable to generate TV 49 East producer compositor sources", e);
+            throw new RuntimeException("Unable to generate TV 49 East producer service", e);
         }
     }
 
@@ -116,14 +99,23 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
                 "        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();",
                 "        if (producerVideoMode) {\n"
                         + "            if (producerVideoUri == null) { broadcastError(\"No producer video selected\"); stopSelf(); return; }\n"
-                        + "            // Reuse the proven primary-only fallback path: the secondary OES input becomes the program-video surface.\n"
+                        + "            // One-camera producer path: the primary camera is routed to the renderer PiP input.\n"
                         + "            useBlackFrameFallback = true;\n"
-                        + "            FLog.i(TAG, \"Producer mode: primary camera + program video as fullscreen source\");\n"
+                        + "            FLog.i(TAG, \"Producer mode: primary camera as live PiP commentator + program video fullscreen\");\n"
                         + "        }\n\n"
                         + "        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();");
         s = replaceOnce(s,
+                "            createCaptureSession(\n                    primaryCameraDevice,\n                    recordingPipeline.getPrimaryCameraInputSurface(),\n                    true /* isPrimary */);",
+                "            Surface primaryTargetSurface = producerVideoMode\n"
+                        + "                    ? recordingPipeline.getSecondaryCameraInputSurface()\n"
+                        + "                    : recordingPipeline.getPrimaryCameraInputSurface();\n"
+                        + "            createCaptureSession(\n"
+                        + "                    primaryCameraDevice,\n"
+                        + "                    primaryTargetSurface,\n"
+                        + "                    true /* isPrimary */);");
+        s = replaceOnce(s,
                 "        // Schedule periodic secondary camera snapshots ONLY if not in black frame test mode\n        if (!useBlackFrameFallback) {",
-                "        // Schedule periodic secondary camera snapshots only for the real camera fallback path.\n        if (!useBlackFrameFallback && !producerVideoMode) {");
+                "        // Producer mode supplies the PiP input continuously from the primary camera.\n        if (!useBlackFrameFallback && !producerVideoMode) {");
         s = replaceOnce(s,
                 "            recordingPipeline.startRecording();\n            state = DualCameraState.RECORDING;",
                 "            recordingPipeline.startRecording();\n            if (producerVideoMode) startProducerVideoPlayback();\n            state = DualCameraState.RECORDING;");
@@ -136,10 +128,10 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
 
         String marker = "    // ════════════════════════════════════════════════════════════════════\n    // HELPERS\n    // ════════════════════════════════════════════════════════════════════\n";
         String methods = """
-    /** Starts local program video on the secondary OES input and keeps the primary camera as PiP commentary. */
+    /** Starts local program video on the renderer's primary OES input. */
     private void startProducerVideoPlayback() {
         if (!producerVideoMode || producerVideoUri == null || recordingPipeline == null) return;
-        Surface programSurface = recordingPipeline.getSecondaryCameraInputSurface();
+        Surface programSurface = recordingPipeline.getPrimaryCameraInputSurface();
         if (programSurface == null || !programSurface.isValid()) { transitionToError("Producer video surface unavailable"); return; }
         releaseProducerVideoPlayer();
         try {
@@ -174,41 +166,10 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
         return s;
     }
 
-    private static String patchRenderer(String s) {
-        s = replaceOnce(s,
-                "                float[] fsTexMatrix = camerasSwapped ? pipLatestTexMatrix : encoderTexMatrix;\n"
-                        + "                // pipLatestTexMatrix is raw from pipSurfaceTexture — apply flip if fullscreen camera is front\n"
-                        + "                if (camerasSwapped && isFullscreenCameraFront() && frontVideoMirrorEnabled) {\n"
-                        + "                    fsTexMatrix = applyHorizontalTexFlip(fsTexMatrix);\n"
-                        + "                }\n"
-                        + "                if (mFullFrameBlit != null) {\n"
-                        + "                    if (!camerasSwapped) {\n"
-                        + "                        drawOESTexture(encoderCameraMvp, fsTexMatrix);\n"
-                        + "                    } else {\n"
-                        + "                        drawOESTextureWithId(oesTextureId, encoderCameraMvp, fsTexMatrix);\n"
-                        + "                    }\n"
-                        + "                } else {\n"
-                        + "                    drawWithFallbackMethodId(oesTextureId, encoderCameraMvp, fsTexMatrix);\n"
-                        + "                }",
-                "                float[] fsTexMatrix = camerasSwapped ? pipLatestTexMatrix : encoderTexMatrix;\n"
-                        + "                if (camerasSwapped && isFullscreenCameraFront() && frontVideoMirrorEnabled) fsTexMatrix = applyHorizontalTexFlip(fsTexMatrix);\n"
-                        + "                int fullscreenTextureId = camerasSwapped ? pipOesTextureId : oesTextureId;\n"
-                        + "                if (mFullFrameBlit != null) drawOESTextureWithId(fullscreenTextureId, encoderCameraMvp, fsTexMatrix);\n"
-                        + "                else drawWithFallbackMethodId(fullscreenTextureId, encoderCameraMvp, fsTexMatrix);");
-        s = replaceOnce(s,
-                "        // Bind PiP texture\n        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);\n        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, pipOesTextureId);\n        GLES20.glUniform1i(pipTextureHandle, 0);",
-                "        // After a producer swap, the primary camera is the PiP commentator.\n"
-                        + "        int pipTextureId = camerasSwapped ? oesTextureId : pipOesTextureId;\n"
-                        + "        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);\n"
-                        + "        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, pipTextureId);\n"
-                        + "        GLES20.glUniform1i(pipTextureHandle, 0);");
-        return s;
-    }
-
     private static String replaceOnce(String source, String oldText, String newText) {
         int first = source.indexOf(oldText);
         if (first < 0 || first != source.lastIndexOf(oldText)) {
-            throw new IllegalStateException("Producer compositor patch anchor missing or duplicated: " + oldText.substring(0, Math.min(80, oldText.length())));
+            throw new IllegalStateException("Producer compositor patch anchor missing or duplicated: " + oldText.substring(0, Math.min(100, oldText.length())));
         }
         return source.substring(0, first) + newText + source.substring(first + oldText.length());
     }
