@@ -2,15 +2,13 @@ package com.fadcam;
 
 import android.app.Activity;
 import android.content.Intent;
-import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
-import android.provider.Settings;
 import android.view.Gravity;
-import android.view.View;
 import android.widget.Button;
 import android.widget.LinearLayout;
 import android.widget.TextView;
+import android.widget.Toast;
 
 import androidx.core.content.ContextCompat;
 
@@ -113,7 +111,6 @@ public final class LiveProducerActivity extends Activity {
         try {
             startActivityForResult(intent, REQUEST_VIDEO);
         } catch (RuntimeException e) {
-            // Some OEM builds do not expose ACTION_OPEN_DOCUMENT video providers.
             Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
             fallback.addCategory(Intent.CATEGORY_OPENABLE);
             fallback.setType("video/*");
@@ -165,7 +162,7 @@ public final class LiveProducerActivity extends Activity {
             ContextCompat.startActivity(this, intent, null);
             finish();
         } catch (RuntimeException e) {
-            Utils.showQuickToast(this, "Unable to start live producer mode");
+            Toast.makeText(this, "Unable to start live producer mode", Toast.LENGTH_LONG).show();
         }
     }
 }
