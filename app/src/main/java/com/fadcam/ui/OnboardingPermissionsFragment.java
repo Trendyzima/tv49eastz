@@ -333,4 +333,4 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
             }
         }
     }
-}
+} 
