@@ -18,15 +18,16 @@ export default async function handler(request: Request): Promise<Response> {
 
   const session = typeof body?.session === "string" ? body.session.trim() : "";
   const stream = typeof body?.stream === "string" ? body.stream.trim() : "";
+  const expectedStream = required("PUBLIC_STREAM_ID");
   if (!session || session.length > 256 || !/^[A-Za-z0-9_-]+$/.test(session)) {
     return json({ error: "invalid_session" }, 400);
   }
-  if (!stream || stream.length > 128 || !/^[A-Za-z0-9._-]+$/.test(stream)) {
+  if (!stream || stream !== expectedStream || stream.length > 128 || !/^[A-Za-z0-9._-]+$/.test(stream)) {
     return json({ error: "invalid_stream" }, 400);
   }
 
-  // A publish ticket is issued only for a session the public media gateway
-  // currently recognizes. The edge never receives the producer's device key.
+  // The edge can publish only an already-live gateway session. Device
+  // credentials stay on the producer/tunnel side and are never sent here.
   let probe: Response;
   try {
     probe = await fetch(gatewayUrl(`/stream/${encodeURIComponent(session)}/index.m3u8`), {
@@ -39,11 +40,6 @@ export default async function handler(request: Request): Promise<Response> {
   if (!probe.ok) return json({ error: "session_not_live", gateway_status: probe.status }, 409);
 
   const ticket = await signTicket(session, stream, 900);
-  const origin = new URL(request.url).origin;
-  return json({
-    ticket,
-    expires_in: 900,
-    viewer_url: `${origin}/api/live?ticket=${encodeURIComponent(ticket)}`,
-    playlist_url: `${origin}/api/live?ticket=${encodeURIComponent(ticket)}`,
-  });
+  const viewerUrl = `${new URL(request.url).origin}/api/live?ticket=${encodeURIComponent(ticket)}`;
+  return json({ ticket, expires_in: 900, viewer_url: viewerUrl, playlist_url: viewerUrl });
 }
