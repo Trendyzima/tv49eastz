@@ -1,5 +1,6 @@
 package com.tv49eastz.build;
 
+import org.gradle.api.Action;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.Task;
@@ -26,8 +27,6 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
 
         TaskProvider<Task> prepare = project.getTasks().register("prepareProducerCompositorSources", task -> {
             task.getOutputs().dir(outputDir);
-            // Capture only filesystem values. Capturing Project inside the task action
-            // is rejected by Gradle 8.13's configuration-cache serialization.
             task.doLast(ignored -> generate(source, outputDir));
         });
 
@@ -35,12 +34,8 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
             String name = task.getName();
             if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
-            // AGP may finish wiring a variant's Java source after this plugin is
-            // applied. Apply the replacement immediately before javac executes so
-            // the final AGP source graph cannot overwrite it. Only File values are
-            // captured by this action, keeping configuration-cache support intact.
-            task.doFirst(ignored -> task.setSource(
-                    task.getSource().minus(source).plus(generatedService)));
+            task.doFirst((Action<Task>) current -> current.setSource(
+                    current.getSource().minus(source).plus(generatedService)));
         });
     }
 
