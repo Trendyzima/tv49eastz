@@ -23,7 +23,7 @@ env:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -31,36 +31,16 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Validate required deployment secrets
+      - name: Validate Cloudflare credentials
         shell: bash
         env:
           CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          GATEWAY_KEY: ${{ secrets.GATEWAY_API_KEY }}
-          CAPABILITY_KEY: ${{ secrets.GATEWAY_CAPABILITY_KEY }}
-          TUNNEL_PROXY: ${{ secrets.TUNNEL_PROXY_BASE_URL }}
-          RELAY_SIGNING: ${{ secrets.RELAY_SIGNING_SECRET }}
-          RELAY_DEVICE: ${{ secrets.RELAY_DEVICE_SECRET }}
         run: |
           set -euo pipefail
-          missing=0
-          for pair in \
-            "CLOUDFLARE_ACCOUNT_ID:$CF_ACCOUNT" \
-            "CLOUDFLARE_API_TOKEN:$CF_TOKEN" \
-            "GATEWAY_API_KEY:$GATEWAY_KEY" \
-            "GATEWAY_CAPABILITY_KEY:$CAPABILITY_KEY" \
-            "TUNNEL_PROXY_BASE_URL:$TUNNEL_PROXY" \
-            "RELAY_SIGNING_SECRET:$RELAY_SIGNING" \
-            "RELAY_DEVICE_SECRET:$RELAY_DEVICE"; do
-            name="${pair%%:*}"
-            value="${pair#*:}"
-            if [[ -z "$value" ]]; then
-              echo "Missing GitHub Actions secret: $name"
-              missing=1
-            fi
-          done
-          if ((missing)); then exit 1; fi
-          echo 'All required deployment secrets are present.'
+          [[ -n "$CF_ACCOUNT" ]] || { echo 'Missing GitHub Actions secret: CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+          [[ -n "$CF_TOKEN" ]] || { echo 'Missing GitHub Actions secret: CLOUDFLARE_API_TOKEN'; exit 1; }
+          echo 'Cloudflare credentials are present.'
 
       - name: Set up Node.js
         uses: actions/setup-node@v5
@@ -106,26 +86,54 @@ jobs:
           PY
           grep -Fq "registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/stream-gateway:${GITHUB_SHA}" cloudflare-relay/wrangler.ci.json
 
-      - name: Deploy Worker and sync Worker secrets
-        id: deploy
+      - name: Deploy Worker and discover public URL
+        id: initial_deploy
         uses: cloudflare/wrangler-action@v4
-        env:
-          GATEWAY_API_KEY: ${{ secrets.GATEWAY_API_KEY }}
-          GATEWAY_CAPABILITY_KEY: ${{ secrets.GATEWAY_CAPABILITY_KEY }}
-          TUNNEL_PROXY_BASE_URL: ${{ secrets.TUNNEL_PROXY_BASE_URL }}
-          RELAY_SIGNING_SECRET: ${{ secrets.RELAY_SIGNING_SECRET }}
-          RELAY_DEVICE_SECRET: ${{ secrets.RELAY_DEVICE_SECRET }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
           command: deploy --config wrangler.ci.json
-          secrets: |
-            GATEWAY_API_KEY
-            GATEWAY_CAPABILITY_KEY
-            TUNNEL_PROXY_BASE_URL
-            RELAY_SIGNING_SECRET
-            RELAY_DEVICE_SECRET
+
+      - name: Bootstrap persistent Worker secrets
+        working-directory: cloudflare-relay
+        env:
+          PUBLIC_URL: ${{ steps.initial_deploy.outputs.deployment-url }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ -n "$PUBLIC_URL" ]] || { echo 'Wrangler did not return a deployment URL.'; exit 1; }
+          PUBLIC_URL="${PUBLIC_URL%/}"
+          echo "Discovered Cloudflare Worker URL: $PUBLIC_URL"
+
+          secrets_json="$(npx --yes wrangler@latest secret list --config wrangler.ci.json)"
+
+          ensure_secret() {
+            local name="$1"
+            local value="$2"
+            if printf '%s' "$secrets_json" | grep -q '"name"[[:space:]]*:[[:space:]]*"'"$name"'"'; then
+              echo "$name already exists; preserving it."
+              return 0
+            fi
+            echo "Creating missing Worker secret: $name"
+            printf '%s' "$value" | npx --yes wrangler@latest secret put "$name" --config wrangler.ci.json
+            secrets_json="$(npx --yes wrangler@latest secret list --config wrangler.ci.json)"
+          }
+
+          ensure_secret GATEWAY_API_KEY "$(openssl rand -hex 64)"
+          ensure_secret GATEWAY_CAPABILITY_KEY "$(openssl rand -hex 64)"
+          ensure_secret RELAY_SIGNING_SECRET "$(openssl rand -hex 64)"
+          ensure_secret RELAY_DEVICE_SECRET "$(openssl rand -hex 64)"
+          ensure_secret TUNNEL_PROXY_BASE_URL "$PUBLIC_URL"
+
+      - name: Redeploy Worker with persistent runtime secrets
+        id: deploy
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-relay
+          command: deploy --config wrangler.ci.json
 
       - name: Verify production deployment
         env:
@@ -135,13 +143,13 @@ jobs:
           set -euo pipefail
           test -n "$DEPLOYMENT_URL"
           echo "PUBLIC_GATEWAY_URL=$DEPLOYMENT_URL"
-          for attempt in $(seq 1 12); do
+          for attempt in $(seq 1 16); do
             if curl --fail --silent --show-error --max-time 15 "$DEPLOYMENT_URL/health"; then
               echo
               echo 'Worker + Container health check passed.'
               exit 0
             fi
-            echo "Health check attempt $attempt/12 failed; waiting 15s for Container provisioning..."
+            echo "Health check attempt $attempt/16 failed; waiting 15s for Container provisioning..."
             sleep 15
           done
           echo 'Container health check did not become ready within the verification window.'
