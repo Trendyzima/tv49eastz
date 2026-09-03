@@ -7,38 +7,30 @@ import androidx.annotation.NonNull;
 import java.io.IOException;
 import java.net.Inet4Address;
 import java.net.InetAddress;
+import java.net.InterfaceAddress;
 import java.net.NetworkInterface;
-import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.Enumeration;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-/**
- * Finds an active FadCam Server Room on the local network.
- *
- * FadCam's normal live endpoint is HTTP on port 8080. The receiver previously
- * required a compile-time HTTPS catalog URL, which meant an otherwise healthy
- * local FadCam server could never be discovered by the standalone TV APK.
- * Discovery is deliberately LAN-only: it enumerates directly attached IPv4
- * networks and accepts a candidate only when /live.m3u8 contains real HLS
- * media markers.
- */
+/** Finds an active FadCam Server Room on the local network. */
 public final class FadCamLanDiscovery {
     public static final int DEFAULT_PORT = 8080;
     private static final int MAX_HOSTS = 512;
     private static final int MAX_WORKERS = 24;
     private static final long PROBE_TIMEOUT_MS = 700L;
+    private static final long DISCOVERY_DEADLINE_MS = 8_000L;
 
     private FadCamLanDiscovery() {}
 
@@ -52,11 +44,8 @@ public final class FadCamLanDiscovery {
         listener.onSearching();
         Thread thread = new Thread(() -> {
             String found = findServer();
-            if (found != null) {
-                listener.onFound(found, found + "/live.m3u8");
-            } else {
-                listener.onNotFound("No active FadCam live server found on the local network");
-            }
+            if (found != null) listener.onFound(found, found + "/live.m3u8");
+            else listener.onNotFound("No active FadCam live server found on the local network");
         }, "fadcam-lan-discovery");
         thread.setDaemon(true);
         thread.start();
@@ -70,14 +59,13 @@ public final class FadCamLanDiscovery {
                 .followRedirects(false)
                 .followSslRedirects(false)
                 .build();
-
         List<String> candidates = candidates();
         if (candidates.isEmpty()) return null;
 
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(MAX_WORKERS, candidates.size()));
         try {
-            java.util.concurrent.CountDownLatch done = new java.util.concurrent.CountDownLatch(candidates.size());
-            java.util.concurrent.atomic.AtomicReference<String> found = new java.util.concurrent.atomic.AtomicReference<>();
+            CountDownLatch done = new CountDownLatch(candidates.size());
+            AtomicReference<String> found = new AtomicReference<>();
             for (String base : candidates) {
                 pool.execute(() -> {
                     try {
@@ -87,7 +75,7 @@ public final class FadCamLanDiscovery {
                     }
                 });
             }
-            long deadline = SystemClock.elapsedRealtime() + 8_000L;
+            long deadline = SystemClock.elapsedRealtime() + DISCOVERY_DEADLINE_MS;
             while (found.get() == null && SystemClock.elapsedRealtime() < deadline) {
                 if (done.await(150, TimeUnit.MILLISECONDS)) break;
             }
@@ -132,54 +120,36 @@ public final class FadCamLanDiscovery {
                 NetworkInterface iface = interfaces.nextElement();
                 if (!iface.isUp() || iface.isLoopback() || iface.isVirtual()) continue;
                 Enumeration<InetAddress> addresses = iface.getInetAddresses();
-                while (addresses.hasMoreElements()) {
+                while (addresses.hasMoreElements() && result.size() < MAX_HOSTS) {
                     InetAddress address = addresses.nextElement();
                     if (!(address instanceof Inet4Address) || address.isLoopback()) continue;
-                    byte[] ip = address.getAddress();
-                    byte[] mask = ipv4Mask(iface, address);
-                    if (mask == null) continue;
-                    long network = ipv4(ip) & ipv4(mask);
-                    int prefix = prefixLength(mask);
+                    InterfaceAddress ia = findInterfaceAddress(iface, address);
+                    if (ia == null) continue;
+                    short prefix = ia.getNetworkPrefixLength();
+                    if (prefix < 1 || prefix > 30) continue;
+                    long network = ipv4(address.getAddress()) & ipv4(maskForPrefix(prefix));
                     int hostBits = 32 - prefix;
-                    if (hostBits < 1 || hostBits > 24) continue;
                     long count = Math.min(1L << hostBits, MAX_HOSTS);
-                    for (long offset = 0; offset < count && result.size() < MAX_HOSTS; offset++) {
-                        long candidate = network + offset;
-                        if (candidate == network || candidate == network + count - 1) continue;
-                        addCandidate(result, seen, "http://" + formatIpv4(candidate) + ":" + DEFAULT_PORT);
+                    for (long offset = 1; offset < count - 1 && result.size() < MAX_HOSTS; offset++) {
+                        addCandidate(result, seen, "http://" + formatIpv4(network + offset) + ":" + DEFAULT_PORT);
                     }
                 }
             }
         } catch (Exception ignored) {
-            // Loopback remains available even when interface enumeration is restricted.
+            // Loopback remains a safe fallback if interface enumeration is unavailable.
         }
         return result;
     }
 
-    private static void addCandidate(List<String> result, Set<String> seen, String value) {
-        if (seen.add(value) && result.size() < MAX_HOSTS) result.add(value);
-    }
-
-    private static byte[] ipv4Mask(NetworkInterface iface, InetAddress address) {
-        java.util.Enumeration<java.net.InterfaceAddress> addresses = iface.getInterfaceAddresses().elements();
-        while (addresses.hasMoreElements()) {
-            java.net.InterfaceAddress ia = addresses.nextElement();
-            if (address.equals(ia.getAddress()) && address instanceof Inet4Address) {
-                short prefix = ia.getNetworkPrefixLength();
-                if (prefix < 1 || prefix > 30) return null;
-                int bits = 0;
-                for (int i = 0; i < 4; i++) {
-                    int remaining = Math.max(0, Math.min(8, prefix - bits));
-                    int value = remaining == 0 ? 0 : (0xff << (8 - remaining)) & 0xff;
-                    bits += remaining;
-                    if (i == 0) {
-                        // handled below from prefix; keep loop only for validation
-                    }
-                }
-                return maskForPrefix(prefix);
-            }
+    private static InterfaceAddress findInterfaceAddress(NetworkInterface iface, InetAddress address) {
+        for (InterfaceAddress value : iface.getInterfaceAddresses()) {
+            if (address.equals(value.getAddress())) return value;
         }
         return null;
+    }
+
+    private static void addCandidate(List<String> result, Set<String> seen, String value) {
+        if (seen.add(value) && result.size() < MAX_HOSTS) result.add(value);
     }
 
     private static byte[] maskForPrefix(int prefix) {
@@ -189,18 +159,6 @@ public final class FadCamLanDiscovery {
             mask[i] = (byte) (bits == 0 ? 0 : (0xff << (8 - bits)) & 0xff);
         }
         return mask;
-    }
-
-    private static int prefixLength(byte[] mask) {
-        int prefix = 0;
-        for (byte b : mask) {
-            int value = b & 0xff;
-            for (int bit = 7; bit >= 0; bit--) {
-                if ((value & (1 << bit)) == 0) return prefix;
-                prefix++;
-            }
-        }
-        return prefix;
     }
 
     private static long ipv4(byte[] value) {
