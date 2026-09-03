@@ -1,7 +1,10 @@
 package com.fadcam.services;
 
 import android.app.PendingIntent;
+import android.content.BroadcastReceiver;
+import android.content.Context;
 import android.content.Intent;
+import android.content.IntentFilter;
 import android.graphics.drawable.Icon;
 import android.os.Build;
 import android.service.quicksettings.Tile;
@@ -13,18 +16,26 @@ import com.fadcam.RecordingStartActivity;
 import com.fadcam.RecordingStopActivity;
 import com.fadcam.SharedPreferencesManager;
 
-/**
- * Dedicated Quick Settings entry point for a TV 49 East live interview.
- * It starts the existing foreground-safe RecordingStartActivity, which starts
- * the LAN HLS server before the dual-camera PiP service.
- */
+/** Dedicated Quick Settings entry point for a TV 49 East live interview. */
 public final class LiveInterviewTileService extends TileService {
     private static final String TAG = "LiveInterviewTile";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
+    private BroadcastReceiver stateReceiver;
 
     @Override public void onStartListening() {
         super.onStartListening();
+        registerStateReceiver();
         refreshTile();
+    }
+
+    @Override public void onStopListening() {
+        unregisterStateReceiver();
+        super.onStopListening();
+    }
+
+    @Override public void onDestroy() {
+        unregisterStateReceiver();
+        super.onDestroy();
     }
 
     @Override public void onClick() {
@@ -52,6 +63,31 @@ public final class LiveInterviewTileService extends TileService {
         } catch (RuntimeException e) {
             FLog.e(TAG, "Unable to launch live interview action", e);
         }
+    }
+
+    private void registerStateReceiver() {
+        if (stateReceiver != null) return;
+        stateReceiver = new BroadcastReceiver() {
+            @Override public void onReceive(Context context, Intent intent) {
+                refreshTile();
+            }
+        };
+        IntentFilter filter = new IntentFilter();
+        filter.addAction(com.fadcam.Constants.BROADCAST_ON_RECORDING_STARTED);
+        filter.addAction(com.fadcam.Constants.BROADCAST_ON_RECORDING_STOPPED);
+        filter.addAction(com.fadcam.Constants.BROADCAST_ON_DUAL_RECORDING_STARTED);
+        filter.addAction(com.fadcam.Constants.BROADCAST_ON_DUAL_RECORDING_STOPPED);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(stateReceiver, filter, Context.RECEIVER_NOT_EXPORTED);
+        } else {
+            registerReceiver(stateReceiver, filter);
+        }
+    }
+
+    private void unregisterStateReceiver() {
+        if (stateReceiver == null) return;
+        try { unregisterReceiver(stateReceiver); } catch (IllegalArgumentException ignored) { }
+        stateReceiver = null;
     }
 
     private void refreshTile() {
