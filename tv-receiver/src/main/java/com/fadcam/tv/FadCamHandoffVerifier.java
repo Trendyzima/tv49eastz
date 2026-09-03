@@ -52,7 +52,7 @@ public final class FadCamHandoffVerifier {
         if (!"com.fadcam".equals(packageName) && !"com.fadcam.beta".equals(packageName)) {
             return Result.reject("unexpected publisher package");
         }
-        if (!isPublicHttps(streamUrl)) return Result.reject("stream must use a public HTTPS origin");
+        if (!isAllowedStream(streamUrl)) return Result.reject("stream origin is not allowed");
 
         long issuedAt;
         long expiresAt;
@@ -143,34 +143,26 @@ public final class FadCamHandoffVerifier {
         }
     }
 
-    private static boolean isPublicHttps(String value) {
+    /** HTTPS may be public; HTTP is limited to loopback/private IPv4 for local FadCam Server Room. */
+    private static boolean isAllowedStream(String value) {
         try {
             Uri parsed = Uri.parse(value.trim());
-            if (!"https".equalsIgnoreCase(parsed.getScheme())
-                    || parsed.getHost() == null
-                    || parsed.getUserInfo() != null
-                    || parsed.getFragment() != null) {
-                return false;
-            }
+            String scheme = parsed.getScheme();
             String host = parsed.getHost();
-            if ("localhost".equalsIgnoreCase(host) || host.endsWith(".local")) return false;
-            if (looksLikeIpv4(host)) {
-                String[] octets = host.split("\\.");
-                int a = Integer.parseInt(octets[0]);
-                int b = Integer.parseInt(octets[1]);
-                if (a == 10 || a == 127 || (a == 169 && b == 254)
-                        || (a == 172 && b >= 16 && b <= 31)
-                        || (a == 192 && b == 168) || a == 0) {
-                    return false;
-                }
+            if (host == null || parsed.getUserInfo() != null || parsed.getFragment() != null) return false;
+            if ("https".equalsIgnoreCase(scheme)) {
+                return !"localhost".equalsIgnoreCase(host) && !host.endsWith(".local");
             }
-            if (host.contains(":")) {
-                String lower = host.toLowerCase();
-                if (lower.equals("::1") || lower.startsWith("fc") || lower.startsWith("fd")
-                        || lower.startsWith("fe8") || lower.startsWith("fe9")
-                        || lower.startsWith("fea") || lower.startsWith("feb")) return false;
-            }
-            return true;
+            if (!"http".equalsIgnoreCase(scheme)) return false;
+            if (!looksLikeIpv4(host)) return false;
+            String[] octets = host.split("\\.");
+            int a = Integer.parseInt(octets[0]);
+            int b = Integer.parseInt(octets[1]);
+            return a == 127
+                    || a == 10
+                    || (a == 172 && b >= 16 && b <= 31)
+                    || (a == 192 && b == 168)
+                    || (a == 169 && b == 254);
         } catch (Exception ignored) {
             return false;
         }
