@@ -1,0 +1,98 @@
+name: Deploy Cloudflare Relay
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feat/million-scale-relay
+    paths:
+      - 'cloudflare-relay/**'
+      - '.github/workflows/deploy-cloudflare-relay.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-relay-production
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: '24'
+
+jobs:
+  validate:
+    name: Validate relay before deployment
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare-relay
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Worker runtime types
+        run: npm run types
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Wrangler dry run
+        run: npx wrangler deploy --dry-run
+
+  deploy:
+    name: Deploy relay to Cloudflare
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: cloudflare-relay
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Verify Cloudflare credentials are configured
+        shell: bash
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CF_API_TOKEN" ]] || { echo 'Missing GitHub secret: CLOUDFLARE_API_TOKEN'; exit 1; }
+          [[ -n "$CF_ACCOUNT_ID" ]] || { echo 'Missing GitHub secret: CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+          echo 'Cloudflare deployment credentials are configured.'
+
+      - name: Deploy Worker and Durable Object migration
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-relay
+          command: deploy
+
+      - name: Print deployment metadata
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler deployments status --name tv49eastz-relay --json
