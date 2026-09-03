@@ -2,6 +2,7 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.androidApplication)
+    id("com.tv49eastz.producer-compositor")
 }
 
 android {
