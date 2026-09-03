@@ -14,7 +14,12 @@ export default async function handler(request: Request): Promise<Response> {
       return new Response(null, { status: 302, headers: { location: gatewayUrl(`/stream/${encodeURIComponent(verified.session)}/index.m3u8`), "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
     }
     if (verified.stream !== required("PUBLIC_STREAM_ID")) return json({ error: "stream_not_allowed" }, 403);
-    return new Response(null, { status: 302, headers: { location: relayUrl(), "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
+
+    const destination = new URL(relayUrl());
+    destination.searchParams.set("id", verified.stream);
+    destination.searchParams.set("ticket", ticket);
+
+    return new Response(null, { status: 302, headers: { location: destination.toString(), "cache-control": "no-store", "referrer-policy": "no-referrer", "x-content-type-options": "nosniff" } });
   } catch {
     return json({ error: "invalid_or_expired_ticket" }, 401);
   }

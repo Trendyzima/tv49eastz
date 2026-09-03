@@ -1,0 +1,194 @@
+name: Cloudflare Relay Quality Gate
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'cloudflare-relay/**'
+      - '.github/workflows/cloudflare-relay-quality.yml'
+  push:
+    branches: ['feature/cloudflare-relay']
+    paths:
+      - 'cloudflare-relay/**'
+      - '.github/workflows/cloudflare-relay-quality.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck-and-dry-run:
+    name: Typecheck + Wrangler dry run
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare-relay
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare-relay/package.json
+
+      - name: Install dependencies
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Worker runtime types
+        run: npm run types
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Wrangler configuration check
+        run: npx wrangler deploy --dry-run
+
+      - name: Verify no legacy Cloudflare type collision configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          test ! -f node_modules/@cloudflare/workers-types/index.d.ts || {
+            echo 'FAIL: legacy @cloudflare/workers-types package unexpectedly installed.'
+            exit 1
+          }
+          if grep -Rqs '"WebWorker"' tsconfig.json; then
+            echo 'FAIL: TypeScript WebWorker lib is explicitly enabled alongside generated Worker runtime types.'
+            exit 1
+          fi
+          grep -Fq '"./worker-configuration.d.ts"' tsconfig.json
+          echo 'Cloudflare type environment is clean.'
+
+  repository-duplication-audit:
+    name: Source/resource duplicate audit
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Audit duplicate Java/Kotlin top-level types within source roots
+        shell: bash
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          trap 'rm -rf "$tmp"' EXIT
+          : > "$tmp/types"
+
+          while IFS= read -r -d '' file; do
+            root=""
+            case "$file" in
+              app/src/main/*) root="app/src/main" ;;
+              app/src/test/*) root="app/src/test" ;;
+              app/src/androidTest/*) root="app/src/androidTest" ;;
+              tv-receiver/src/main/*) root="tv-receiver/src/main" ;;
+              tv-receiver/src/test/*) root="tv-receiver/src/test" ;;
+              tv-receiver/src/androidTest/*) root="tv-receiver/src/androidTest" ;;
+              *) continue ;;
+            esac
+            pkg="$(sed -nE 's/^package[[:space:]]+([^;[:space:]]+).*/\1/p' "$file" | head -n1)"
+            name="$(sed -nE 's/^[[:space:]]*(public[[:space:]]+|private[[:space:]]+|protected[[:space:]]+|internal[[:space:]]+|final[[:space:]]+|abstract[[:space:]]+|open[[:space:]]+|sealed[[:space:]]+|data[[:space:]]+|enum[[:space:]]+|annotation[[:space:]]+|value[[:space:]]+)*(class|interface|object)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)/\3/p' "$file" | head -n1)"
+            [[ -n "$name" ]] || continue
+            printf '%s|%s.%s|%s\n' "$root" "${pkg:-<default>}" "$name" "$file" >> "$tmp/types"
+          done < <(find app/src tv-receiver/src -type f \( -name '*.java' -o -name '*.kt' \) -print0)
+
+          dup="$(cut -d'|' -f1-3 "$tmp/types" | sort | uniq -d || true)"
+          if [[ -n "$dup" ]]; then
+            echo 'FAIL: duplicate top-level Java/Kotlin types inside the same source root:'
+            while IFS= read -r key; do
+              grep -F "${key}|" "$tmp/types" || true
+            done <<< "$dup"
+            exit 1
+          fi
+          echo 'No duplicate top-level Java/Kotlin types found within the same source roots.'
+
+      - name: Audit duplicate Android values resources within each resource configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
+
+          roots = [Path('app/src'), Path('tv-receiver/src')]
+          resource_kinds = {
+              'string', 'color', 'dimen', 'style', 'plurals', 'array', 'attr',
+              'declare-styleable', 'menu', 'integer', 'bool', 'fraction', 'drawable',
+              'mipmap', 'anim', 'animator', 'transition', 'layout', 'xml', 'raw', 'font'
+          }
+          duplicates = []
+
+          def local_name(tag):
+              return tag.rsplit('}', 1)[-1]
+
+          for src in roots:
+              for res_dir in sorted(src.rglob('res')):
+                  if not res_dir.is_dir():
+                      continue
+                  for values_dir in sorted(res_dir.glob('values*')):
+                      if not values_dir.is_dir():
+                          continue
+                      # A qualifier such as values-night is a distinct Android
+                      # resource configuration. Duplicate names are only errors
+                      # when they occur inside the same values* directory.
+                      seen = {}
+                      for xml_file in sorted(values_dir.glob('*.xml')):
+                          try:
+                              tree = ET.parse(xml_file)
+                          except ET.ParseError as exc:
+                              print(f'FAIL: malformed XML in {xml_file}: {exc}')
+                              sys.exit(1)
+                          root = tree.getroot()
+                          if local_name(root.tag) != 'resources':
+                              continue
+                          for child in root:
+                              kind = local_name(child.tag)
+                              name = child.attrib.get('name')
+                              if not name:
+                                  continue
+                              if kind == 'item':
+                                  kind = child.attrib.get('type', 'item')
+                              if kind not in resource_kinds and kind != 'item':
+                                  continue
+                              key = (kind, name)
+                              seen.setdefault(key, []).append(str(xml_file))
+                      for key, files in sorted(seen.items()):
+                          if len(files) > 1:
+                              duplicates.append((str(values_dir), key[0], key[1], files))
+
+          if duplicates:
+              print('FAIL: duplicate Android values resources within the same resource configuration:')
+              for directory, kind, name, files in duplicates:
+                  print(f'  {directory}|{kind}|{name}')
+                  for file in files:
+                      print(f'    - {file}')
+              sys.exit(1)
+
+          print('No duplicate Android values resources found within the same resource configurations.')
+          PY
+
+      - name: Verify protected FadCam boundary
+        shell: bash
+        run: |
+          set -euo pipefail
+          baseline="$(tr -d '[:space:]' < server-room/BASELINE)"
+          test -n "$baseline"
+          git cat-file -e "$baseline^{commit}"
+          changed="$(git diff --name-only --no-renames "$baseline" HEAD -- \
+            'app/src/main/java/com/fadcam/**' \
+            'app/src/main/res/**' \
+            'app/src/main/AndroidManifest.xml')"
+          if [[ -n "$changed" ]]; then
+            echo 'FAIL: protected FadCam application boundary changed:'
+            printf '%s\n' "$changed"
+            exit 1
+          fi
+          echo 'Protected FadCam application boundary is unchanged.'

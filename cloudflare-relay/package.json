@@ -1,0 +1,16 @@
+{
+  "name": "tv49eastz-cloudflare-relay",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "types": "wrangler types",
+    "deploy": "wrangler deploy",
+    "typecheck": "npm run types && tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "latest",
+    "wrangler": "latest"
+  }
+}
