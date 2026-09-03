@@ -64,13 +64,17 @@ jobs:
       - name: Test Go gateway
         working-directory: stream-gateway
         run: |
+          set -euo pipefail
           go test ./... -count=1 -race
           go vet ./...
           test -z "$(gofmt -l .)"
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/stream-gateway ./
+          file /tmp/stream-gateway
 
       - name: Build and push immutable Go Container image
         working-directory: stream-gateway
         run: |
+          set -euo pipefail
           npx --yes wrangler@latest containers build -p -t "stream-gateway:${GITHUB_SHA}" .
 
       - name: Create CI Wrangler config with immutable image tag
@@ -93,7 +97,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
-          command: deploy --config wrangler.ci.json
+          command: deploy --config wrangler.ci.json --containers-rollout=immediate
 
       - name: Bootstrap persistent Worker secrets
         working-directory: cloudflare-relay
@@ -133,7 +137,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
-          command: deploy --config wrangler.ci.json
+          command: deploy --config wrangler.ci.json --containers-rollout=immediate
 
       - name: Verify production deployment
         env:
@@ -143,13 +147,13 @@ jobs:
           set -euo pipefail
           test -n "$DEPLOYMENT_URL"
           echo "PUBLIC_GATEWAY_URL=$DEPLOYMENT_URL"
-          for attempt in $(seq 1 16); do
+          for attempt in $(seq 1 20); do
             if curl --fail --silent --show-error --max-time 15 "$DEPLOYMENT_URL/health"; then
               echo
               echo 'Worker + Container health check passed.'
               exit 0
             fi
-            echo "Health check attempt $attempt/16 failed; waiting 15s for Container provisioning..."
+            echo "Health check attempt $attempt/20 failed; waiting 15s for Container provisioning..."
             sleep 15
           done
           echo 'Container health check did not become ready within the verification window.'
@@ -157,4 +161,7 @@ jobs:
 
       - name: Inspect deployed Container applications
         working-directory: cloudflare-relay
-        run: npx --yes wrangler@latest containers list
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest containers list
+          npx --yes wrangler@latest containers images list
