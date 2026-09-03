@@ -34,9 +34,7 @@ android {
         versionCode = 53
         versionName = "4.0.1"
         vectorDrawables.useSupportLibrary = true
-        ndk {
-            debugSymbolLevel = "FULL"
-        }
+        ndk { debugSymbolLevel = "FULL" }
     }
 
     signingConfigs {
@@ -67,40 +65,27 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             isDebuggable = false
             signingConfig = signingConfigs.getByName("release")
         }
         create("pro") {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             applicationIdSuffix = ".pro"
             isDebuggable = false
-            if (releaseSigningConfigValid) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            if (releaseSigningConfigValid) signingConfig = signingConfigs.getByName("release")
             versionNameSuffix = "-Pro"
             matchingFallbacks += listOf("release")
         }
         create("proPlus") {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             applicationIdSuffix = ".proplus"
             isDebuggable = false
-            if (releaseSigningConfigValid) {
-                signingConfig = signingConfigs.getByName("release")
-            }
+            if (releaseSigningConfigValid) signingConfig = signingConfigs.getByName("release")
             versionNameSuffix = "-Pro+"
             val customAppName = project.findProperty("customAppName")?.toString() ?: "FadCam Pro+"
             resValue("string", "app_name", customAppName)
@@ -125,9 +110,7 @@ android {
             applicationIdSuffix = ".weather"
             resValue("string", "app_name", "Weather")
         }
-        create("default") {
-            dimension = "pro"
-        }
+        create("default") { dimension = "pro" }
     }
 
     androidComponents {
@@ -156,11 +139,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
-        }
-    }
+    testOptions { unitTests { isIncludeAndroidResources = true } }
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
@@ -199,13 +178,13 @@ android {
     }
 }
 
-// AGP's AndroidSourceDirectorySet has no PatternFilterable exclude API.
-// Filter JavaCompile inputs by absolute source path so the protected upstream
-// implementation is omitted while the replacement under src/permissionSafe is
-// still compiled. This preserves the protected source tree byte-for-byte.
+// AndroidSourceDirectorySet on current AGP exposes source directories but not
+// PatternFilterable. Filter JavaCompile inputs by the absolute source file so
+// only the protected upstream class is removed; the same-FQCN safe replacement
+// under src/permissionSafe remains part of the compilation inputs.
 tasks.withType<JavaCompile>().configureEach {
-    source = source.filter { file ->
-        val normalized = file.absolutePath.replace('\\', '/')
+    source = source.filter { element ->
+        val normalized = element.file.absolutePath.replace('\\', '/')
         !normalized.endsWith("/app/src/main/java/com/fadcam/ui/OnboardingPermissionsFragment.java")
     }
 }
@@ -238,9 +217,7 @@ dependencies {
     implementation(libs.navigation.ui.ktx)
     implementation(libs.okhttp)
     implementation(libs.tensorflow.lite)
-    implementation(libs.tensorflow.lite.task.vision) {
-        exclude(group = "org.tensorflow", module = "tensorflow-lite-api")
-    }
+    implementation(libs.tensorflow.lite.task.vision) { exclude(group = "org.tensorflow", module = "tensorflow-lite-api") }
     implementation(libs.opencv.android)
     implementation(libs.osmdroid.android)
     implementation(libs.osmdroid.wms)
