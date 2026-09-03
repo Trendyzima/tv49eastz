@@ -27,6 +27,7 @@ import okhttp3.Response;
 /** Finds an active FadCam Server Room on the local network. */
 public final class FadCamLanDiscovery {
     public static final int DEFAULT_PORT = 8080;
+    private static final int MAX_PORT = 8090;
     private static final int MAX_HOSTS = 512;
     private static final int MAX_WORKERS = 24;
     private static final long PROBE_TIMEOUT_MS = 700L;
@@ -64,8 +65,7 @@ public final class FadCamLanDiscovery {
                 .build();
         List<String> candidates = candidates();
         if (candidates.isEmpty()) {
-            client.dispatcher().executorService().shutdown();
-            client.connectionPool().evictAll();
+            shutdownClient(client);
             return null;
         }
 
@@ -95,16 +95,20 @@ public final class FadCamLanDiscovery {
             return null;
         } finally {
             pool.shutdownNow();
-            client.dispatcher().executorService().shutdown();
-            client.connectionPool().evictAll();
+            shutdownClient(client);
         }
+    }
+
+    private static void shutdownClient(OkHttpClient client) {
+        try { client.dispatcher().executorService().shutdown(); } catch (Throwable ignored) { }
+        try { client.connectionPool().evictAll(); } catch (Throwable ignored) { }
     }
 
     private static boolean probe(OkHttpClient client, String base) {
         Request request = new Request.Builder()
                 .url(base + "/live.m3u8")
                 .header("Accept", "application/vnd.apple.mpegurl,text/plain;q=0.8")
-                .header("User-Agent", "TV49East-FadCamDiscovery/1")
+                .header("User-Agent", "TV49East-FadCamDiscovery/2")
                 .build();
         try (Response response = client.newCall(request).execute()) {
             if (!response.isSuccessful() || response.body() == null) return false;
@@ -122,17 +126,16 @@ public final class FadCamLanDiscovery {
     private static List<String> candidates() {
         Set<String> seen = new HashSet<>();
         List<String> result = new ArrayList<>();
-        addCandidate(result, seen, "http://127.0.0.1:" + DEFAULT_PORT);
+        addPortCandidates(result, seen, "127.0.0.1");
         try {
             Enumeration<NetworkInterface> interfaces = NetworkInterface.getNetworkInterfaces();
             if (interfaces == null) return result;
-            while (interfaces.hasMoreElements() && result.size() < MAX_HOSTS) {
+            while (interfaces.hasMoreElements() && result.size() < MAX_HOSTS * (MAX_PORT - DEFAULT_PORT + 1)) {
                 NetworkInterface iface = interfaces.nextElement();
                 if (!iface.isUp() || iface.isLoopback() || iface.isVirtual()) continue;
                 Enumeration<InetAddress> addresses = iface.getInetAddresses();
-                while (addresses.hasMoreElements() && result.size() < MAX_HOSTS) {
+                while (addresses.hasMoreElements() && result.size() < MAX_HOSTS * (MAX_PORT - DEFAULT_PORT + 1)) {
                     InetAddress address = addresses.nextElement();
-                    // InetAddress exposes isLoopbackAddress(), not isLoopback().
                     if (!(address instanceof Inet4Address) || address.isLoopbackAddress()) continue;
                     InterfaceAddress ia = findInterfaceAddress(iface, address);
                     if (ia == null) continue;
@@ -141,8 +144,10 @@ public final class FadCamLanDiscovery {
                     long network = ipv4(address.getAddress()) & ipv4(maskForPrefix(prefix));
                     int hostBits = 32 - prefix;
                     long count = Math.min(1L << hostBits, MAX_HOSTS);
-                    for (long offset = 1; offset < count - 1 && result.size() < MAX_HOSTS; offset++) {
-                        addCandidate(result, seen, "http://" + formatIpv4(network + offset) + ":" + DEFAULT_PORT);
+                    for (long offset = 1; offset < count - 1; offset++) {
+                        String host = formatIpv4(network + offset);
+                        addPortCandidates(result, seen, host);
+                        if (result.size() >= MAX_HOSTS * (MAX_PORT - DEFAULT_PORT + 1)) break;
                     }
                 }
             }
@@ -150,6 +155,12 @@ public final class FadCamLanDiscovery {
             // Loopback remains a safe fallback if interface enumeration is unavailable.
         }
         return result;
+    }
+
+    private static void addPortCandidates(List<String> result, Set<String> seen, String host) {
+        for (int port = DEFAULT_PORT; port <= MAX_PORT; port++) {
+            addCandidate(result, seen, "http://" + host + ":" + port);
+        }
     }
 
     private static InterfaceAddress findInterfaceAddress(NetworkInterface iface, InetAddress address) {
@@ -160,7 +171,7 @@ public final class FadCamLanDiscovery {
     }
 
     private static void addCandidate(List<String> result, Set<String> seen, String value) {
-        if (seen.add(value) && result.size() < MAX_HOSTS) result.add(value);
+        if (seen.add(value)) result.add(value);
     }
 
     private static byte[] maskForPrefix(int prefix) {
