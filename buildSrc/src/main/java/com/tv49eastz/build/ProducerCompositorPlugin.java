@@ -1,10 +1,8 @@
 package com.tv49eastz.build;
 
-import org.gradle.api.Action;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
 import org.gradle.api.file.Directory;
-import org.gradle.api.file.FileCollection;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.compile.JavaCompile;
@@ -34,18 +32,15 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
             String name = task.getName();
             if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
-            // Gradle's Java API exposes getSource() as File for this toolchain, while
-            // doFirst() accepts Action<? super Task>. Keep the public action type aligned
-            // with Gradle and cast only after receiving the task at execution time.
-            task.doFirst((Action<org.gradle.api.Task>) current -> {
-                JavaCompile compile = (JavaCompile) current;
-                // Convert every source operand to FileCollection explicitly. The Java API
-                // does not provide Groovy's File.minus(File) coercion.
-                FileCollection finalSources = project.files(compile.getSource())
-                        .minus(project.files(source))
-                        .plus(project.files(generatedService));
-                compile.setSource(finalSources);
-            });
+            // Keep the overlay wiring entirely in Gradle configuration time. Mutating a
+            // JavaCompile task from doFirst() forces Gradle to access Task.project during
+            // execution, which is forbidden by the configuration cache.
+            //
+            // Exclude the protected source by its project-relative path, then add the
+            // generated replacement as an additional source. This preserves every other
+            // source AGP wires into the task, including sources added later in configuration.
+            task.exclude(SERVICE);
+            task.source(generatedService);
         });
     }
 
