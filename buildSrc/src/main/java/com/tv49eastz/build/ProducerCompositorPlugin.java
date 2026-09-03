@@ -34,17 +34,16 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
             String name = task.getName();
             if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
-            // AGP can finish wiring a variant's Java source after this plugin is applied.
-            // Rebind the final source graph immediately before javac. The Action receives
-            // the task instead of capturing it, so the action remains configuration-cache safe.
-            task.doFirst((Action<JavaCompile>) compile -> {
-                // JavaCompile#getSource() is exposed as a File on the Gradle API used by
-                // this build. Convert it explicitly to a FileCollection before applying
-                // minus/plus; calling minus() directly on File is a Groovy-only extension
-                // and fails when buildSrc itself is compiled as Java.
+            // Gradle's Java API exposes getSource() as File for this toolchain, while
+            // doFirst() accepts Action<? super Task>. Keep the public action type aligned
+            // with Gradle and cast only after receiving the task at execution time.
+            task.doFirst((Action<org.gradle.api.Task>) current -> {
+                JavaCompile compile = (JavaCompile) current;
+                // Convert every source operand to FileCollection explicitly. The Java API
+                // does not provide Groovy's File.minus(File) coercion.
                 FileCollection finalSources = project.files(compile.getSource())
-                        .minus(source)
-                        .plus(generatedService);
+                        .minus(project.files(source))
+                        .plus(project.files(generatedService));
                 compile.setSource(finalSources);
             });
         });
