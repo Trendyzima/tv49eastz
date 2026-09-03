@@ -16,14 +16,18 @@ import com.fadcam.streaming.RemoteStreamService;
 public class RecordingStartActivity extends Activity {
     private static final String TAG = "RecordingStartActivity";
     public static final String EXTRA_SHORTCUT_CAMERA_MODE = "shortcut_camera_mode";
+    public static final String EXTRA_PRODUCER_VIDEO_URI = "producer_video_uri";
     public static final String CAMERA_MODE_BACK = "back";
     public static final String CAMERA_MODE_FRONT = "front";
     public static final String CAMERA_MODE_CURRENT = "current";
     public static final String CAMERA_MODE_DUAL = "dual";
     /** Starts dual-camera PiP plus the local FadCam HLS server for TV 49 East. */
     public static final String CAMERA_MODE_INTERVIEW = "live_interview";
+    /** Starts live producer mode: local video full-screen + live camera commentary in PiP. */
+    public static final String CAMERA_MODE_INTERVIEW_VIDEO = "live_interview_video";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
     private static final String PREF_PREVIOUS_STREAMING_MODE = "fadcam_interview_previous_streaming_mode";
+    private static final String PREF_PRODUCER_VIDEO_URI = "fadcam_producer_video_uri";
     private static final long STREAM_SERVER_WARMUP_MS = 1200L;
 
     @Override
@@ -49,36 +53,37 @@ public class RecordingStartActivity extends Activity {
             } else if (CAMERA_MODE_BACK.equals(mode)) {
                 sharedPreferencesManager.sharedPreferences.edit()
                         .putString(Constants.PREF_CAMERA_SELECTION, CameraType.BACK.name()).apply();
-            } else if (CAMERA_MODE_DUAL.equals(mode) || CAMERA_MODE_INTERVIEW.equals(mode)) {
+            } else if (CAMERA_MODE_DUAL.equals(mode)
+                    || CAMERA_MODE_INTERVIEW.equals(mode)
+                    || CAMERA_MODE_INTERVIEW_VIDEO.equals(mode)) {
                 sharedPreferencesManager.sharedPreferences.edit()
                         .putString(Constants.PREF_CAMERA_SELECTION, CameraType.DUAL_PIP.name()).apply();
             }
 
             CameraType selectedCamera = sharedPreferencesManager.getCameraSelection();
-            boolean liveInterview = CAMERA_MODE_INTERVIEW.equals(mode);
+            boolean producerVideo = CAMERA_MODE_INTERVIEW_VIDEO.equals(mode);
+            boolean liveInterview = CAMERA_MODE_INTERVIEW.equals(mode) || producerVideo;
             boolean shouldStartDual = CAMERA_MODE_DUAL.equals(mode) || liveInterview
                     || (CAMERA_MODE_CURRENT.equals(mode)
                     && selectedCamera != null && selectedCamera.isDual());
 
             if (liveInterview) {
-                // TV 49 East uses the phone's LAN HLS endpoint. If FadCam was
-                // previously in cloud mode, temporarily switch only the streaming
-                // transport to local and remember the user's previous setting.
                 android.content.SharedPreferences cloudPrefs = getSharedPreferences("FadCamCloudPrefs", MODE_PRIVATE);
                 int previousMode = cloudPrefs.getInt("streaming_mode", 0);
+                String producerUri = getIntent() != null
+                        ? getIntent().getStringExtra(EXTRA_PRODUCER_VIDEO_URI) : null;
                 sharedPreferencesManager.sharedPreferences.edit()
                         .putBoolean(PREF_LIVE_INTERVIEW, true)
                         .putInt(PREF_PREVIOUS_STREAMING_MODE, previousMode)
+                        .putString(PREF_PRODUCER_VIDEO_URI, producerUri == null ? "" : producerUri)
                         .apply();
                 cloudPrefs.edit().putInt("streaming_mode", 0).apply();
 
                 startRemoteStreamService();
-                // Give the HTTP server time to bind its selected 8080-8090 port
-                // before the dual encoder begins publishing fragments.
                 new Handler(Looper.getMainLooper()).postDelayed(
-                        this::startDualServiceSafely, STREAM_SERVER_WARMUP_MS);
+                        () -> startDualServiceSafely(producerVideo), STREAM_SERVER_WARMUP_MS);
             } else if (shouldStartDual) {
-                startDualServiceSafely();
+                startDualServiceSafely(false);
             } else {
                 Intent startIntent = new Intent(this, RecordingService.class);
                 startIntent.setAction(Constants.INTENT_ACTION_START_RECORDING);
@@ -110,12 +115,21 @@ public class RecordingStartActivity extends Activity {
         }
     }
 
-    private void startDualServiceSafely() {
+    private void startDualServiceSafely(boolean producerVideo) {
         try {
             Intent intent = new Intent(this, DualCameraRecordingService.class);
             intent.setAction(Constants.INTENT_ACTION_START_DUAL_RECORDING);
+            if (producerVideo) {
+                String uri = SharedPreferencesManager.getInstance(this).sharedPreferences
+                        .getString(PREF_PRODUCER_VIDEO_URI, "");
+                if (uri != null && !uri.isEmpty()) {
+                    intent.putExtra(DualCameraRecordingService.EXTRA_PRODUCER_VIDEO_URI, uri);
+                }
+            }
             startServiceCompat(intent);
-            FLog.i(TAG, "Live interview: dual PiP camera service requested");
+            FLog.i(TAG, producerVideo
+                    ? "Live producer: dual PiP camera service requested with program video"
+                    : "Live interview: dual PiP camera service requested");
         } catch (RuntimeException e) {
             FLog.e(TAG, "Live interview: unable to start dual camera service", e);
             SharedPreferencesManager.getInstance(this).sharedPreferences.edit()
