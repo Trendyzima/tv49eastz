@@ -14,8 +14,6 @@ android {
 
     splits {
         abi {
-            // For pro builds: enable splits but only arm64-v8a (no universal)
-            // For main builds: arm64-v8a + armeabi-v7a with universal APK
             isEnable = !isBundle
             reset()
             if (isProBuild) {
@@ -36,9 +34,6 @@ android {
         versionCode = 53
         versionName = "4.0.1"
         vectorDrawables.useSupportLibrary = true
-
-        // Fix 16KB native library alignment for Android 15
-        // Generate full native debug symbols so they can be uploaded to Play Console
         ndk {
             debugSymbolLevel = "FULL"
         }
@@ -51,7 +46,6 @@ android {
                 stream?.let { props.load(it) }
             }
             val keystoreFile = props.getProperty("KEYSTORE_FILE", "")
-            // Only set storeFile if keystore file path is provided and exists
             if (keystoreFile.isNotEmpty() && file(keystoreFile).exists()) {
                 storeFile = file(keystoreFile)
                 storePassword = props.getProperty("KEYSTORE_PASSWORD", "")
@@ -61,7 +55,6 @@ android {
         }
     }
 
-    // Helper: check if release signing config is valid
     val releaseSigningConfigValid = signingConfigs.getByName("release").storeFile != null
 
     buildTypes {
@@ -71,7 +64,6 @@ android {
             versionNameSuffix = "-beta10.6"
             resValue("string", "app_name", "FadCam Beta")
         }
-
         release {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -82,7 +74,6 @@ android {
             isDebuggable = false
             signingConfig = signingConfigs.getByName("release")
         }
-
         create("pro") {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -98,7 +89,6 @@ android {
             versionNameSuffix = "-Pro"
             matchingFallbacks += listOf("release")
         }
-
         create("proPlus") {
             isMinifyEnabled = true
             isShrinkResources = true
@@ -119,7 +109,6 @@ android {
     }
 
     flavorDimensions += "pro"
-
     productFlavors {
         create("notesPro") {
             dimension = "pro"
@@ -145,15 +134,10 @@ android {
         beforeVariants { variant ->
             val isPreBuiltFlavor = variant.name.contains("notesPro") || variant.name.contains("calcPro") || variant.name.contains("weatherPro")
             val isDefaultFlavor = variant.name.contains("default")
-
             if (isPreBuiltFlavor) {
-                if (!variant.name.endsWith("Release")) {
-                    variant.enable = false
-                }
+                if (!variant.name.endsWith("Release")) variant.enable = false
             } else if (isDefaultFlavor) {
-                if (variant.name.endsWith("Pro") && !variant.name.endsWith("ProPlus")) {
-                    variant.enable = false
-                }
+                if (variant.name.endsWith("Pro") && !variant.name.endsWith("ProPlus")) variant.enable = false
             }
         }
     }
@@ -163,12 +147,8 @@ android {
         val flavor = if (flavorName != "default") "${flavorName}_" else ""
         outputs.all {
             val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
-            val abiType = output.filters
-                .firstOrNull { it.filterType == "ABI" }
-                ?.identifier
-                ?: "universal"
-            output.outputFileName =
-                "FadCam_${flavor}v${versionName}-${abiType}.apk"
+            val abiType = output.filters.firstOrNull { it.filterType == "ABI" }?.identifier ?: "universal"
+            output.outputFileName = "FadCam_${flavor}v${versionName}-${abiType}.apk"
         }
     }
 
@@ -176,34 +156,24 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-
     testOptions {
         unitTests {
             isIncludeAndroidResources = true
         }
     }
-
     dependenciesInfo {
         includeInApk = false
         includeInBundle = false
     }
-
     sourceSets {
         getByName("main") {
             java.srcDir("libs/AppLockLibrary/src/main/java")
             res.srcDir("libs/AppLockLibrary/src/main/res")
         }
-        getByName("notesPro") {
-            res.srcDir("src/notesPro/res")
-        }
-        getByName("calcPro") {
-            res.srcDir("src/calcPro/res")
-        }
-        getByName("weatherPro") {
-            res.srcDir("src/weatherPro/res")
-        }
+        getByName("notesPro") { res.srcDir("src/notesPro/res") }
+        getByName("calcPro") { res.srcDir("src/calcPro/res") }
+        getByName("weatherPro") { res.srcDir("src/weatherPro/res") }
     }
-
     packaging {
         jniLibs {
             excludes += listOf("**/x86/**", "**/x86_64/**", "**/mips/**", "**/mips64/**")
@@ -212,43 +182,32 @@ android {
         }
         resources {
             excludes += listOf(
-                "META-INF/LICENSE",
-                "META-INF/LICENSE.txt",
-                "META-INF/NOTICE",
-                "META-INF/NOTICE.txt",
-                "META-INF/DEPENDENCIES",
-                "META-INF/*.kotlin_module",
-                "META-INF/AL2.0",
-                "META-INF/LGPL2.1",
-                "**/*.kotlin_metadata",
-                "**/*.kotlin_builtins",
-                "**/*.proto",
-                "assets/PSDs/**"
+                "META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt",
+                "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "META-INF/AL2.0", "META-INF/LGPL2.1",
+                "**/*.kotlin_metadata", "**/*.kotlin_builtins", "**/*.proto", "assets/PSDs/**"
             )
         }
     }
-
     androidResources {
         noCompress.add("xml")
         additionalParameters.add("--no-version-vectors")
     }
-
-    buildFeatures {
-        buildConfig = true
-    }
-
+    buildFeatures { buildConfig = true }
     lint {
         checkReleaseBuilds = false
         disable += "MissingTranslation"
     }
 }
 
-// Android's AndroidSourceDirectorySet does not expose Gradle's PatternFilterable
-// API on current AGP versions. Filter the protected duplicate at the actual Java
-// compile task instead. This keeps the upstream file untouched for the integrity
-// boundary while compiling the production-safe replacement with the same FQCN.
+// AGP's AndroidSourceDirectorySet has no PatternFilterable exclude API.
+// Filter JavaCompile inputs by absolute source path so the protected upstream
+// implementation is omitted while the replacement under src/permissionSafe is
+// still compiled. This preserves the protected source tree byte-for-byte.
 tasks.withType<JavaCompile>().configureEach {
-    exclude("**/com/fadcam/ui/OnboardingPermissionsFragment.java")
+    source = source.filter { file ->
+        val normalized = file.absolutePath.replace('\\', '/')
+        !normalized.endsWith("/app/src/main/java/com/fadcam/ui/OnboardingPermissionsFragment.java")
+    }
 }
 
 dependencies {
