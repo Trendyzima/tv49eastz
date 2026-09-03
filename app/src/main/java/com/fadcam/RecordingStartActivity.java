@@ -23,6 +23,7 @@ public class RecordingStartActivity extends Activity {
     /** Starts dual-camera PiP plus the local FadCam HLS server for TV 49 East. */
     public static final String CAMERA_MODE_INTERVIEW = "live_interview";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
+    private static final String PREF_PREVIOUS_STREAMING_MODE = "fadcam_interview_previous_streaming_mode";
     private static final long STREAM_SERVER_WARMUP_MS = 1200L;
 
     @Override
@@ -60,14 +61,20 @@ public class RecordingStartActivity extends Activity {
                     && selectedCamera != null && selectedCamera.isDual());
 
             if (liveInterview) {
-                // This activity is user-visible, so both camera/microphone foreground
-                // services are launched from an Android-approved foreground context.
+                // TV 49 East uses the phone's LAN HLS endpoint. If FadCam was
+                // previously in cloud mode, temporarily switch only the streaming
+                // transport to local and remember the user's previous setting.
+                android.content.SharedPreferences cloudPrefs = getSharedPreferences("FadCamCloudPrefs", MODE_PRIVATE);
+                int previousMode = cloudPrefs.getInt("streaming_mode", 0);
                 sharedPreferencesManager.sharedPreferences.edit()
-                        .putBoolean(PREF_LIVE_INTERVIEW, true).apply();
+                        .putBoolean(PREF_LIVE_INTERVIEW, true)
+                        .putInt(PREF_PREVIOUS_STREAMING_MODE, previousMode)
+                        .apply();
+                cloudPrefs.edit().putInt("streaming_mode", 0).apply();
+
                 startRemoteStreamService();
-                // Give the HTTP server a short warm-up window before the first fMP4
-                // fragments are produced. The receiver can then discover /live.m3u8
-                // immediately instead of racing server startup.
+                // Give the HTTP server time to bind its selected 8080-8090 port
+                // before the dual encoder begins publishing fragments.
                 new Handler(Looper.getMainLooper()).postDelayed(
                         this::startDualServiceSafely, STREAM_SERVER_WARMUP_MS);
             } else if (shouldStartDual) {
