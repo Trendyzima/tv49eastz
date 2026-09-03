@@ -21,10 +21,16 @@ func main() {
 		w.Header().Set("Content-Type", "video/iso.segment")
 		_, _ = w.Write([]byte("FADCAM-MEDIA-FIXTURE"))
 	})
-	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "private control endpoint", http.StatusForbidden) })
-	mux.HandleFunc("/audio/volume", func(w http.ResponseWriter, r *http.Request) { http.Error(w, "private control endpoint", http.StatusForbidden) })
+	mux.HandleFunc("/status", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "private control endpoint", http.StatusForbidden)
+	})
+	mux.HandleFunc("/audio/volume", func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "private control endpoint", http.StatusForbidden)
+	})
 	addr := ":8080"
-	if v := os.Getenv("FADCAM_FIXTURE_ADDR"); v != "" { addr = v }
+	if v := os.Getenv("FADCAM_FIXTURE_ADDR"); v != "" {
+		addr = v
+	}
 	log.Printf("FadCam-compatible fixture listening on %s", addr)
 	log.Fatal(http.ListenAndServe(addr, mux))
 }
