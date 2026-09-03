@@ -18,7 +18,7 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 
-/** Fetches the TV East catalog, exposing only authorized FadCam-originated relays. */
+/** Loads the TV catalog, with LAN discovery as the zero-configuration FadCam path. */
 public final class CatalogClient {
     public interface Listener {
         void onSuccess(List<ChannelStore.Channel> channels);
@@ -37,9 +37,30 @@ public final class CatalogClient {
 
     public void load(Listener listener) {
         if (baseUrl.isEmpty()) {
-            listener.onError(new IllegalStateException("FadCam catalog server is not configured"));
+            // The previous implementation treated an unset build-time catalog URL
+            // as a permanently unconfigured receiver. FadCam's actual Server Room
+            // is normally a local HTTP service on port 8080, so discover it directly.
+            FadCamLanDiscovery.discover(new FadCamLanDiscovery.Listener() {
+                @Override public void onSearching() { }
+
+                @Override public void onFound(@NonNull String discoveredBase, @NonNull String playlistUrl) {
+                    ArrayList<ChannelStore.Channel> result = new ArrayList<>();
+                    result.add(new ChannelStore.Channel(
+                            "fadcam-local",
+                            "FadCam Live",
+                            "FadCam creator",
+                            playlistUrl,
+                            true));
+                    listener.onSuccess(result);
+                }
+
+                @Override public void onNotFound(@NonNull String reason) {
+                    listener.onError(new IOException(reason));
+                }
+            });
             return;
         }
+
         Request request = new Request.Builder()
                 .url(baseUrl + "/v1/catalog")
                 .header("Accept", "application/json")
@@ -76,13 +97,9 @@ public final class CatalogClient {
             String source = o.optString("source", "");
             String stream = o.optString("stream", "");
             boolean relay = o.optBoolean("relay", false);
-
-            // Deliberately reject generic IPTV / third-party channel entries at the receiver
-            // boundary. Only server-authorized FadCam-originated relay records are admitted.
             if (!"fadcam".equalsIgnoreCase(source)) continue;
             if (id.isEmpty() || stream.isEmpty() || !relay) continue;
             if (!stream.startsWith("/v1/relay?id=")) continue;
-
             result.add(new ChannelStore.Channel(
                     id,
                     name,
