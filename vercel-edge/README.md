@@ -1,59 +1,57 @@
-# TV 49 East worldwide Vercel Edge
+# TV 49 East worldwide Edge control plane
 
-This directory is a **control-plane edge**, not a video transcoder. Vercel issues short-lived viewer tickets and hands the TV app/browser to the public HLS gateway. The producer's FadCam LAN address, device certificate and gateway API key never go into the APK or the Vercel client bundle.
+This directory is the public **control plane** for worldwide FadCam playback. It does not transcode or continuously proxy HLS through Vercel.
 
-## Deploy on Vercel
-
-Set the Vercel project **Root Directory** to `vercel-edge`.
-
-Required Environment Variables:
+## Production path
 
 ```text
-PUBLIC_GATEWAY_URL=https://stream.example.com
-PUBLIC_STREAM_ID=fadcam-device-stream
+FadCam producer
+  -> local HLS (private phone only)
+  -> authenticated outbound device tunnel (mTLS)
+  -> stream-gateway / relay
+  -> public HTTPS HLS relay
+  -> TV 49 East Edge ticket
+  -> TV 49 East binary APK
+```
+
+The phone's private address, client certificate, gateway API key and publishing secret are never shipped in the receiver APK.
+
+## Required Vercel Production variables
+
+```text
+PUBLIC_RELAY_URL=https://stream.example.com/v1/relay?id=creator-001
+PUBLIC_STREAM_ID=creator-001
+PUBLIC_STREAM_NAME=FadCam Live
+PUBLIC_STREAM_OWNER=FadCam Creator
+PUBLIC_GATEWAY_URL=https://gateway.example.com
 EDGE_SIGNING_SECRET=<long-random-secret>
 EDGE_PUBLISH_SECRET=<different-long-random-secret>
 ```
 
-Use different secrets for signing and publishing. Do not put gateway credentials in browser/mobile code.
+`PUBLIC_RELAY_URL` must be a real public HTTPS HLS relay. It must not be a phone LAN URL and must not contain credentials or a fragment.
 
-After deployment:
+## Receiver API
 
-```text
-GET https://<your-vercel-domain>/api/health
-```
+`GET /api/catalog` returns the FadCam channel and a 15-minute signed playback URL. The Android receiver loads this catalog at startup.
 
-must return `{"ok":true,"service":"tv49east-edge"}`.
+`GET /api/live?ticket=...` verifies the HMAC-SHA256 ticket and redirects to the HTTPS relay. Tickets expire automatically and are bound to `PUBLIC_STREAM_ID`.
 
-## Publish a live session
+## Trusted publishing API
 
-A trusted publisher first obtains a live session from the authenticated production gateway/device path. Then call:
+`POST /api/publish` requires `Authorization: Bearer <EDGE_PUBLISH_SECRET>` and an existing authenticated gateway session. It probes the gateway session before issuing a 15-minute viewer ticket.
 
-```http
-POST /api/publish
-Authorization: Bearer <EDGE_PUBLISH_SECRET>
-Content-Type: application/json
+## Security model
 
-{"session":"<gateway-session-id>","stream":"fadcam-device-stream"}
-```
+There are three separate trust boundaries:
 
-The response contains a short-lived `viewer_url`. Give that URL to TV 49 East or use it as the public HLS handoff.
+1. **Producer/device:** FadCam authenticates to the private device-tunnel/gateway path using device identity and mTLS.
+2. **Edge control plane:** Vercel uses HMAC-SHA256, short TTLs and stream binding for viewer/publisher handoffs.
+3. **Viewer/media:** TV 49 East accepts only HTTPS playback URLs. The relay/gateway provides the actual HLS media and capability checks.
 
-## Critical deployment requirement
+This is encrypted transport in transit (TLS/mTLS). It is not claimed to be cryptographic end-to-end media encryption where the gateway/relay cannot see media. If that stronger property is required, HLS content encryption and per-viewer key delivery must be added at the media producer/relay and receiver layers.
 
-`PUBLIC_GATEWAY_URL` must be a **public HTTPS media endpoint** that can serve:
+## Deployment
 
-```text
-GET /stream/<session>/index.m3u8
-GET /stream/<session>/resource/<capability>
-```
+Set the Vercel project's Root Directory to `vercel-edge`. After adding the Production variables, `GET /api/health` should return `ok: true`.
 
-It must not expose the FadCam phone address. The current `stream-gateway` implementation is protected by device mTLS for its session-creation API, so do not simply put its mTLS-only listener behind Vercel. Keep device enrollment/session creation on the trusted producer side and expose only the already-authorized, capability-signed HLS media route through a properly secured public TLS edge.
-
-## Why Vercel is not the HLS origin
-
-The Vercel Edge Function is deliberately not used to proxy every HLS segment. The media gateway/tunnel remains responsible for the live stream; Vercel handles authentication and the public handoff. This avoids turning a serverless function into the high-bandwidth media relay.
-
-## Worldwide behavior
-
-Normal TV playback does **not** scan `192.168.x.x`, `10.x.x.x`, or other private LAN addresses. A producer can be on one Internet connection and a viewer can be on another network, mobile data, or another country. The public viewer URL resolves to HTTPS and the gateway reaches the producer through the outbound device tunnel.
+Do not deploy placeholder relay URLs or secrets. A successful Vercel build with missing environment variables is intentionally reported as `edge_not_configured`.
