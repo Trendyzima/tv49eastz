@@ -5,7 +5,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
-import android.os.Build;
 import android.os.Bundle;
 import android.os.PowerManager;
 import android.provider.Settings;
@@ -82,6 +81,16 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
         }
 
         checkPermissionsAndUpdateUI();
+
+        // Preserve the original onboarding convenience of prompting immediately,
+        // but only ever request permissions that are actually valid and required
+        // by the current recording feature.
+        view.post(() -> {
+            if (isAdded() && !permissionsGranted) {
+                requestMissingPermissions();
+            }
+        });
+
         return view;
     }
 
