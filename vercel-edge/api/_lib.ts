@@ -16,41 +16,46 @@ function base64UrlToBytes(value: string): Uint8Array {
 }
 
 async function hmac(secret: string, value: string): Promise<Uint8Array> {
-  const key = await crypto.subtle.importKey(
-    "raw",
-    encoder.encode(secret),
-    { name: "HMAC", hash: "SHA-256" },
-    false,
-    ["sign", "verify"],
-  );
+  const key = await crypto.subtle.importKey("raw", encoder.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
   return new Uint8Array(await crypto.subtle.sign("HMAC", key, encoder.encode(value)));
 }
 
 export async function signTicket(session: string, stream: string, ttlSeconds: number): Promise<string> {
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const payload = `${session}\x00${stream}\x00${exp}`;
-  const signature = bytesToBase64Url(await hmac(required("EDGE_SIGNING_SECRET"), payload));
-  return `${bytesToBase64Url(encoder.encode(payload))}.${signature}`;
+  const payload = `gateway\x00${session}\x00${stream}\x00${exp}`;
+  return `${bytesToBase64Url(encoder.encode(payload))}.${bytesToBase64Url(await hmac(required("EDGE_SIGNING_SECRET"), payload))}`;
 }
 
-export async function verifyTicket(token: string): Promise<{ session: string; stream: string; exp: number }> {
+export async function signRelayTicket(stream: string, ttlSeconds: number): Promise<string> {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const payload = `relay\x00${stream}\x00${exp}`;
+  return `${bytesToBase64Url(encoder.encode(payload))}.${bytesToBase64Url(await hmac(required("EDGE_SIGNING_SECRET"), payload))}`;
+}
+
+export async function verifyTicket(token: string): Promise<{ kind: "gateway"; session: string; stream: string; exp: number } | { kind: "relay"; stream: string; exp: number }> {
   if (token.length > 4096) throw new Error("ticket too large");
-  const [payloadPart, signaturePart] = token.split(".");
-  if (!payloadPart || !signaturePart) throw new Error("invalid ticket");
-  const payloadBytes = base64UrlToBytes(payloadPart);
-  const payload = new TextDecoder().decode(payloadBytes);
+  const parts = token.split(".");
+  if (parts.length !== 2) throw new Error("invalid ticket");
+  const payload = new TextDecoder().decode(base64UrlToBytes(parts[0]));
   const expected = await hmac(required("EDGE_SIGNING_SECRET"), payload);
-  const supplied = base64UrlToBytes(signaturePart);
+  const supplied = base64UrlToBytes(parts[1]);
   if (expected.length !== supplied.length) throw new Error("invalid ticket");
   let diff = 0;
   for (let i = 0; i < expected.length; i++) diff |= expected[i] ^ supplied[i];
   if (diff !== 0) throw new Error("invalid ticket");
 
-  const parts = payload.split("\x00");
-  if (parts.length !== 3 || !parts[0] || !parts[1]) throw new Error("invalid ticket");
-  const exp = Number(parts[2]);
-  if (!Number.isSafeInteger(exp) || Math.floor(Date.now() / 1000) >= exp) throw new Error("expired ticket");
-  return { session: parts[0], stream: parts[1], exp };
+  const fields = payload.split("\x00");
+  if (fields[0] === "gateway" && fields.length === 4) {
+    const exp = Number(fields[3]);
+    if (!fields[1] || !fields[2] || !Number.isSafeInteger(exp) || Math.floor(Date.now() / 1000) >= exp) throw new Error("expired ticket");
+    return { kind: "gateway", session: fields[1], stream: fields[2], exp };
+  }
+  if (fields[0] === "relay" && fields.length === 3) {
+    const exp = Number(fields[2]);
+    if (!fields[1] || !Number.isSafeInteger(exp) || Math.floor(Date.now() / 1000) >= exp) throw new Error("expired ticket");
+    return { kind: "relay", stream: fields[1], exp };
+  }
+  throw new Error("invalid ticket");
 }
 
 export function required(name: string): string {
@@ -60,20 +65,20 @@ export function required(name: string): string {
 }
 
 export function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }
 
 export function gatewayUrl(path: string): string {
   const base = required("PUBLIC_GATEWAY_URL").replace(/\/+$/, "");
   if (!path.startsWith("/")) throw new Error("invalid gateway path");
   return `${base}${path}`;
+}
+
+export function relayUrl(): string {
+  const value = required("PUBLIC_RELAY_URL").trim();
+  const u = new URL(value);
+  if (u.protocol !== "https:" || u.username || u.password || u.hash) throw new Error("PUBLIC_RELAY_URL must be HTTPS without credentials or fragments");
+  return u.toString();
 }
 
 export function constantTimeString(a: string, b: string): boolean {
