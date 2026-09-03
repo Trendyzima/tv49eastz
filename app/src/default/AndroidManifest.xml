@@ -21,6 +21,12 @@
             android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
             tools:node="remove" />
 
+        <activity
+            android:name="com.fadcam.LiveProducerActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:label="TV 49 East Producer" />
+
         <!-- Dedicated one-tap live interview control. The activity launcher
              starts the LAN HLS server and then dual-camera PiP from a
              user-visible foreground context. -->
@@ -28,7 +34,7 @@
             android:name="com.fadcam.services.LiveInterviewTileService"
             android:exported="true"
             android:icon="@drawable/ic_qs_tile_videocam_dual"
-            android:label="Live Interview • TV 49 East"
+            android:label="TV 49 Producer"
             android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
             <intent-filter>
                 <action android:name="android.service.quicksettings.action.QS_TILE" />
