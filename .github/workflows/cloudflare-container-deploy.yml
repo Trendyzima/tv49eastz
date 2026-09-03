@@ -63,11 +63,29 @@ jobs:
 
       - name: Test Go gateway
         working-directory: stream-gateway
+        run: go test ./... -count=1 -race
+
+      - name: Vet Go gateway
+        working-directory: stream-gateway
+        run: go vet ./...
+
+      - name: Verify Go formatting
+        working-directory: stream-gateway
+        shell: bash
         run: |
           set -euo pipefail
-          go test ./... -count=1 -race
-          go vet ./...
-          test -z "$(gofmt -l .)"
+          files="$(gofmt -l .)"
+          if [[ -n "$files" ]]; then
+            echo 'The following Go files are not gofmt-clean:'
+            printf '%s\n' "$files"
+            exit 1
+          fi
+          echo 'All Go files are gofmt-clean.'
+
+      - name: Build Linux amd64 Go binary
+        working-directory: stream-gateway
+        run: |
+          set -euo pipefail
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/stream-gateway ./
           file /tmp/stream-gateway
 
