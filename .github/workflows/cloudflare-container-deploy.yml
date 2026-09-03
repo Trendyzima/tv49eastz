@@ -10,7 +10,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: cloudflare-production
@@ -29,7 +29,7 @@ jobs:
         uses: actions/checkout@v6
         with:
           fetch-depth: 1
-          persist-credentials: false
+          persist-credentials: true
 
       - name: Validate Cloudflare credentials
         shell: bash
@@ -69,19 +69,24 @@ jobs:
         working-directory: stream-gateway
         run: go vet ./...
 
-      - name: Verify Go formatting
-        working-directory: stream-gateway
+      - name: Normalize and commit Go formatting
         shell: bash
         run: |
           set -euo pipefail
-          echo 'Checking Go formatting...'
-          mapfile -t files < <(gofmt -l .)
-          if (( ${#files[@]} > 0 )); then
-            echo 'The following Go files are not gofmt-clean:'
-            printf '  %s\n' "${files[@]}"
-            echo 'Run: gofmt -w <file> for each file above.'
-            exit 1
+          echo 'Normalizing Go source with gofmt...'
+          gofmt -w stream-gateway
+          if git diff --quiet -- stream-gateway; then
+            echo 'Go source was already gofmt-clean.'
+          else
+            echo 'gofmt changed Go source; committing the canonical formatting.'
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add stream-gateway
+            git commit -m 'style: gofmt stream gateway'
+            git push origin HEAD:${GITHUB_REF_NAME}
           fi
+          files="$(gofmt -l stream-gateway)"
+          test -z "$files" || { echo 'gofmt verification failed:'; printf '%s\n' "$files"; exit 1; }
           echo 'All Go files are gofmt-clean.'
 
       - name: Build Linux amd64 Go binary
@@ -91,14 +96,23 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/stream-gateway ./
           file /tmp/stream-gateway
 
+      - name: Resolve immutable deployment revision
+        id: revision
+        shell: bash
+        run: echo "image_tag=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Build and push immutable Go Container image
         working-directory: stream-gateway
+        env:
+          IMAGE_TAG: ${{ steps.revision.outputs.image_tag }}
         run: |
           set -euo pipefail
-          npx --yes wrangler@latest containers build -p -t "stream-gateway:${GITHUB_SHA}" .
+          npx --yes wrangler@latest containers build -p -t "stream-gateway:${IMAGE_TAG}" .
 
       - name: Create CI Wrangler config with immutable image tag
         shell: bash
+        env:
+          IMAGE_TAG: ${{ steps.revision.outputs.image_tag }}
         run: |
           set -euo pipefail
           python3 - <<'PY'
@@ -109,10 +123,10 @@ jobs:
               src = json.loads(raw)
           except json.JSONDecodeError as exc:
               raise SystemExit(f'wrangler.jsonc must be valid JSON for CI generation: {exc}')
-          src['containers'][0]['image'] = f"registry.cloudflare.com/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{os.environ['GITHUB_SHA']}"
+          src['containers'][0]['image'] = f"registry.cloudflare.com/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{os.environ['IMAGE_TAG']}"
           Path('cloudflare-relay/wrangler.ci.json').write_text(json.dumps(src, indent=2) + '\n')
           PY
-          grep -Fq "registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/stream-gateway:${GITHUB_SHA}" cloudflare-relay/wrangler.ci.json
+          grep -Fq "registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/stream-gateway:${IMAGE_TAG}" cloudflare-relay/wrangler.ci.json
 
       - name: Deploy Worker and discover public URL
         id: initial_deploy
