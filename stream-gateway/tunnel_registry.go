@@ -26,7 +26,7 @@ func NewTunnelRegistry() *TunnelRegistry {
 
 func validateTunnelBaseURL(raw string) (*url.URL, error) {
 	u, err := url.Parse(strings.TrimSpace(raw))
-	if err != nil || u.Scheme != "http" || u.Host == "" {
+	if err != nil || u.Host == "" || (u.Scheme != "http" && u.Scheme != "https") {
 		return nil, errors.New("invalid device tunnel")
 	}
 	if u.User != nil || u.RawQuery != "" || u.Fragment != "" || u.RawFragment != "" {
@@ -69,9 +69,9 @@ func (r *TunnelRegistry) Register(deviceID, baseURL string, transport http.Round
 	return nil
 }
 
-// RegisterFromProxy wires a logical device identity to the local HTTP proxy
-// exposed by device-tunnel/gateway. The proxy itself owns the mTLS device
-// connection; stream-gateway must never terminate or impersonate that tunnel.
+// RegisterFromProxy wires a logical device identity to the authenticated
+// HTTP proxy exposed by the Cloudflare relay. The relay owns the WebSocket
+// device connection; stream-gateway only forwards media requests through it.
 func (r *TunnelRegistry) RegisterFromProxy(deviceID, proxyBaseURL string) error {
 	deviceID = normalizeDeviceID(deviceID)
 	if deviceID == "" || strings.Contains(deviceID, "/") || strings.Contains(deviceID, "..") {
@@ -81,23 +81,28 @@ func (r *TunnelRegistry) RegisterFromProxy(deviceID, proxyBaseURL string) error 
 	if err != nil {
 		return err
 	}
-	transport := &deviceProxyTransport{base: http.DefaultTransport, deviceID: deviceID}
+	transport := &deviceProxyTransport{
+		base:     http.DefaultTransport,
+		deviceID: deviceID,
+		auth:     strings.TrimSpace(os.Getenv("TUNNEL_PROXY_AUTH")),
+	}
 	return r.Register(deviceID, base.String(), transport)
 }
 
-// deviceProxyTransport maps the gateway's fixed local proxy origin to
-// /device/<deviceID>. The device ID is never accepted from the request path;
-// it is captured when the tunnel is registered from the authenticated session.
+// deviceProxyTransport maps the gateway's fixed proxy origin to
+// /device/<deviceID>. Authentication is injected by the gateway process so
+// the public Worker endpoint cannot be used as an unauthenticated device proxy.
 type deviceProxyTransport struct {
 	base     http.RoundTripper
 	deviceID string
+	auth     string
 }
 
 func (t *deviceProxyTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	if req == nil || req.URL == nil {
 		return nil, errors.New("invalid tunnel request")
 	}
-	if req.URL.IsAbs() == false || req.URL.Host == "" {
+	if !req.URL.IsAbs() || req.URL.Host == "" {
 		return nil, errors.New("invalid tunnel request URL")
 	}
 	clone := req.Clone(req.Context())
@@ -110,6 +115,9 @@ func (t *deviceProxyTransport) RoundTrip(req *http.Request) (*http.Response, err
 	}
 	u.RawPath = ""
 	clone.URL = &u
+	if t.auth != "" {
+		clone.Header.Set("Authorization", "Bearer "+t.auth)
+	}
 	return t.base.RoundTrip(clone)
 }
 
@@ -132,10 +140,6 @@ func (r *TunnelRegistry) Get(deviceID string) (*DeviceTunnel, bool) {
 		return t, true
 	}
 
-	// Production wiring is intentionally lazy: the stream gateway knows the
-	// authenticated device identity only when a session is created. The local
-	// tunnel broker is then selected by configuration, while the broker remains
-	// responsible for proving that the device's mTLS tunnel is actually online.
 	proxyBase := strings.TrimSpace(env("TUNNEL_PROXY_BASE_URL", ""))
 	if proxyBase == "" {
 		return nil, false
