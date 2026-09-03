@@ -1,5 +1,4 @@
 import java.util.Properties
-import org.gradle.api.tasks.compile.JavaCompile
 
 plugins {
     alias(libs.plugins.androidApplication)
@@ -177,19 +176,6 @@ android {
         checkReleaseBuilds = false
         disable += "MissingTranslation"
     }
-}
-
-// The hardened onboarding implementation lives outside the protected upstream
-// source tree under src/permissionSafe. AndroidSourceDirectorySet cannot apply
-// a single-file exclusion, so perform the final JavaCompile input operation as
-// a FileTree after removing the exact protected file object. This avoids the
-// previous FileCollection/FileTree type error and keeps the same-FQCN safe
-// implementation in the compilation inputs.
-tasks.withType<JavaCompile>().configureEach {
-    val protectedOnboarding = project.file(
-        "src/main/java/com/fadcam/ui/OnboardingPermissionsFragment.java"
-    )
-    source = source.minus(project.files(protectedOnboarding)).asFileTree
 }
 
 dependencies {
