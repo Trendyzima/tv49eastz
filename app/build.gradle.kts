@@ -1,8 +1,315 @@
-import java.io.File
+import java.util.Properties
+import org.gradle.api.tasks.compile.JavaCompile
 
 plugins {
-    id("com.android.application")
-    id("org.jetbrains.kotlin.android")
+    alias(libs.plugins.androidApplication)
 }
 
-// ...
+android {
+    namespace = "com.fadcam"
+    compileSdk = 36
+
+    val isBundle = gradle.startParameter.taskNames.any { it.lowercase().contains("bundle") }
+    val isProBuild = gradle.startParameter.taskNames.any { it.lowercase().contains("pro") }
+
+    splits {
+        abi {
+            // For pro builds: enable splits but only arm64-v8a (no universal)
+            // For main builds: arm64-v8a + armeabi-v7a with universal APK
+            isEnable = !isBundle
+            reset()
+            if (isProBuild) {
+                include("arm64-v8a")
+                isUniversalApk = false
+            } else {
+                include("armeabi-v7a", "arm64-v8a")
+                isUniversalApk = true
+            }
+        }
+    }
+
+    defaultConfig {
+        applicationId = "com.fadcam"
+        minSdk = 24
+        targetSdk = 36
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        versionCode = 53
+        versionName = "4.0.1"
+        vectorDrawables.useSupportLibrary = true
+
+        // Fix 16KB native library alignment for Android 15
+        // Generate full native debug symbols so they can be uploaded to Play Console
+        ndk {
+            debugSymbolLevel = "FULL"
+        }
+    }
+
+    signingConfigs {
+        create("release") {
+            val props = Properties()
+            rootProject.file("local.properties").takeIf { it.exists() }?.inputStream().use { stream ->
+                stream?.let { props.load(it) }
+            }
+            val keystoreFile = props.getProperty("KEYSTORE_FILE", "")
+            // Only set storeFile if keystore file path is provided and exists
+            if (keystoreFile.isNotEmpty() && file(keystoreFile).exists()) {
+                storeFile = file(keystoreFile)
+                storePassword = props.getProperty("KEYSTORE_PASSWORD", "")
+                keyAlias = props.getProperty("KEY_ALIAS", "")
+                keyPassword = props.getProperty("KEY_PASSWORD", "")
+            }
+        }
+    }
+
+    // Helper: check if release signing config is valid
+    val releaseSigningConfigValid = signingConfigs.getByName("release").storeFile != null
+
+    buildTypes {
+        debug {
+            applicationIdSuffix = ".beta"
+            isDebuggable = true
+            versionNameSuffix = "-beta10.6"
+            resValue("string", "app_name", "FadCam Beta")
+        }
+
+        release {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            isDebuggable = false
+            signingConfig = signingConfigs.getByName("release")
+        }
+
+        create("pro") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            applicationIdSuffix = ".pro"
+            isDebuggable = false
+            if (releaseSigningConfigValid) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            versionNameSuffix = "-Pro"
+            matchingFallbacks += listOf("release")
+        }
+
+        create("proPlus") {
+            isMinifyEnabled = true
+            isShrinkResources = true
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
+            applicationIdSuffix = ".proplus"
+            isDebuggable = false
+            if (releaseSigningConfigValid) {
+                signingConfig = signingConfigs.getByName("release")
+            }
+            versionNameSuffix = "-Pro+"
+            val customAppName = project.findProperty("customAppName")?.toString() ?: "FadCam Pro+"
+            resValue("string", "app_name", customAppName)
+            matchingFallbacks += listOf("release")
+        }
+    }
+
+    flavorDimensions += "pro"
+
+    productFlavors {
+        create("notesPro") {
+            dimension = "pro"
+            applicationIdSuffix = ".notes"
+            resValue("string", "app_name", "Notes")
+        }
+        create("calcPro") {
+            dimension = "pro"
+            applicationIdSuffix = ".calc"
+            resValue("string", "app_name", "Calculator")
+        }
+        create("weatherPro") {
+            dimension = "pro"
+            applicationIdSuffix = ".weather"
+            resValue("string", "app_name", "Weather")
+        }
+        create("default") {
+            dimension = "pro"
+        }
+    }
+
+    androidComponents {
+        beforeVariants { variant ->
+            val isPreBuiltFlavor = variant.name.contains("notesPro") || variant.name.contains("calcPro") || variant.name.contains("weatherPro")
+            val isDefaultFlavor = variant.name.contains("default")
+
+            if (isPreBuiltFlavor) {
+                if (!variant.name.endsWith("Release")) {
+                    variant.enable = false
+                }
+            } else if (isDefaultFlavor) {
+                if (variant.name.endsWith("Pro") && !variant.name.endsWith("ProPlus")) {
+                    variant.enable = false
+                }
+            }
+        }
+    }
+
+    applicationVariants.all {
+        val versionName = "${defaultConfig.versionName}${buildType.versionNameSuffix.orEmpty()}"
+        val flavor = if (flavorName != "default") "${flavorName}_" else ""
+        outputs.all {
+            val output = this as com.android.build.gradle.internal.api.BaseVariantOutputImpl
+            val abiType = output.filters
+                .firstOrNull { it.filterType == "ABI" }
+                ?.identifier
+                ?: "universal"
+            output.outputFileName =
+                "FadCam_${flavor}v${versionName}-${abiType}.apk"
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility = JavaVersion.VERSION_17
+        targetCompatibility = JavaVersion.VERSION_17
+    }
+
+    testOptions {
+        unitTests {
+            isIncludeAndroidResources = true
+        }
+    }
+
+    dependenciesInfo {
+        includeInApk = false
+        includeInBundle = false
+    }
+
+    sourceSets {
+        getByName("main") {
+            java.srcDir("libs/AppLockLibrary/src/main/java")
+            res.srcDir("libs/AppLockLibrary/src/main/res")
+        }
+        getByName("notesPro") {
+            res.srcDir("src/notesPro/res")
+        }
+        getByName("calcPro") {
+            res.srcDir("src/calcPro/res")
+        }
+        getByName("weatherPro") {
+            res.srcDir("src/weatherPro/res")
+        }
+    }
+
+    packaging {
+        jniLibs {
+            excludes += listOf("**/x86/**", "**/x86_64/**", "**/mips/**", "**/mips64/**")
+            pickFirsts += listOf("**/libc++_shared.so")
+            useLegacyPackaging = false
+        }
+        resources {
+            excludes += listOf(
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt",
+                "META-INF/DEPENDENCIES",
+                "META-INF/*.kotlin_module",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+                "**/*.kotlin_metadata",
+                "**/*.kotlin_builtins",
+                "**/*.proto",
+                "assets/PSDs/**"
+            )
+        }
+    }
+
+    androidResources {
+        noCompress.add("xml")
+        additionalParameters.add("--no-version-vectors")
+    }
+
+    buildFeatures {
+        buildConfig = true
+    }
+
+    lint {
+        checkReleaseBuilds = false
+        disable += "MissingTranslation"
+    }
+}
+
+// Android's AndroidSourceDirectorySet does not expose Gradle's PatternFilterable
+// API on current AGP versions. Filter the protected duplicate at the actual Java
+// compile task instead. This keeps the upstream file untouched for the integrity
+// boundary while compiling the production-safe replacement with the same FQCN.
+tasks.withType<JavaCompile>().configureEach {
+    exclude("**/com/fadcam/ui/OnboardingPermissionsFragment.java")
+}
+
+dependencies {
+    implementation(libs.activity)
+    implementation(libs.appintro.v631)
+    implementation(libs.appcompat)
+    implementation(libs.camerax.camera2)
+    implementation(libs.camerax.core)
+    implementation(libs.camerax.extensions)
+    implementation(libs.camerax.view)
+    implementation(libs.zxing.android.embedded)
+    implementation(libs.camerax.lifecycle)
+    implementation(libs.camerax.video)
+    implementation(libs.constraintlayout)
+    implementation(libs.gridlayout)
+    implementation(libs.core.ktx)
+    implementation(libs.media3.exoplayer)
+    implementation(libs.media3.ui)
+    implementation(libs.media3.session)
+    implementation(libs.media3.transformer)
+    implementation(libs.media3.effect)
+    implementation(libs.media)
+    implementation(libs.glide)
+    implementation(libs.gson)
+    implementation(libs.lottie)
+    implementation(libs.material)
+    implementation(libs.navigation.fragment.ktx)
+    implementation(libs.navigation.ui.ktx)
+    implementation(libs.okhttp)
+    implementation(libs.tensorflow.lite)
+    implementation(libs.tensorflow.lite.task.vision) {
+        exclude(group = "org.tensorflow", module = "tensorflow-lite-api")
+    }
+    implementation(libs.opencv.android)
+    implementation(libs.osmdroid.android)
+    implementation(libs.osmdroid.wms)
+    implementation(libs.swiperefreshlayout)
+    implementation(libs.viewpager2)
+    implementation(libs.lifecycle.process)
+    implementation(libs.lifecycle.runtime)
+    implementation(libs.lifecycle.viewmodel)
+    implementation(libs.lifecycle.livedata)
+    implementation(libs.core.splashscreen)
+    implementation(libs.documentfile)
+    implementation(libs.localbroadcastmanager)
+    implementation(libs.room.runtime)
+    implementation(libs.media3.muxer)
+    implementation(libs.media3.common)
+    implementation(libs.media3.container)
+    implementation(libs.nanohttpd.core)
+    implementation("com.googlecode.mp4parser:isoparser:1.1.22")
+    annotationProcessor(libs.compiler)
+    annotationProcessor(libs.room.compiler)
+    implementation(mapOf("name" to "ffmpeg-kit-full-6.0-2.LTS", "ext" to "aar"))
+    implementation(libs.smart.exception.java)
+    implementation(fileTree(mapOf("dir" to "libs/aar", "include" to listOf("*.aar"))))
+    testImplementation(libs.junit)
+    testImplementation(libs.robolectric)
+    testImplementation("org.mockito:mockito-core:5.2.0")
+    testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
+    testImplementation("org.json:json:20240303")
+    androidTestImplementation(libs.ext.junit)
+    androidTestImplementation(libs.espresso.core)
+}
