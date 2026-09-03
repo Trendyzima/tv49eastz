@@ -28,13 +28,7 @@ import androidx.media3.ui.PlayerView;
 
 import java.util.HashMap;
 
-/**
- * Dedicated FadCam handoff player.
- *
- * The player is deliberately isolated from the receiver catalog UI. A signed FadCam
- * handoff can open this activity directly, and transient network/HLS failures are
- * recovered with bounded retries instead of taking down the process.
- */
+/** Dedicated crash-resilient player for a signed FadCam stream handoff. */
 public final class FadCamDirectStreamActivity extends Activity {
     private static final int BG = Color.rgb(5, 5, 7);
     private static final int TEXT = Color.WHITE;
@@ -68,7 +62,7 @@ public final class FadCamDirectStreamActivity extends Activity {
         super.onCreate(state);
         destroyed = false;
         paused = false;
-        if (state != null) retryCount = state.getInt("retry_count", 0);
+        retryCount = 0;
         getWindow().setStatusBarColor(Color.BLACK);
         getWindow().setNavigationBarColor(Color.BLACK);
         buildUi();
@@ -85,7 +79,7 @@ public final class FadCamDirectStreamActivity extends Activity {
     }
 
     @Override protected void onSaveInstanceState(@NonNull Bundle out) {
-        out.putInt("retry_count", retryCount);
+        // Do not persist transient retry exhaustion. A recreated Activity gets a fresh retry budget.
         super.onSaveInstanceState(out);
     }
 
@@ -133,6 +127,12 @@ public final class FadCamDirectStreamActivity extends Activity {
         error.setGravity(Gravity.CENTER);
         error.setPadding(dp(18), dp(12), dp(18), dp(12));
         error.setVisibility(View.GONE);
+        error.setClickable(true);
+        error.setFocusable(true);
+        error.setOnClickListener(v -> {
+            retryCount = 0;
+            startPlaybackIfValid();
+        });
         FrameLayout.LayoutParams ep = new FrameLayout.LayoutParams(-1, -2, Gravity.CENTER);
         ep.leftMargin = dp(24);
         ep.rightMargin = dp(24);
@@ -272,9 +272,7 @@ public final class FadCamDirectStreamActivity extends Activity {
                     return;
                 }
             } else if (state == Player.STATE_READY) {
-                if (lastPositionMs == position && lastWindowIndex == window && !current.isPlaying()) {
-                    return;
-                }
+                if (lastPositionMs == position && lastWindowIndex == window && !current.isPlaying()) return;
                 lastPositionMs = position;
                 lastWindowIndex = window;
             }
@@ -287,7 +285,7 @@ public final class FadCamDirectStreamActivity extends Activity {
         if (destroyed || paused) return;
         if (retryCount >= MAX_RETRIES) {
             setStatus("● OFFLINE");
-            showError("FadCam is temporarily unavailable. Tap the receiver to retry.");
+            showError("FadCam is temporarily unavailable. Tap here to retry.");
             return;
         }
         retryCount++;
