@@ -1,7 +1,9 @@
 package com.fadcam;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -18,17 +20,34 @@ import androidx.core.content.ContextCompat;
 import com.fadcam.dualcam.service.DualCameraRecordingService;
 import com.fadcam.streaming.RemoteStreamService;
 
-/** TV 49 East producer console kept outside the protected FadCam source boundary. */
+import java.net.HttpURLConnection;
+import java.net.URL;
+
+/**
+ * TV 49 East producer console outside the protected FadCam source boundary.
+ *
+ * Pipeline:
+ *   local program video -> compositor primary/fullscreen input
+ *   camera -> compositor secondary/PiP input
+ *   microphone -> live commentary audio
+ *   compositor -> FadCam HLS -> TV 49 East receiver
+ */
 public final class LiveProducerActivity extends Activity {
     public static final String EXTRA_VIDEO_URI = "producer_video_uri";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
     private static final String PREF_PRODUCER_VIDEO_URI = "fadcam_producer_video_uri";
+    private static final String PREF_STREAMING_MODE = "FadCamCloudPrefs";
     private static final int REQUEST_VIDEO = 4907;
-    private static final long STREAM_SERVER_WARMUP_MS = 1200L;
+    private static final int REQUEST_CAPTURE_PERMISSIONS = 4908;
+    private static final long SERVER_POLL_MS = 250L;
+    private static final long SERVER_TIMEOUT_MS = 8_000L;
 
+    private final Handler main = new Handler(Looper.getMainLooper());
     private Uri selectedVideoUri;
     private TextView selectionLabel;
+    private TextView stateLabel;
     private Button startButton;
+    private boolean starting;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -38,6 +57,11 @@ public final class LiveProducerActivity extends Activity {
             try { selectedVideoUri = Uri.parse(existing); } catch (Exception ignored) { selectedVideoUri = null; }
             updateSelectionLabel();
         }
+    }
+
+    @Override protected void onDestroy() {
+        main.removeCallbacksAndMessages(null);
+        super.onDestroy();
     }
 
     private void buildUi() {
@@ -56,7 +80,7 @@ public final class LiveProducerActivity extends Activity {
         root.addView(title, new LinearLayout.LayoutParams(-1, -2));
 
         TextView description = new TextView(this);
-        description.setText("Load a video for the full-screen program and use the phone camera as the live PiP commentator. The microphone carries the commentary audio.");
+        description.setText("Program video is full screen. Your camera is live PiP and your microphone carries commentary audio. TV 49 East receives the single composed HLS stream.");
         description.setTextColor(0xFFCCCCCC);
         description.setTextSize(16f);
         description.setGravity(Gravity.CENTER);
@@ -72,8 +96,15 @@ public final class LiveProducerActivity extends Activity {
         selectionLp.topMargin = pad;
         root.addView(selectionLabel, selectionLp);
 
+        stateLabel = new TextView(this);
+        stateLabel.setText("READY");
+        stateLabel.setTextColor(0xFF77DD77);
+        stateLabel.setTextSize(13f);
+        stateLabel.setGravity(Gravity.CENTER);
+        root.addView(stateLabel, new LinearLayout.LayoutParams(-1, -2));
+
         Button chooseButton = new Button(this);
-        chooseButton.setText("LOAD VIDEO");
+        chooseButton.setText("LOAD PROGRAM VIDEO");
         chooseButton.setOnClickListener(v -> openVideoPicker());
         LinearLayout.LayoutParams chooseLp = new LinearLayout.LayoutParams(-1, -2);
         chooseLp.topMargin = pad;
@@ -111,14 +142,27 @@ public final class LiveProducerActivity extends Activity {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_VIDEO || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
-        if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0) {
-            try {
-                getContentResolver().takePersistableUriPermission(uri,
-                        data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION));
-            } catch (SecurityException ignored) { }
-        }
+        try {
+            int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
+            if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0 && takeFlags != 0) {
+                getContentResolver().takePersistableUriPermission(uri, takeFlags);
+            }
+        } catch (SecurityException ignored) { }
         selectedVideoUri = uri;
         updateSelectionLabel();
+    }
+
+    @Override public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQUEST_CAPTURE_PERMISSIONS) return;
+        for (int result : grantResults) {
+            if (result != PackageManager.PERMISSION_GRANTED) {
+                setState("Camera + microphone permission required", false);
+                Toast.makeText(this, "Allow camera and microphone, then start the producer again.", Toast.LENGTH_LONG).show();
+                return;
+            }
+        }
+        launchProducerPipeline();
     }
 
     private void updateSelectionLabel() {
@@ -129,39 +173,116 @@ public final class LiveProducerActivity extends Activity {
         } else {
             String name = selectedVideoUri.getLastPathSegment();
             selectionLabel.setText("Loaded program: " + (name == null ? selectedVideoUri.toString() : name));
-            startButton.setEnabled(true);
+            startButton.setEnabled(!starting);
         }
     }
 
     private void startLiveCommentary() {
-        if (selectedVideoUri == null) return;
+        if (selectedVideoUri == null || starting) return;
+        if (!hasCapturePermissions()) {
+            requestCapturePermissions();
+            return;
+        }
+        launchProducerPipeline();
+    }
+
+    private boolean hasCapturePermissions() {
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED
+                && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED;
+    }
+
+    private void requestCapturePermissions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            requestPermissions(new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}, REQUEST_CAPTURE_PERMISSIONS);
+        }
+    }
+
+    private void launchProducerPipeline() {
+        starting = true;
+        startButton.setEnabled(false);
+        setState("Starting local TV 49 East stream…", true);
+
         SharedPreferencesManager prefs = SharedPreferencesManager.getInstance(this);
         prefs.sharedPreferences.edit()
                 .putBoolean(PREF_LIVE_INTERVIEW, true)
                 .putString(PREF_PRODUCER_VIDEO_URI, selectedVideoUri.toString())
                 .apply();
-        getSharedPreferences("FadCamCloudPrefs", MODE_PRIVATE).edit().putInt("streaming_mode", 0).apply();
+        // Producer mode is deliberately LAN-first: the TV receiver can discover the
+        // FadCam HLS endpoint without exposing a local HTTP server to the public internet.
+        getSharedPreferences(PREF_STREAMING_MODE, MODE_PRIVATE).edit().putInt("streaming_mode", 0).apply();
 
         try {
             Intent stream = new Intent(this, RemoteStreamService.class);
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, stream);
             else startService(stream);
-
-            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                try {
-                    Intent dual = new Intent(this, DualCameraRecordingService.class);
-                    dual.setAction(Constants.INTENT_ACTION_START_DUAL_RECORDING);
-                    dual.putExtra("producer_video_uri", selectedVideoUri.toString());
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, dual);
-                    else startService(dual);
-                } catch (RuntimeException e) {
-                    Toast.makeText(this, "Unable to start producer camera", Toast.LENGTH_LONG).show();
-                }
-            }, STREAM_SERVER_WARMUP_MS);
-            finish();
+            waitForStreamServer(System.currentTimeMillis());
         } catch (RuntimeException e) {
-            prefs.sharedPreferences.edit().putBoolean(PREF_LIVE_INTERVIEW, false).apply();
-            Toast.makeText(this, "Unable to start live producer mode", Toast.LENGTH_LONG).show();
+            failStart("Unable to start the TV 49 East stream service");
         }
+    }
+
+    private void waitForStreamServer(long startedAt) {
+        if (isFinishing() || isDestroyed()) return;
+        int port = getSharedPreferences("FadCamPrefs", MODE_PRIVATE).getInt("stream_server_port", -1);
+        if (port > 0 && probeLocalServer(port)) {
+            startDualProducerService();
+            return;
+        }
+        if (System.currentTimeMillis() - startedAt >= SERVER_TIMEOUT_MS) {
+            failStart("TV 49 East stream server did not become ready");
+            return;
+        }
+        main.postDelayed(() -> waitForStreamServer(startedAt), SERVER_POLL_MS);
+    }
+
+    private boolean probeLocalServer(int port) {
+        HttpURLConnection connection = null;
+        try {
+            URL url = new URL("http://127.0.0.1:" + port + "/status");
+            connection = (HttpURLConnection) url.openConnection();
+            connection.setConnectTimeout(300);
+            connection.setReadTimeout(500);
+            connection.setUseCaches(false);
+            connection.setRequestMethod("GET");
+            return connection.getResponseCode() >= 200 && connection.getResponseCode() < 500;
+        } catch (Exception ignored) {
+            return false;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
+    }
+
+    private void startDualProducerService() {
+        try {
+            Intent dual = new Intent(this, DualCameraRecordingService.class);
+            dual.setAction(Constants.INTENT_ACTION_START_DUAL_RECORDING);
+            dual.putExtra("producer_video_uri", selectedVideoUri.toString());
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, dual);
+            else startService(dual);
+            setState("LIVE • Video fullscreen • Camera PiP • Mic commentary", true);
+            Toast.makeText(this, "TV 49 East producer is live", Toast.LENGTH_SHORT).show();
+            main.postDelayed(this::finish, 350L);
+        } catch (RuntimeException e) {
+            failStart("Unable to start producer camera");
+        }
+    }
+
+    private void failStart(String message) {
+        main.removeCallbacksAndMessages(null);
+        try { stopService(new Intent(this, RemoteStreamService.class)); } catch (Exception ignored) { }
+        SharedPreferencesManager.getInstance(this).sharedPreferences.edit()
+                .putBoolean(PREF_LIVE_INTERVIEW, false)
+                .remove(PREF_PRODUCER_VIDEO_URI)
+                .apply();
+        starting = false;
+        setState(message, false);
+        updateSelectionLabel();
+        Toast.makeText(this, message, Toast.LENGTH_LONG).show();
+    }
+
+    private void setState(String message, boolean good) {
+        if (stateLabel == null) return;
+        stateLabel.setText(message);
+        stateLabel.setTextColor(good ? 0xFF77DD77 : 0xFFF45B5B);
     }
 }
