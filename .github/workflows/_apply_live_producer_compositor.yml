@@ -18,245 +18,72 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
           java-version: '17'
-
       - name: Patch compositor and producer service
         shell: python
         run: |
           from pathlib import Path
-
           def replace_once(path, old, new):
-              p = Path(path)
-              s = p.read_text(encoding='utf-8')
-              if old not in s:
-                  raise SystemExit(f'anchor not found in {path}: {old[:120]!r}')
-              if s.count(old) != 1:
-                  raise SystemExit(f'anchor is not unique in {path}: count={s.count(old)}')
-              p.write_text(s.replace(old, new), encoding='utf-8')
-
-          service = 'app/src/main/java/com/fadcam/dualcam/service/DualCameraRecordingService.java'
-          renderer = 'app/src/main/java/com/fadcam/opengl/GLWatermarkRenderer.java'
-
-          replace_once(service,
-              'import android.content.pm.ServiceInfo;\nimport android.hardware.camera2.CameraAccessException;',
-              'import android.content.pm.ServiceInfo;\nimport android.media.MediaPlayer;\nimport android.hardware.camera2.CameraAccessException;')
-
-          replace_once(service,
-              '    private static final String TAG = "DualCamService";\n',
-              '    private static final String TAG = "DualCamService";\n\n'
-              '    /** Intent extra containing a local producer program-video content URI. */\n'
-              '    public static final String EXTRA_PRODUCER_VIDEO_URI = "producer_video_uri";\n')
-
-          replace_once(service,
-              '    private volatile boolean useBlackFrameFallback = false;\n\n'
-              '    /** The resolved secondary camera ID — stored for use in fallback periodic snapshots. */',
-              '    private volatile boolean useBlackFrameFallback = false;\n\n'
-              '    /** True when the PiP input is occupied by a producer program video instead of a second camera. */\n'
-              '    private volatile boolean producerVideoMode = false;\n'
-              '    @Nullable\n'
-              '    private Uri producerVideoUri;\n'
-              '    @Nullable\n'
-              '    private MediaPlayer producerVideoPlayer;\n\n'
-              '    /** The resolved secondary camera ID — stored for use in fallback periodic snapshots. */')
-
-          replace_once(service,
-              '        capability = new DualCameraCapability(this);\n        cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);',
-              '        capability = new DualCameraCapability(this);\n        cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);\n\n'
-              '        // Recover producer mode after a service restart while the live interview flag remains set.\n'
-              '        String savedProducerUri = prefs.sharedPreferences.getString("fadcam_producer_video_uri", "");\n'
-              '        boolean interviewActive = prefs.sharedPreferences.getBoolean("fadcam_live_interview_active", false);\n'
-              '        if (interviewActive && savedProducerUri != null && !savedProducerUri.isEmpty()) {\n'
-              '            try {\n'
-              '                producerVideoUri = Uri.parse(savedProducerUri);\n'
-              '                producerVideoMode = true;\n'
-              '            } catch (Exception ignored) {\n'
-              '                producerVideoUri = null;\n'
-              '                producerVideoMode = false;\n'
-              '            }\n'
-              '        }')
-
-          replace_once(service,
-              '            case Constants.INTENT_ACTION_START_DUAL_RECORDING:\n                handleStartDualRecording();\n                break;',
-              '            case Constants.INTENT_ACTION_START_DUAL_RECORDING:\n                String producerUri = intent.getStringExtra(EXTRA_PRODUCER_VIDEO_URI);\n                if (producerUri != null && !producerUri.isEmpty()) {\n'
-              '                    try {\n'
-              '                        producerVideoUri = Uri.parse(producerUri);\n'
-              '                        producerVideoMode = true;\n'
-              '                    } catch (Exception e) {\n'
-              '                        producerVideoUri = null;\n'
-              '                        producerVideoMode = false;\n'
-              '                        FLog.e(TAG, "Invalid producer video URI", e);\n'
-              '                    }\n'
-              '                } else if (!prefs.sharedPreferences.getBoolean("fadcam_live_interview_active", false)) {\n'
-              '                    producerVideoUri = null;\n'
-              '                    producerVideoMode = false;\n'
-              '                }\n'
-              '                handleStartDualRecording();\n                break;')
-
-          replace_once(service,
-              '        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();',
-              '        // A producer session deliberately uses one camera + the program video as the PiP input.\n'
-              '        // Reuse the proven black-frame fallback path so we do not open a second camera at all.\n'
-              '        if (producerVideoMode) {\n'
-              '            if (producerVideoUri == null) {\n'
-              '                broadcastError("No producer video selected");\n'
-              '                stopSelf();\n'
-              '                return;\n'
-              '            }\n'
-              '            useBlackFrameFallback = true;\n'
-              '            FLog.i(TAG, "Producer mode: using primary camera + program video in PiP input");\n'
-              '        }\n\n'
-              '        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();')
-
-          replace_once(service,
-              '        // Schedule periodic secondary camera snapshots ONLY if not in black frame test mode\n        if (!useBlackFrameFallback) {',
-              '        // Schedule periodic secondary camera snapshots only for the real camera fallback path.\n        if (!useBlackFrameFallback && !producerVideoMode) {')
-
-          replace_once(service,
-              '            recordingPipeline.startRecording();\n            state = DualCameraState.RECORDING;',
-              '            recordingPipeline.startRecording();\n            if (producerVideoMode) {\n'
-              '                startProducerVideoPlayback();\n            }\n            state = DualCameraState.RECORDING;')
-
-          replace_once(service,
-              '        isCapturingSnapshot = false;\n\n        // Stop pipeline first (drains encoders, finalises muxer)',
-              '        isCapturingSnapshot = false;\n        releaseProducerVideoPlayer();\n\n        // Stop pipeline first (drains encoders, finalises muxer)')
-
-          replace_once(service,
-              '        // Stop fallback snapshot loop\n        fallbackMode = false;',
-              '        // Stop fallback snapshot loop\n        fallbackMode = false;\n        releaseProducerVideoPlayer();')
-
-          marker = '    // ════════════════════════════════════════════════════════════════════\n    // HELPERS\n    // ════════════════════════════════════════════════════════════════════\n'
-          producer_methods = '''    /**
-     * Starts the producer program video on the renderer's secondary OES input.
-     * The renderer is then swapped so the program fills the frame and the live
-     * camera remains the PiP commentator. Program audio is muted because the
-     * FadCam microphone is the authoritative live commentary track.
-     */
+              p=Path(path); s=p.read_text(encoding='utf-8')
+              if s.count(old)!=1: raise SystemExit(f'anchor not unique/missing in {path}: {s.count(old)}')
+              p.write_text(s.replace(old,new), encoding='utf-8')
+          service='app/src/main/java/com/fadcam/dualcam/service/DualCameraRecordingService.java'
+          renderer='app/src/main/java/com/fadcam/opengl/GLWatermarkRenderer.java'
+          replace_once(service,'import android.content.pm.ServiceInfo;\nimport android.hardware.camera2.CameraAccessException;','import android.content.pm.ServiceInfo;\nimport android.media.MediaPlayer;\nimport android.hardware.camera2.CameraAccessException;')
+          replace_once(service,'    private static final String TAG = "DualCamService";\n','    private static final String TAG = "DualCamService";\n\n    /** Intent extra containing a local producer program-video content URI. */\n    public static final String EXTRA_PRODUCER_VIDEO_URI = "producer_video_uri";\n')
+          replace_once(service,'    private volatile boolean useBlackFrameFallback = false;\n\n    /** The resolved secondary camera ID — stored for use in fallback periodic snapshots. */','    private volatile boolean useBlackFrameFallback = false;\n\n    /** True when the PiP input is occupied by a producer program video instead of a second camera. */\n    private volatile boolean producerVideoMode = false;\n    @Nullable\n    private Uri producerVideoUri;\n    @Nullable\n    private MediaPlayer producerVideoPlayer;\n\n    /** The resolved secondary camera ID — stored for use in fallback periodic snapshots. */')
+          replace_once(service,'        capability = new DualCameraCapability(this);\n        cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);','        capability = new DualCameraCapability(this);\n        cameraManager = (CameraManager) getSystemService(Context.CAMERA_SERVICE);\n\n        String savedProducerUri = prefs.sharedPreferences.getString("fadcam_producer_video_uri", "");\n        boolean interviewActive = prefs.sharedPreferences.getBoolean("fadcam_live_interview_active", false);\n        if (interviewActive && savedProducerUri != null && !savedProducerUri.isEmpty()) {\n            try { producerVideoUri = Uri.parse(savedProducerUri); producerVideoMode = true; }\n            catch (Exception ignored) { producerVideoUri = null; producerVideoMode = false; }\n        }')
+          replace_once(service,'            case Constants.INTENT_ACTION_START_DUAL_RECORDING:\n                handleStartDualRecording();\n                break;','            case Constants.INTENT_ACTION_START_DUAL_RECORDING:\n                String producerUri = intent.getStringExtra(EXTRA_PRODUCER_VIDEO_URI);\n                if (producerUri != null && !producerUri.isEmpty()) {\n                    try { producerVideoUri = Uri.parse(producerUri); producerVideoMode = true; }\n                    catch (Exception e) { producerVideoUri = null; producerVideoMode = false; FLog.e(TAG, "Invalid producer video URI", e); }\n                } else if (!prefs.sharedPreferences.getBoolean("fadcam_live_interview_active", false)) {\n                    producerVideoUri = null; producerVideoMode = false;\n                }\n                handleStartDualRecording();\n                break;')
+          replace_once(service,'        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();','        if (producerVideoMode) {\n            if (producerVideoUri == null) { broadcastError("No producer video selected"); stopSelf(); return; }\n            useBlackFrameFallback = true;\n            FLog.i(TAG, "Producer mode: primary camera + program video as fullscreen source");\n        }\n\n        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();')
+          replace_once(service,'        // Schedule periodic secondary camera snapshots ONLY if not in black frame test mode\n        if (!useBlackFrameFallback) {','        // Schedule periodic secondary camera snapshots only for the real camera fallback path.\n        if (!useBlackFrameFallback && !producerVideoMode) {')
+          replace_once(service,'            recordingPipeline.startRecording();\n            state = DualCameraState.RECORDING;','            recordingPipeline.startRecording();\n            if (producerVideoMode) startProducerVideoPlayback();\n            state = DualCameraState.RECORDING;')
+          replace_once(service,'        isCapturingSnapshot = false;\n\n        // Stop pipeline first (drains encoders, finalises muxer)','        isCapturingSnapshot = false;\n        releaseProducerVideoPlayer();\n\n        // Stop pipeline first (drains encoders, finalises muxer)')
+          replace_once(service,'        // Stop fallback snapshot loop\n        fallbackMode = false;','        // Stop fallback snapshot loop\n        fallbackMode = false;\n        releaseProducerVideoPlayer();')
+          marker='    // ════════════════════════════════════════════════════════════════════\n    // HELPERS\n    // ════════════════════════════════════════════════════════════════════\n'
+          methods='''    /** Starts local program video on the secondary OES input and swaps it to fullscreen. */
     private void startProducerVideoPlayback() {
-        if (!producerVideoMode || producerVideoUri == null || recordingPipeline == null) {
-            return;
-        }
+        if (!producerVideoMode || producerVideoUri == null || recordingPipeline == null) return;
         Surface programSurface = recordingPipeline.getSecondaryCameraInputSurface();
-        if (programSurface == null || !programSurface.isValid()) {
-            transitionToError("Producer video surface unavailable");
-            return;
-        }
-
+        if (programSurface == null || !programSurface.isValid()) { transitionToError("Producer video surface unavailable"); return; }
         releaseProducerVideoPlayer();
         try {
             MediaPlayer player = new MediaPlayer();
             producerVideoPlayer = player;
             player.setAudioAttributes(new android.media.AudioAttributes.Builder()
                     .setUsage(android.media.AudioAttributes.USAGE_MEDIA)
-                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE)
-                    .build());
+                    .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MOVIE).build());
             player.setDataSource(getApplicationContext(), producerVideoUri);
             player.setSurface(programSurface);
-            // Only live microphone commentary should reach the broadcast audio track.
             player.setVolume(0f, 0f);
-            // Crop rather than stretch when the program aspect ratio differs from the
-            // camera output. This keeps faces and graphics geometrically correct.
-            try {
-                player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING);
-            } catch (IllegalArgumentException ignored) {
-                // Older/OEM media engines may not expose the scaling mode.
-            }
+            try { player.setVideoScalingMode(MediaPlayer.VIDEO_SCALING_MODE_SCALE_TO_FIT_WITH_CROPPING); } catch (IllegalArgumentException ignored) {}
             player.setOnPreparedListener(mp -> {
-                if (isStopping || recordingPipeline == null || producerVideoPlayer != mp) {
-                    try { mp.release(); } catch (Exception ignored) {}
-                    return;
-                }
-                try {
-                    // The secondary texture is the program source; swap it to fullscreen
-                    // while keeping the primary camera as the live PiP commentator.
-                    recordingPipeline.swapCameras();
-                    mp.start();
-                    FLog.i(TAG, "Producer program video prepared and live playback started: " + producerVideoUri);
-                } catch (IllegalStateException e) {
-                    FLog.e(TAG, "Failed to start producer program playback", e);
-                    transitionToError("Producer video playback failed");
-                }
+                if (isStopping || recordingPipeline == null || producerVideoPlayer != mp) { try { mp.release(); } catch (Exception ignored) {} return; }
+                try { recordingPipeline.swapCameras(); mp.start(); FLog.i(TAG, "Producer program video playback started: " + producerVideoUri); }
+                catch (IllegalStateException e) { FLog.e(TAG, "Failed to start producer program playback", e); transitionToError("Producer video playback failed"); }
             });
-            player.setOnCompletionListener(mp ->
-                    FLog.i(TAG, "Producer program video reached the end; holding final frame while commentary continues"));
-            player.setOnErrorListener((mp, what, extra) -> {
-                FLog.e(TAG, "Producer program video error: what=" + what + " extra=" + extra);
-                mainHandler.post(() ->
-                        Toast.makeText(getApplicationContext(), "Producer video playback failed", Toast.LENGTH_LONG).show());
-                transitionToError("Producer video playback failed");
-                return true;
-            });
+            player.setOnCompletionListener(mp -> FLog.i(TAG, "Producer program video ended; holding final frame while commentary continues"));
+            player.setOnErrorListener((mp, what, extra) -> { FLog.e(TAG, "Producer video error: what=" + what + " extra=" + extra); transitionToError("Producer video playback failed"); return true; });
             player.prepareAsync();
-        } catch (Exception e) {
-            FLog.e(TAG, "Unable to prepare producer program video", e);
-            releaseProducerVideoPlayer();
-            transitionToError("Unable to load producer video");
-        }
+        } catch (Exception e) { FLog.e(TAG, "Unable to prepare producer program video", e); releaseProducerVideoPlayer(); transitionToError("Unable to load producer video"); }
     }
 
-    /** Releases the producer MediaPlayer before its SurfaceTexture/pipeline is destroyed. */
     private void releaseProducerVideoPlayer() {
         MediaPlayer player = producerVideoPlayer;
         producerVideoPlayer = null;
-        if (player != null) {
-            try { player.setSurface(null); } catch (Exception ignored) {}
-            try { player.stop(); } catch (Exception ignored) {}
-            try { player.release(); } catch (Exception ignored) {}
-        }
+        if (player != null) { try { player.setSurface(null); } catch (Exception ignored) {} try { player.stop(); } catch (Exception ignored) {} try { player.release(); } catch (Exception ignored) {} }
     }
 
 '''
-          if marker not in Path(service).read_text(encoding='utf-8'):
-              raise SystemExit('service helpers marker not found')
-          replace_once(service, marker, producer_methods + marker)
-
-          # Existing swap implementation had the texture IDs reversed: the full-screen
-          # path used the primary texture after swap, and the PiP path always used the
-          # secondary texture. Correct the IDs while retaining the existing matrices.
-          replace_once(renderer,
-              '                float[] fsTexMatrix = camerasSwapped ? pipLatestTexMatrix : encoderTexMatrix;\n'
-              '                // pipLatestTexMatrix is raw from pipSurfaceTexture — apply flip if fullscreen camera is front\n'
-              '                if (camerasSwapped && isFullscreenCameraFront() && frontVideoMirrorEnabled) {\n'
-              '                    fsTexMatrix = applyHorizontalTexFlip(fsTexMatrix);\n'
-              '                }\n'
-              '                if (mFullFrameBlit != null) {\n'
-              '                    if (!camerasSwapped) {\n'
-              '                        drawOESTexture(encoderCameraMvp, fsTexMatrix);\n'
-              '                    } else {\n'
-              '                        drawOESTextureWithId(oesTextureId, encoderCameraMvp, fsTexMatrix);\n'
-              '                    }\n'
-              '                } else {\n'
-              '                    drawWithFallbackMethodId(oesTextureId, encoderCameraMvp, fsTexMatrix);\n'
-              '                }',
-              '                float[] fsTexMatrix = camerasSwapped ? pipLatestTexMatrix : encoderTexMatrix;\n'
-              '                // When swapped, the program/video lives in the secondary OES texture.\n'
-              '                if (camerasSwapped && isFullscreenCameraFront() && frontVideoMirrorEnabled) {\n'
-              '                    fsTexMatrix = applyHorizontalTexFlip(fsTexMatrix);\n'
-              '                }\n'
-              '                int fullscreenTextureId = camerasSwapped ? pipOesTextureId : oesTextureId;\n'
-              '                if (mFullFrameBlit != null) {\n'
-              '                    drawOESTextureWithId(fullscreenTextureId, encoderCameraMvp, fsTexMatrix);\n'
-              '                } else {\n'
-              '                    drawWithFallbackMethodId(fullscreenTextureId, encoderCameraMvp, fsTexMatrix);\n'
-              '                }')
-
-          replace_once(renderer,
-              '        // Bind PiP texture\n        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);\n        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, pipOesTextureId);\n        GLES20.glUniform1i(pipTextureHandle, 0);',
-              '        // Bind the opposite source as PiP. After swap, the primary camera\n        // becomes the live commentator overlay; before swap, the secondary camera does.\n        int pipTextureId = camerasSwapped ? oesTextureId : pipOesTextureId;\n        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);\n        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, pipTextureId);\n        GLES20.glUniform1i(pipTextureHandle, 0);')
-
-          # Keep the one-shot patcher out of the final tree. The feature commit is created
-          # first; BASELINE is advanced in a second commit so Server Room Integrity has an
-          # exact tree to compare against.
-          p = Path('.github/workflows/_apply_live_producer_compositor.yml')
-          p.unlink()
-
+          replace_once(service,marker,methods+marker)
+          replace_once(renderer,'                float[] fsTexMatrix = camerasSwapped ? pipLatestTexMatrix : encoderTexMatrix;\n                // pipLatestTexMatrix is raw from pipSurfaceTexture — apply flip if fullscreen camera is front\n                if (camerasSwapped && isFullscreenCameraFront() && frontVideoMirrorEnabled) {\n                    fsTexMatrix = applyHorizontalTexFlip(fsTexMatrix);\n                }\n                if (mFullFrameBlit != null) {\n                    if (!camerasSwapped) {\n                        drawOESTexture(encoderCameraMvp, fsTexMatrix);\n                    } else {\n                        drawOESTextureWithId(oesTextureId, encoderCameraMvp, fsTexMatrix);\n                    }\n                } else {\n                    drawWithFallbackMethodId(oesTextureId, encoderCameraMvp, fsTexMatrix);\n                }','                float[] fsTexMatrix = camerasSwapped ? pipLatestTexMatrix : encoderTexMatrix;\n                if (camerasSwapped && isFullscreenCameraFront() && frontVideoMirrorEnabled) fsTexMatrix = applyHorizontalTexFlip(fsTexMatrix);\n                int fullscreenTextureId = camerasSwapped ? pipOesTextureId : oesTextureId;\n                if (mFullFrameBlit != null) drawOESTextureWithId(fullscreenTextureId, encoderCameraMvp, fsTexMatrix);\n                else drawWithFallbackMethodId(fullscreenTextureId, encoderCameraMvp, fsTexMatrix);')
+          replace_once(renderer,'        // Bind PiP texture\n        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);\n        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, pipOesTextureId);\n        GLES20.glUniform1i(pipTextureHandle, 0);','        int pipTextureId = camerasSwapped ? oesTextureId : pipOesTextureId;\n        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);\n        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, pipTextureId);\n        GLES20.glUniform1i(pipTextureHandle, 0);')
+          Path('.github/workflows/_apply_live_producer_compositor.yml').unlink()
       - name: Build app before committing
         run: ./gradlew :app:assembleDefaultDebug --no-daemon --no-watch-fs --stacktrace
-
       - name: Commit feature
         run: |
           git config user.name "github-actions[bot]"
@@ -264,7 +91,6 @@ jobs:
           git add app/src/main/java/com/fadcam/dualcam/service/DualCameraRecordingService.java app/src/main/java/com/fadcam/opengl/GLWatermarkRenderer.java .github/workflows/_apply_live_producer_compositor.yml
           git commit -m "feat(app): add live producer compositor"
           git push origin HEAD:master
-
       - name: Advance protected baseline
         run: |
           git fetch origin master
