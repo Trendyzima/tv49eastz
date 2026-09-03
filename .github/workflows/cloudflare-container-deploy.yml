@@ -74,10 +74,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          files="$(gofmt -l .)"
-          if [[ -n "$files" ]]; then
+          echo 'Checking Go formatting...'
+          mapfile -t files < <(gofmt -l .)
+          if (( ${#files[@]} > 0 )); then
             echo 'The following Go files are not gofmt-clean:'
-            printf '%s\n' "$files"
+            printf '  %s\n' "${files[@]}"
+            echo 'Run: gofmt -w <file> for each file above.'
             exit 1
           fi
           echo 'All Go files are gofmt-clean.'
@@ -102,7 +104,11 @@ jobs:
           python3 - <<'PY'
           import json, os
           from pathlib import Path
-          src = json.loads(Path('cloudflare-relay/wrangler.jsonc').read_text())
+          raw = Path('cloudflare-relay/wrangler.jsonc').read_text()
+          try:
+              src = json.loads(raw)
+          except json.JSONDecodeError as exc:
+              raise SystemExit(f'wrangler.jsonc must be valid JSON for CI generation: {exc}')
           src['containers'][0]['image'] = f"registry.cloudflare.com/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{os.environ['GITHUB_SHA']}"
           Path('cloudflare-relay/wrangler.ci.json').write_text(json.dumps(src, indent=2) + '\n')
           PY
@@ -127,12 +133,9 @@ jobs:
           [[ -n "$PUBLIC_URL" ]] || { echo 'Wrangler did not return a deployment URL.'; exit 1; }
           PUBLIC_URL="${PUBLIC_URL%/}"
           echo "Discovered Cloudflare Worker URL: $PUBLIC_URL"
-
           secrets_json="$(npx --yes wrangler@latest secret list --config wrangler.ci.json)"
-
           ensure_secret() {
-            local name="$1"
-            local value="$2"
+            local name="$1" value="$2"
             if printf '%s' "$secrets_json" | grep -q '"name"[[:space:]]*:[[:space:]]*"'"$name"'"'; then
               echo "$name already exists; preserving it."
               return 0
@@ -141,7 +144,6 @@ jobs:
             printf '%s' "$value" | npx --yes wrangler@latest secret put "$name" --config wrangler.ci.json
             secrets_json="$(npx --yes wrangler@latest secret list --config wrangler.ci.json)"
           }
-
           ensure_secret GATEWAY_API_KEY "$(openssl rand -hex 64)"
           ensure_secret GATEWAY_CAPABILITY_KEY "$(openssl rand -hex 64)"
           ensure_secret RELAY_SIGNING_SECRET "$(openssl rand -hex 64)"
