@@ -132,6 +132,16 @@ jobs:
           test -x "$zipalign"
           echo "zipalign=$zipalign" >> "$GITHUB_OUTPUT"
 
+      - name: Forensic audit exact FadCam release APK
+        shell: bash
+        run: |
+          set -euo pipefail
+          fadcam_apk="$(find app/build/outputs/apk -type f -path '*/default/release/*.apk' -print -quit)"
+          test -s "$fadcam_apk"
+          chmod +x scripts/audit-fadcam-apk.sh
+          scripts/audit-fadcam-apk.sh "$fadcam_apk" | tee fadcam-apk-forensic-audit.txt
+          cat fadcam-apk-forensic-audit.txt >> "$GITHUB_STEP_SUMMARY"
+
       - name: Verify, identify and pair APKs
         shell: bash
         env:
@@ -180,6 +190,7 @@ jobs:
             dist/TV49East.apk
             dist/PAIR-MANIFEST.txt
             signing-certificate.txt
+            fadcam-apk-forensic-audit.txt
 
       - name: Publish latest verified CI APK release
         if: github.event_name == 'push' && github.ref == 'refs/heads/master'
@@ -193,14 +204,15 @@ jobs:
             dist/TV49East.apk
             dist/PAIR-MANIFEST.txt
             signing-certificate.txt
+            fadcam-apk-forensic-audit.txt
           )
           if gh release view latest >/dev/null 2>&1; then
             gh release upload latest "${assets[@]}" --clobber
             gh release edit latest \
               --title "TV 49 East — Latest Verified CI Build" \
-              --notes "Verified Android APK pair from commit $GITHUB_SHA. Both APKs passed unit tests, APK alignment, package-ID checks, and shared-signing-certificate verification. These are CI-signed testing builds, not production-signed releases."
+              --notes "Verified Android APK pair from commit $GITHUB_SHA. Both APKs passed unit tests, APK alignment, package-ID checks, and shared-signing-certificate verification. FadCam also passed the APK-level Play Protect readiness audit. These are CI-signed testing builds, not production-signed releases."
           else
             gh release create latest "${assets[@]}" \
               --title "TV 49 East — Latest Verified CI Build" \
-              --notes "Verified Android APK pair from commit $GITHUB_SHA. Both APKs passed unit tests, APK alignment, package-ID checks, and shared-signing-certificate verification. These are CI-signed testing builds, not production-signed releases."
+              --notes "Verified Android APK pair from commit $GITHUB_SHA. Both APKs passed unit tests, APK alignment, package-ID checks, and shared-signing-certificate verification. FadCam also passed the APK-level Play Protect readiness audit. These are CI-signed testing builds, not production-signed releases."
           fi
