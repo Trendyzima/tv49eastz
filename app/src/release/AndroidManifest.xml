@@ -51,23 +51,25 @@
         android:maxSdkVersion="28"
         tools:replace="android:maxSdkVersion" />
 
-    <service
-        android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
-        tools:node="remove" />
+    <application>
+        <service
+            android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
+            tools:node="remove" />
 
-    <!--
-        Android 14+ requires a declared subtype for TYPE_SPECIAL_USE. Keep the
-        existing specialUse service because the annotation overlay is a real
-        user-facing FadRec feature, but describe its narrow purpose explicitly
-        for the merged production manifest and Play Console review.
-    -->
-    <service
-        android:name="com.fadcam.fadrec.ui.AnnotationService"
-        tools:node="merge">
-        <property
-            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
-            android:value="user-initiated on-device screen annotation overlay during FadRec screen recording" />
-    </service>
+        <!--
+            Android 14+ requires a declared subtype for TYPE_SPECIAL_USE. Keep
+            the existing specialUse service because the annotation overlay is a
+            real user-facing FadRec feature, but describe its narrow purpose
+            explicitly for the merged production manifest and Play Console review.
+        -->
+        <service
+            android:name="com.fadcam.fadrec.ui.AnnotationService"
+            tools:node="merge">
+            <property
+                android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+                android:value="user-initiated on-device screen annotation overlay during FadRec screen recording" />
+        </service>
+    </application>
 
     <activity-alias
         android:name=".MainActivity.AlternativeIcon"
