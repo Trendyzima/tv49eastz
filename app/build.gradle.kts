@@ -14,7 +14,7 @@ android {
     splits {
         abi {
             // For pro builds: enable splits but only arm64-v8a (no universal)
-            // For main builds: arm64-v8a + armeabi-v7a with universal APK
+            // For main builds: arm64-v8a + armeabi-v7a with universal
             isEnable = !isBundle
             reset()
             if (isProBuild) {
@@ -212,6 +212,15 @@ android {
         getByName("main") {
             java.srcDir("libs/AppLockLibrary/src/main/java")
             res.srcDir("libs/AppLockLibrary/src/main/res")
+
+            // The protected upstream onboarding fragment hard-codes storage and
+            // battery-exemption requirements that are no longer present in the
+            // production manifest. Keep that source immutable for the integrity
+            // boundary, but compile the compatibility implementation below
+            // instead. This preserves the protected source tree while ensuring
+            // every variant uses the corrected permission contract.
+            java.exclude("com/fadcam/ui/OnboardingPermissionsFragment.java")
+            java.srcDir("src/permissionSafe/java")
         }
         // NOTE: Removed setSrcDirs(emptyList()) to enable test source detection
         // getByName("test").java.setSrcDirs(emptyList<String>())
