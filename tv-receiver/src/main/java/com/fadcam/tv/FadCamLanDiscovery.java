@@ -44,8 +44,11 @@ public final class FadCamLanDiscovery {
         listener.onSearching();
         Thread thread = new Thread(() -> {
             String found = findServer();
-            if (found != null) listener.onFound(found, found + "/live.m3u8");
-            else listener.onNotFound("No active FadCam live server found on the local network");
+            if (found != null) {
+                listener.onFound(found, found + "/live.m3u8");
+            } else {
+                listener.onNotFound("No active FadCam live server found on the local network");
+            }
         }, "fadcam-lan-discovery");
         thread.setDaemon(true);
         thread.start();
@@ -60,7 +63,11 @@ public final class FadCamLanDiscovery {
                 .followSslRedirects(false)
                 .build();
         List<String> candidates = candidates();
-        if (candidates.isEmpty()) return null;
+        if (candidates.isEmpty()) {
+            client.dispatcher().executorService().shutdown();
+            client.connectionPool().evictAll();
+            return null;
+        }
 
         ExecutorService pool = Executors.newFixedThreadPool(Math.min(MAX_WORKERS, candidates.size()));
         try {
@@ -69,12 +76,15 @@ public final class FadCamLanDiscovery {
             for (String base : candidates) {
                 pool.execute(() -> {
                     try {
-                        if (found.get() == null && probe(client, base)) found.compareAndSet(null, base);
+                        if (found.get() == null && probe(client, base)) {
+                            found.compareAndSet(null, base);
+                        }
                     } finally {
                         done.countDown();
                     }
                 });
             }
+
             long deadline = SystemClock.elapsedRealtime() + DISCOVERY_DEADLINE_MS;
             while (found.get() == null && SystemClock.elapsedRealtime() < deadline) {
                 if (done.await(150, TimeUnit.MILLISECONDS)) break;
@@ -122,7 +132,8 @@ public final class FadCamLanDiscovery {
                 Enumeration<InetAddress> addresses = iface.getInetAddresses();
                 while (addresses.hasMoreElements() && result.size() < MAX_HOSTS) {
                     InetAddress address = addresses.nextElement();
-                    if (!(address instanceof Inet4Address) || address.isLoopback()) continue;
+                    // InetAddress exposes isLoopbackAddress(), not isLoopback().
+                    if (!(address instanceof Inet4Address) || address.isLoopbackAddress()) continue;
                     InterfaceAddress ia = findInterfaceAddress(iface, address);
                     if (ia == null) continue;
                     short prefix = ia.getNetworkPrefixLength();
