@@ -16,6 +16,7 @@ public class RecordingStopActivity extends Activity {
     private static final String TAG = "RecordingStopActivity";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
     private static final String PREF_PREVIOUS_STREAMING_MODE = "fadcam_interview_previous_streaming_mode";
+    private static final String PREF_PRODUCER_VIDEO_URI = "fadcam_producer_video_uri";
     private static final long STREAM_SHUTDOWN_GRACE_MS = 1500L;
 
     @Override
@@ -40,6 +41,7 @@ public class RecordingStopActivity extends Activity {
                 sp.sharedPreferences.edit()
                         .remove(PREF_LIVE_INTERVIEW)
                         .remove(PREF_PREVIOUS_STREAMING_MODE)
+                        .remove(PREF_PRODUCER_VIDEO_URI)
                         .apply();
 
                 // Let the dual pipeline drain/finalize its last fMP4 fragment before
