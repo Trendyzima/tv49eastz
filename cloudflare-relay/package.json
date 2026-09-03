@@ -5,11 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "types": "wrangler types",
     "deploy": "wrangler deploy",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "npm run types && tsc --noEmit"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "latest",
     "typescript": "latest",
     "wrangler": "latest"
   }
