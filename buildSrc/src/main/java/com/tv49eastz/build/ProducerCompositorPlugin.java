@@ -34,8 +34,13 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
             String name = task.getName();
             if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
-            task.doFirst((Action<Task>) current -> current.setSource(
-                    current.getSource().minus(source).plus(generatedService)));
+            // AGP can finish wiring a variant's Java source after this plugin is applied.
+            // Rebind the final source graph immediately before javac. The Action receives
+            // the task instead of capturing it, so the action remains configuration-cache safe.
+            task.doFirst((Action<Task>) current -> {
+                JavaCompile compile = (JavaCompile) current;
+                compile.setSource(compile.getSource().minus(source).plus(generatedService));
+            });
         });
     }
 
