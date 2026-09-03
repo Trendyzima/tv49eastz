@@ -243,10 +243,12 @@ export class RelayTunnel extends DurableObject<Env> {
     this.pending.delete(id);
 
     const body = concat(pending.chunks, pending.bytes);
+    const bodyBuffer = new ArrayBuffer(body.byteLength);
+    new Uint8Array(bodyBuffer).set(body);
     const headers = new Headers(pending.headers);
     headers.set("cache-control", "no-store");
     headers.set("x-tv49east-relay", "cloudflare");
-    pending.resolve(new Response(body, { status: pending.status, headers }));
+    pending.resolve(new Response(bodyBuffer, { status: pending.status, headers }));
   }
 
   private failResponse(id: number, error: string): void {
