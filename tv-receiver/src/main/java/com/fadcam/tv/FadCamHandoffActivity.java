@@ -16,6 +16,7 @@ public final class FadCamHandoffActivity extends Activity {
             finish();
             return;
         }
+
         Uri playbackUri = Uri.parse("tv49east://channel").buildUpon()
                 .appendQueryParameter("url", result.streamUrl)
                 .appendQueryParameter("name", result.name)
@@ -23,7 +24,7 @@ public final class FadCamHandoffActivity extends Activity {
                 .appendQueryParameter("id", "fadcam-local")
                 .build();
         Intent playback = new Intent(Intent.ACTION_VIEW, playbackUri);
-        playback.setClass(this, MainActivity.class);
+        playback.setClass(this, FadCamDirectStreamActivity.class);
         playback.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP | Intent.FLAG_ACTIVITY_SINGLE_TOP);
         startActivity(playback);
         finish();
