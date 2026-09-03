@@ -4,18 +4,8 @@
 
     <uses-permission android:name="com.tv49.com.permission.PUBLISH_FADCAM" />
 
-    <!--
-        Production/default-variant hardening.
-
-        FadRecScreenshotAccessibilityService is a legacy screenshot shortcut
-        implemented as an Android AccessibilityService. It is not required by
-        the camera, recording, playback, or media-management paths.
-
-        Google Play Protect treats sideloaded applications exposing sensitive
-        Accessibility capabilities as high-risk. Remove the service from the
-        packaged default APK while keeping the protected main source manifest
-        and Java implementation intact.
-    -->
+    <!-- Keep the protected FadCam manifest intact; default APK removes the legacy
+         Accessibility screenshot shortcut from the packaged app. -->
     <application>
         <service
             android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
@@ -27,9 +17,6 @@
             android:screenOrientation="portrait"
             android:label="TV 49 East Producer" />
 
-        <!-- Dedicated one-tap live interview control. The activity launcher
-             starts the LAN HLS server and then dual-camera PiP from a
-             user-visible foreground context. -->
         <service
             android:name="com.fadcam.services.LiveInterviewTileService"
             android:exported="true"
