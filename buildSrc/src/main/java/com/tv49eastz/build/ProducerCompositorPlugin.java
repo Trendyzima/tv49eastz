@@ -22,11 +22,12 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
         Provider<Directory> output = project.getLayout().getBuildDirectory().dir("generated/producer-compositor/java");
         File source = new File(project.getProjectDir(), SERVICE);
         File outputDir = output.get().getAsFile();
+        File generatedService = new File(outputDir, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
 
         TaskProvider<Task> prepare = project.getTasks().register("prepareProducerCompositorSources", task -> {
             task.getOutputs().dir(outputDir);
-            // Capture only serializable file values. Capturing Project here breaks
-            // Gradle 8.13 configuration-cache serialization.
+            // Capture only filesystem values. Capturing Project inside the task action
+            // is rejected by Gradle 8.13's configuration-cache serialization.
             task.doLast(ignored -> generate(source, outputDir));
         });
 
@@ -34,8 +35,12 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
             String name = task.getName();
             if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
-            File generatedService = new File(outputDir, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
-            task.setSource(task.getSource().minus(project.files(source)).plus(project.files(generatedService)));
+            // AGP may finish wiring a variant's Java source after this plugin is
+            // applied. Apply the replacement immediately before javac executes so
+            // the final AGP source graph cannot overwrite it. Only File values are
+            // captured by this action, keeping configuration-cache support intact.
+            task.doFirst(ignored -> task.setSource(
+                    task.getSource().minus(source).plus(generatedService)));
         });
     }
 
