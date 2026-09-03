@@ -15,7 +15,6 @@ export class StreamGatewayContainer extends Container<Env> {
   defaultPort = 8080;
   sleepAfter = "15m";
   pingEndpoint = "health";
-  maxInstances = 10;
   envVars = {
     GATEWAY_LISTEN: ":8787",
     TAP_UPSTREAM: "http://127.0.0.1:8786",
