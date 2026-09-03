@@ -146,7 +146,6 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir("libs/AppLockLibrary/src/main/java")
-            java.srcDir("src/permissionSafe/java")
             res.srcDir("libs/AppLockLibrary/src/main/res")
         }
         getByName("notesPro") { res.srcDir("src/notesPro/res") }
