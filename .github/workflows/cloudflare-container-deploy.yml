@@ -59,9 +59,7 @@ jobs:
               missing=1
             fi
           done
-          if ((missing)); then
-            exit 1
-          fi
+          if ((missing)); then exit 1; fi
           echo 'All required deployment secrets are present.'
 
       - name: Set up Node.js
@@ -90,7 +88,7 @@ jobs:
           go vet ./...
           test -z "$(gofmt -l .)"
 
-      - name: Build and push Go Container image
+      - name: Build and push immutable Go Container image
         working-directory: stream-gateway
         run: |
           npx --yes wrangler@latest containers build -p -t "stream-gateway:${GITHUB_SHA}" .
@@ -100,15 +98,16 @@ jobs:
         run: |
           set -euo pipefail
           python3 - <<'PY'
-          import json
+          import json, os
           from pathlib import Path
           src = json.loads(Path('cloudflare-relay/wrangler.jsonc').read_text())
-          src['containers'][0]['image'] = f"registry.cloudflare.com/{__import__('os').environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{__import__('os').environ['GITHUB_SHA']}"
+          src['containers'][0]['image'] = f"registry.cloudflare.com/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{os.environ['GITHUB_SHA']}"
           Path('cloudflare-relay/wrangler.ci.json').write_text(json.dumps(src, indent=2) + '\n')
           PY
           grep -Fq "registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/stream-gateway:${GITHUB_SHA}" cloudflare-relay/wrangler.ci.json
 
       - name: Deploy Worker and sync Worker secrets
+        id: deploy
         uses: cloudflare/wrangler-action@v4
         env:
           GATEWAY_API_KEY: ${{ secrets.GATEWAY_API_KEY }}
@@ -128,11 +127,26 @@ jobs:
             RELAY_SIGNING_SECRET
             RELAY_DEVICE_SECRET
 
-      - name: Verify deployed Worker URL and container status
-        working-directory: cloudflare-relay
+      - name: Verify production deployment
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.deployment-url }}
         shell: bash
         run: |
           set -euo pipefail
-          npx --yes wrangler@latest containers list
-          npx --yes wrangler@latest deployments list
-          echo 'Deployment completed. Cloudflare may need several minutes to provision the first Container instance.'
+          test -n "$DEPLOYMENT_URL"
+          echo "PUBLIC_GATEWAY_URL=$DEPLOYMENT_URL"
+          for attempt in $(seq 1 12); do
+            if curl --fail --silent --show-error --max-time 15 "$DEPLOYMENT_URL/health"; then
+              echo
+              echo 'Worker + Container health check passed.'
+              exit 0
+            fi
+            echo "Health check attempt $attempt/12 failed; waiting 15s for Container provisioning..."
+            sleep 15
+          done
+          echo 'Container health check did not become ready within the verification window.'
+          exit 1
+
+      - name: Inspect deployed Container applications
+        working-directory: cloudflare-relay
+        run: npx --yes wrangler@latest containers list
