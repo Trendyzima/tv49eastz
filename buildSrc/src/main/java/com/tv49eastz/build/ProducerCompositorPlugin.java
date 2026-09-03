@@ -13,38 +13,34 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 
-/**
- * Build-only source overlay for TV 49 East producer mode.
- *
- * <p>The upstream FadCam camera/GL source remains byte-for-byte in the protected
- * application tree. This plugin creates generated compile inputs with the small
- * producer additions and compiles those instead, preserving the server-room
- * source boundary while keeping the runtime feature in the APK.</p>
- */
+/** Build-only source overlay for TV 49 East producer mode. */
 public final class ProducerCompositorPlugin implements Plugin<Project> {
     private static final String SERVICE = "src/main/java/com/fadcam/dualcam/service/DualCameraRecordingService.java";
 
     @Override
     public void apply(Project project) {
         Provider<Directory> output = project.getLayout().getBuildDirectory().dir("generated/producer-compositor/java");
+        File source = new File(project.getProjectDir(), SERVICE);
+        File outputDir = output.get().getAsFile();
+
         TaskProvider<Task> prepare = project.getTasks().register("prepareProducerCompositorSources", task -> {
-            task.getOutputs().dir(output);
-            task.doLast(ignored -> generate(project, output.get().getAsFile()));
+            task.getOutputs().dir(outputDir);
+            // Capture only serializable file values. Capturing Project here breaks
+            // Gradle 8.13 configuration-cache serialization.
+            task.doLast(ignored -> generate(source, outputDir));
         });
 
         project.getTasks().withType(JavaCompile.class).configureEach(task -> {
             String name = task.getName();
             if (!name.contains("JavaWithJavac") || name.contains("UnitTest") || name.contains("AndroidTest")) return;
             task.dependsOn(prepare);
-            File service = new File(project.getProjectDir(), SERVICE);
-            File generatedService = new File(output.get().getAsFile(), "com/fadcam/dualcam/service/DualCameraRecordingService.java");
-            task.setSource(task.getSource().minus(project.files(service)).plus(project.files(generatedService)));
+            File generatedService = new File(outputDir, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
+            task.setSource(task.getSource().minus(project.files(source)).plus(project.files(generatedService)));
         });
     }
 
-    private static void generate(Project project, File out) {
+    private static void generate(File source, File out) {
         try {
-            File source = new File(project.getProjectDir(), SERVICE);
             File generated = new File(out, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
             Files.createDirectories(generated.getParentFile().toPath());
             String patched = patchService(Files.readString(source.toPath(), StandardCharsets.UTF_8));
@@ -99,7 +95,6 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
                 "        // ── Load config ───────────────────────────────────────────────\n        config = prefs.getDualCameraConfig();",
                 "        if (producerVideoMode) {\n"
                         + "            if (producerVideoUri == null) { broadcastError(\"No producer video selected\"); stopSelf(); return; }\n"
-                        + "            // One-camera producer path: the primary camera is routed to the renderer PiP input.\n"
                         + "            useBlackFrameFallback = true;\n"
                         + "            FLog.i(TAG, \"Producer mode: primary camera as live PiP commentator + program video fullscreen\");\n"
                         + "        }\n\n"
