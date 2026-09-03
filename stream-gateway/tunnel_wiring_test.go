@@ -9,14 +9,17 @@ import (
 
 func TestTunnelRegistryLazyProxyWiring(t *testing.T) {
 	var gotPath string
+	var gotAuth string
 	proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		gotAuth = r.Header.Get("Authorization")
 		w.Header().Set("Content-Type", "text/plain")
 		_, _ = io.WriteString(w, "ok")
 	}))
 	defer proxy.Close()
 
 	t.Setenv("TUNNEL_PROXY_BASE_URL", proxy.URL)
+	t.Setenv("TUNNEL_PROXY_AUTH", "test-device-secret")
 	registry := NewTunnelRegistry()
 	tunnel, ok := registry.Get("device-123")
 	if !ok || tunnel == nil {
@@ -41,12 +44,22 @@ func TestTunnelRegistryLazyProxyWiring(t *testing.T) {
 	if gotPath != "/device/device-123/live.m3u8" {
 		t.Fatalf("unexpected proxy path: %q", gotPath)
 	}
+	if gotAuth != "Bearer test-device-secret" {
+		t.Fatalf("unexpected proxy authorization header: %q", gotAuth)
+	}
+}
+
+func TestTunnelRegistryAcceptsHTTPSProxyConfiguration(t *testing.T) {
+	registry := NewTunnelRegistry()
+	if err := registry.RegisterFromProxy("device-123", "https://gateway.example"); err != nil {
+		t.Fatalf("expected HTTPS proxy URL to be accepted: %v", err)
+	}
 }
 
 func TestTunnelRegistryRejectsUnsafeProxyConfiguration(t *testing.T) {
 	registry := NewTunnelRegistry()
 	for _, raw := range []string{
-		"https://gateway.example",
+		"ftp://gateway.example",
 		"http://gateway.example/proxy",
 		"http://gateway.example/?x=1",
 		"http://gateway.example/#fragment",
