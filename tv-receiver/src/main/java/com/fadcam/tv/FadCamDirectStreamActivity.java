@@ -39,7 +39,6 @@ public final class FadCamDirectStreamActivity extends Activity {
     private static final int BG = Color.rgb(5, 5, 7);
     private static final int TEXT = Color.WHITE;
     private static final int MUTED = Color.rgb(190, 188, 198);
-    private static final int ACCENT = Color.rgb(207, 186, 253);
     private static final int MAX_RETRIES = 8;
     private static final long WATCHDOG_INTERVAL_MS = 5000L;
     private static final long STALL_TIMEOUT_MS = 25000L;
@@ -244,6 +243,7 @@ public final class FadCamDirectStreamActivity extends Activity {
                 }
             });
             player = next;
+            playerView.setPlayer(next);
             bufferingSince = 0L;
             lastPositionMs = -1L;
             lastWindowIndex = -1;
@@ -273,7 +273,6 @@ public final class FadCamDirectStreamActivity extends Activity {
                 }
             } else if (state == Player.STATE_READY) {
                 if (lastPositionMs == position && lastWindowIndex == window && !current.isPlaying()) {
-                    // A paused player is a valid user state; do not restart it.
                     return;
                 }
                 lastPositionMs = position;
@@ -304,6 +303,9 @@ public final class FadCamDirectStreamActivity extends Activity {
     }
 
     private void releasePlayer() {
+        if (playerView != null) {
+            try { playerView.setPlayer(null); } catch (Throwable ignored) { }
+        }
         ExoPlayer old = player;
         player = null;
         bufferingSince = 0L;
