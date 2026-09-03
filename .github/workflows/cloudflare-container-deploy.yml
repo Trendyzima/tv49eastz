@@ -1,0 +1,138 @@
+name: Deploy Cloudflare Worker + Go Container
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'stream-gateway/**'
+      - 'cloudflare-relay/**'
+      - '.github/workflows/cloudflare-container-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cloudflare-production
+  cancel-in-progress: false
+
+env:
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate required deployment secrets
+        shell: bash
+        env:
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CF_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          GATEWAY_KEY: ${{ secrets.GATEWAY_API_KEY }}
+          CAPABILITY_KEY: ${{ secrets.GATEWAY_CAPABILITY_KEY }}
+          TUNNEL_PROXY: ${{ secrets.TUNNEL_PROXY_BASE_URL }}
+          RELAY_SIGNING: ${{ secrets.RELAY_SIGNING_SECRET }}
+          RELAY_DEVICE: ${{ secrets.RELAY_DEVICE_SECRET }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for pair in \
+            "CLOUDFLARE_ACCOUNT_ID:$CF_ACCOUNT" \
+            "CLOUDFLARE_API_TOKEN:$CF_TOKEN" \
+            "GATEWAY_API_KEY:$GATEWAY_KEY" \
+            "GATEWAY_CAPABILITY_KEY:$CAPABILITY_KEY" \
+            "TUNNEL_PROXY_BASE_URL:$TUNNEL_PROXY" \
+            "RELAY_SIGNING_SECRET:$RELAY_SIGNING" \
+            "RELAY_DEVICE_SECRET:$RELAY_DEVICE"; do
+            name="${pair%%:*}"
+            value="${pair#*:}"
+            if [[ -z "$value" ]]; then
+              echo "Missing GitHub Actions secret: $name"
+              missing=1
+            fi
+          done
+          if ((missing)); then
+            exit 1
+          fi
+          echo 'All required deployment secrets are present.'
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare-relay/package.json
+
+      - name: Install Worker dependencies
+        working-directory: cloudflare-relay
+        run: npm install --no-audit --no-fund
+
+      - name: Generate Worker types
+        working-directory: cloudflare-relay
+        run: npm run types
+
+      - name: Typecheck Worker
+        working-directory: cloudflare-relay
+        run: npx tsc --noEmit
+
+      - name: Test Go gateway
+        working-directory: stream-gateway
+        run: |
+          go test ./... -count=1 -race
+          go vet ./...
+          test -z "$(gofmt -l .)"
+
+      - name: Build and push Go Container image
+        working-directory: stream-gateway
+        run: |
+          npx --yes wrangler@latest containers build -p -t "stream-gateway:${GITHUB_SHA}" .
+
+      - name: Create CI Wrangler config with immutable image tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          src = json.loads(Path('cloudflare-relay/wrangler.jsonc').read_text())
+          src['containers'][0]['image'] = f"registry.cloudflare.com/{__import__('os').environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{__import__('os').environ['GITHUB_SHA']}"
+          Path('cloudflare-relay/wrangler.ci.json').write_text(json.dumps(src, indent=2) + '\n')
+          PY
+          grep -Fq "registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/stream-gateway:${GITHUB_SHA}" cloudflare-relay/wrangler.ci.json
+
+      - name: Deploy Worker and sync Worker secrets
+        uses: cloudflare/wrangler-action@v4
+        env:
+          GATEWAY_API_KEY: ${{ secrets.GATEWAY_API_KEY }}
+          GATEWAY_CAPABILITY_KEY: ${{ secrets.GATEWAY_CAPABILITY_KEY }}
+          TUNNEL_PROXY_BASE_URL: ${{ secrets.TUNNEL_PROXY_BASE_URL }}
+          RELAY_SIGNING_SECRET: ${{ secrets.RELAY_SIGNING_SECRET }}
+          RELAY_DEVICE_SECRET: ${{ secrets.RELAY_DEVICE_SECRET }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-relay
+          command: deploy --config wrangler.ci.json
+          secrets: |
+            GATEWAY_API_KEY
+            GATEWAY_CAPABILITY_KEY
+            TUNNEL_PROXY_BASE_URL
+            RELAY_SIGNING_SECRET
+            RELAY_DEVICE_SECRET
+
+      - name: Verify deployed Worker URL and container status
+        working-directory: cloudflare-relay
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes wrangler@latest containers list
+          npx --yes wrangler@latest deployments list
+          echo 'Deployment completed. Cloudflare may need several minutes to provision the first Container instance.'
