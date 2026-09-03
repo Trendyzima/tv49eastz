@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="permissions_description">FadCam needs access to your camera and microphone to record video and audio. Your recordings are saved using Android's protected app/media storage.</string>
+    <string name="permissions_note">Camera and microphone are required to record. Storage and battery optimization are optional.</string>
+    <string name="permissions_granted">Ready to continue!</string>
+    <string name="grant_permissions">GRANT CAMERA &amp; MICROPHONE</string>
+    <string name="onboarding_storage">Media</string>
+</resources>
