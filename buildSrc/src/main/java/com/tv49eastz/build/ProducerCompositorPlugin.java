@@ -3,8 +3,8 @@ package com.tv49eastz.build;
 import org.gradle.api.Action;
 import org.gradle.api.Plugin;
 import org.gradle.api.Project;
-import org.gradle.api.Task;
 import org.gradle.api.file.Directory;
+import org.gradle.api.file.FileCollection;
 import org.gradle.api.provider.Provider;
 import org.gradle.api.tasks.TaskProvider;
 import org.gradle.api.tasks.compile.JavaCompile;
@@ -25,7 +25,7 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
         File outputDir = output.get().getAsFile();
         File generatedService = new File(outputDir, "com/fadcam/dualcam/service/DualCameraRecordingService.java");
 
-        TaskProvider<Task> prepare = project.getTasks().register("prepareProducerCompositorSources", task -> {
+        TaskProvider<org.gradle.api.Task> prepare = project.getTasks().register("prepareProducerCompositorSources", task -> {
             task.getOutputs().dir(outputDir);
             task.doLast(ignored -> generate(source, outputDir));
         });
@@ -37,9 +37,15 @@ public final class ProducerCompositorPlugin implements Plugin<Project> {
             // AGP can finish wiring a variant's Java source after this plugin is applied.
             // Rebind the final source graph immediately before javac. The Action receives
             // the task instead of capturing it, so the action remains configuration-cache safe.
-            task.doFirst((Action<Task>) current -> {
-                JavaCompile compile = (JavaCompile) current;
-                compile.setSource(compile.getSource().minus(source).plus(generatedService));
+            task.doFirst((Action<JavaCompile>) compile -> {
+                // JavaCompile#getSource() is exposed as a File on the Gradle API used by
+                // this build. Convert it explicitly to a FileCollection before applying
+                // minus/plus; calling minus() directly on File is a Groovy-only extension
+                // and fails when buildSrc itself is compiled as Java.
+                FileCollection finalSources = project.files(compile.getSource())
+                        .minus(source)
+                        .plus(generatedService);
+                compile.setSource(finalSources);
             });
         });
     }
