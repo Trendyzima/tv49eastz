@@ -61,19 +61,11 @@ jobs:
         working-directory: cloudflare-relay
         run: npx tsc --noEmit
 
-      - name: Test Go gateway
-        working-directory: stream-gateway
-        run: go test ./... -count=1 -race
-
-      - name: Vet Go gateway
-        working-directory: stream-gateway
-        run: go vet ./...
-
       - name: Normalize and commit Go formatting
         shell: bash
         run: |
           set -euo pipefail
-          echo 'Normalizing Go source with gofmt...'
+          echo 'Normalizing Go source with gofmt before validation...'
           gofmt -w stream-gateway
           if git diff --quiet -- stream-gateway; then
             echo 'Go source was already gofmt-clean.'
@@ -88,6 +80,14 @@ jobs:
           files="$(gofmt -l stream-gateway)"
           test -z "$files" || { echo 'gofmt verification failed:'; printf '%s\n' "$files"; exit 1; }
           echo 'All Go files are gofmt-clean.'
+
+      - name: Test Go gateway
+        working-directory: stream-gateway
+        run: go test ./... -count=1 -race
+
+      - name: Vet Go gateway
+        working-directory: stream-gateway
+        run: go vet ./...
 
       - name: Build Linux amd64 Go binary
         working-directory: stream-gateway
