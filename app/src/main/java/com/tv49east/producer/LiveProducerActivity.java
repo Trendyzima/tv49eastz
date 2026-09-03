@@ -18,11 +18,7 @@ import androidx.core.content.ContextCompat;
 import com.fadcam.dualcam.service.DualCameraRecordingService;
 import com.fadcam.streaming.RemoteStreamService;
 
-/**
- * TV 49 East producer console kept outside the protected FadCam source boundary.
- * The selected local program is sent to the build-time producer compositor while
- * the phone camera remains the live PiP commentator.
- */
+/** TV 49 East producer console kept outside the protected FadCam source boundary. */
 public final class LiveProducerActivity extends Activity {
     public static final String EXTRA_VIDEO_URI = "producer_video_uri";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
@@ -34,8 +30,7 @@ public final class LiveProducerActivity extends Activity {
     private TextView selectionLabel;
     private Button startButton;
 
-    @Override
-    protected void onCreate(Bundle savedInstanceState) {
+    @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         buildUi();
         String existing = getIntent() != null ? getIntent().getStringExtra(EXTRA_VIDEO_URI) : null;
@@ -112,8 +107,7 @@ public final class LiveProducerActivity extends Activity {
         }
     }
 
-    @Override
-    protected void onActivityResult(int requestCode, int resultCode, Intent data) {
+    @Override protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
         if (requestCode != REQUEST_VIDEO || resultCode != RESULT_OK || data == null || data.getData() == null) return;
         Uri uri = data.getData();
@@ -157,7 +151,7 @@ public final class LiveProducerActivity extends Activity {
                 try {
                     Intent dual = new Intent(this, DualCameraRecordingService.class);
                     dual.setAction(Constants.INTENT_ACTION_START_DUAL_RECORDING);
-                    dual.putExtra(DualCameraRecordingService.EXTRA_PRODUCER_VIDEO_URI, selectedVideoUri.toString());
+                    dual.putExtra("producer_video_uri", selectedVideoUri.toString());
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, dual);
                     else startService(dual);
                 } catch (RuntimeException e) {
