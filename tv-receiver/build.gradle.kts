@@ -14,7 +14,11 @@ android {
         targetSdk = 36
         versionCode = 4
         versionName = "2.2.0"
-        val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim().orEmpty()
+        // Production default: the receiver discovers worldwide FadCam channels through
+        // the TV 49 East Edge control plane. A Gradle property can override this for tests.
+        val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
