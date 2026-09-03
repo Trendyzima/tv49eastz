@@ -11,12 +11,12 @@ import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 
 import com.fadcam.FLog;
+import com.fadcam.LiveProducerActivity;
 import com.fadcam.R;
-import com.fadcam.RecordingStartActivity;
 import com.fadcam.RecordingStopActivity;
 import com.fadcam.SharedPreferencesManager;
 
-/** Dedicated Quick Settings entry point for a TV 49 East live interview. */
+/** Dedicated Quick Settings entry point for a TV 49 East live producer session. */
 public final class LiveInterviewTileService extends TileService {
     private static final String TAG = "LiveInterviewTile";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
@@ -45,11 +45,7 @@ public final class LiveInterviewTileService extends TileService {
                 && prefs.isRecordingInProgress();
         Intent intent = new Intent(this, active
                 ? RecordingStopActivity.class
-                : RecordingStartActivity.class);
-        if (!active) {
-            intent.putExtra(RecordingStartActivity.EXTRA_SHORTCUT_CAMERA_MODE,
-                    RecordingStartActivity.CAMERA_MODE_INTERVIEW);
-        }
+                : LiveProducerActivity.class);
         intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
@@ -61,7 +57,7 @@ public final class LiveInterviewTileService extends TileService {
                 startActivityAndCollapse(intent);
             }
         } catch (RuntimeException e) {
-            FLog.e(TAG, "Unable to launch live interview action", e);
+            FLog.e(TAG, "Unable to launch live producer action", e);
         }
     }
 
@@ -97,7 +93,7 @@ public final class LiveInterviewTileService extends TileService {
         boolean active = prefs.sharedPreferences.getBoolean(PREF_LIVE_INTERVIEW, false)
                 && prefs.isRecordingInProgress();
         tile.setState(active ? Tile.STATE_ACTIVE : Tile.STATE_INACTIVE);
-        tile.setLabel(active ? "End TV 49 Interview" : "Live Interview • TV 49 East");
+        tile.setLabel(active ? "End TV 49 Interview" : "TV 49 Producer");
         tile.setIcon(Icon.createWithResource(this,
                 active ? R.drawable.ic_qs_tile_stop : R.drawable.ic_qs_tile_videocam_dual));
         tile.updateTile();
