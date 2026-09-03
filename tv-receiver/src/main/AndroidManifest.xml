@@ -42,6 +42,14 @@
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize" />
 
+        <activity
+            android:name="com.fadcam.tv.FadCamDirectStreamActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TV49East.Platform"
+            android:screenOrientation="unspecified"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Existing deep links remain supported. -->
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
