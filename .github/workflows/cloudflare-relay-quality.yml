@@ -7,7 +7,7 @@ on:
       - 'cloudflare-relay/**'
       - '.github/workflows/cloudflare-relay-quality.yml'
   push:
-    branches: ['feature/cloudflare-relay']
+    branches: ['feature/cloudflare-relay', 'feat/million-scale-relay']
     paths:
       - 'cloudflare-relay/**'
       - '.github/workflows/cloudflare-relay-quality.yml'
@@ -136,9 +136,6 @@ jobs:
                   for values_dir in sorted(res_dir.glob('values*')):
                       if not values_dir.is_dir():
                           continue
-                      # A qualifier such as values-night is a distinct Android
-                      # resource configuration. Duplicate names are only errors
-                      # when they occur inside the same values* directory.
                       seen = {}
                       for xml_file in sorted(values_dir.glob('*.xml')):
                           try:

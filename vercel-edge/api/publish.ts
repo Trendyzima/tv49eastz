@@ -18,16 +18,16 @@ export default async function handler(request: Request): Promise<Response> {
 
   const session = typeof body?.session === "string" ? body.session.trim() : "";
   const stream = typeof body?.stream === "string" ? body.stream.trim() : "";
-  const expectedStream = required("PUBLIC_STREAM_ID");
   if (!session || session.length > 256 || !/^[A-Za-z0-9_-]+$/.test(session)) {
     return json({ error: "invalid_session" }, 400);
   }
-  if (!stream || stream !== expectedStream || stream.length > 128 || !/^[A-Za-z0-9._-]+$/.test(stream)) {
+  if (!stream || stream.length > 128 || !/^[A-Za-z0-9._-]+$/.test(stream)) {
     return json({ error: "invalid_stream" }, 400);
   }
 
-  // The edge can publish only an already-live gateway session. Device
-  // credentials stay on the producer/tunnel side and are never sent here.
+  // The control plane is authoritative for the gateway session. The relay
+  // itself no longer has a single PUBLIC_STREAM_ID bottleneck: each signed
+  // ticket determines the tenant/stream and therefore the Durable Object.
   let probe: Response;
   try {
     probe = await fetch(gatewayUrl(`/stream/${encodeURIComponent(session)}/index.m3u8`), {

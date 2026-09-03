@@ -17,8 +17,5 @@
       "tag": "v1",
       "new_sqlite_classes": ["RelayTunnel"]
     }
-  ],
-  "vars": {
-    "PUBLIC_STREAM_ID": "creator-001"
-  }
+  ]
 }

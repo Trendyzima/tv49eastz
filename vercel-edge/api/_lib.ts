@@ -7,6 +7,7 @@ function bytesToBase64Url(bytes: Uint8Array): string {
 }
 
 function base64UrlToBytes(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("invalid base64url");
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
   const padded = normalized + "=".repeat((4 - (normalized.length % 4)) % 4);
   const binary = atob(padded);
@@ -30,6 +31,12 @@ export async function signRelayTicket(stream: string, ttlSeconds: number): Promi
   const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
   const payload = `relay\x00${stream}\x00${exp}`;
   return `${bytesToBase64Url(encoder.encode(payload))}.${bytesToBase64Url(await hmac(required("EDGE_SIGNING_SECRET"), payload))}`;
+}
+
+export async function signDeviceTicket(stream: string, ttlSeconds: number): Promise<string> {
+  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
+  const payload = `device\x00${stream}\x00${exp}`;
+  return `${bytesToBase64Url(encoder.encode(payload))}.${bytesToBase64Url(await hmac(required("EDGE_DEVICE_SIGNING_SECRET"), payload))}`;
 }
 
 export async function verifyTicket(token: string): Promise<{ kind: "gateway"; session: string; stream: string; exp: number } | { kind: "relay"; stream: string; exp: number }> {

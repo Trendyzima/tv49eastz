@@ -2,7 +2,6 @@ import { DurableObject } from "cloudflare:workers";
 
 export interface Env {
   RELAY_TUNNEL: DurableObjectNamespace<RelayTunnel>;
-  PUBLIC_STREAM_ID: string;
   RELAY_SIGNING_SECRET: string;
   RELAY_DEVICE_SECRET: string;
 }
@@ -10,25 +9,50 @@ export interface Env {
 type TicketKind = "relay" | "device";
 type Ticket = { kind: TicketKind; stream: string; exp: number };
 type ConnectionState = { stream: string; role: "producer" };
-type PendingResponse = {
-  status: number;
-  headers: Record<string, string>;
-  chunks: Uint8Array[];
-  bytes: number;
-  resolve: (value: Response) => void;
-  reject: (reason?: unknown) => void;
+
+type Subscriber = {
+  controller: ReadableStreamDefaultController<Uint8Array> | null;
+  headersReady: Promise<Response>;
+  resolveHeaders: (response: Response) => void;
+  rejectHeaders: (reason?: unknown) => void;
+  closed: boolean;
 };
 
-const MAX_BODY = 16 * 1024 * 1024;
+type InFlight = {
+  id: number;
+  path: string;
+  status: number;
+  headers: Record<string, string>;
+  headersReceived: boolean;
+  preHeader: Uint8Array[];
+  preHeaderBytes: number;
+  bytes: number;
+  subscribers: Set<Subscriber>;
+  timer: ReturnType<typeof setTimeout>;
+};
+
 const REQUEST_TIMEOUT_MS = 20_000;
+const MAX_RESPONSE_BYTES = 64 * 1024 * 1024;
+const MAX_PREHEADER_BYTES = 256 * 1024;
+const MAX_INFLIGHT = 512;
+const MAX_SUBSCRIBERS_PER_REQUEST = 10_000;
+const MAX_VIEWER_QUEUE_BYTES = 1024 * 1024;
+const MAX_TICKET_BYTES = 4096;
 const ALLOWED_PATH = /^(?:\/live\.m3u8|\/init\.mp4|\/status|\/audio\/volume|\/hls\/[A-Za-z0-9_-]+)$/;
 
 export default {
-  async fetch(request: Request, env: Env): Promise<Response> {
+  async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
     if (request.method === "GET" && url.pathname === "/health") {
-      return json({ ok: true, service: "tv49eastz-cloudflare-relay", transport: "https", tunnel: "websocket" });
+      return json({
+        ok: true,
+        service: "tv49eastz-cloudflare-relay",
+        transport: "https",
+        tunnel: "websocket",
+        architecture: "one-durable-object-per-stream",
+        fanout: "edge-cache-plus-request-coalescing",
+      });
     }
 
     if (request.method === "GET" && url.pathname === "/tunnel") {
@@ -36,7 +60,7 @@ export default {
     }
 
     if (request.method === "GET" && url.pathname === "/v1/relay") {
-      return handleRelayRequest(request, env);
+      return handleRelayRequest(request, env, ctx);
     }
 
     return json({
@@ -55,9 +79,7 @@ async function handleTunnelUpgrade(request: Request, env: Env): Promise<Response
   const url = new URL(request.url);
   const stream = url.searchParams.get("stream")?.trim() ?? "";
   const ticket = url.searchParams.get("ticket") ?? "";
-  if (!validStream(stream) || stream !== env.PUBLIC_STREAM_ID) {
-    return json({ error: "stream_not_allowed" }, 403);
-  }
+  if (!validStream(stream)) return json({ error: "invalid_stream" }, 400);
 
   const verified = await verifyTicket(ticket, env.RELAY_DEVICE_SECRET, "device");
   if (!verified || verified.stream !== stream) {
@@ -68,16 +90,14 @@ async function handleTunnelUpgrade(request: Request, env: Env): Promise<Response
   return env.RELAY_TUNNEL.get(id).fetch(request);
 }
 
-async function handleRelayRequest(request: Request, env: Env): Promise<Response> {
+async function handleRelayRequest(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   const url = new URL(request.url);
   const stream = url.searchParams.get("id")?.trim() ?? "";
   const ticket = url.searchParams.get("ticket") ?? "";
   const path = url.searchParams.get("path") ?? "/live.m3u8";
 
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-  if (!validStream(stream) || stream !== env.PUBLIC_STREAM_ID) {
-    return json({ error: "stream_not_allowed" }, 403);
-  }
+  if (!validStream(stream)) return json({ error: "invalid_stream" }, 400);
   if (!ALLOWED_PATH.test(path)) return json({ error: "path_not_allowed" }, 403);
 
   const verified = await verifyTicket(ticket, env.RELAY_SIGNING_SECRET, "relay");
@@ -85,25 +105,71 @@ async function handleRelayRequest(request: Request, env: Env): Promise<Response>
     return json({ error: "invalid_or_expired_ticket" }, 401);
   }
 
+  // Never include the viewer ticket in a cache key. The signed ticket is
+  // authorization; the stream/path pair is the media identity.
+  const cacheTtl = cacheTtlForPath(path);
+  if (cacheTtl > 0) {
+    const cacheKey = makeCacheKey(request, stream, path);
+    const cached = await caches.default.match(cacheKey);
+    if (cached) {
+      const response = new Response(cached.body, cached);
+      response.headers.set("x-tv49-cache", "HIT");
+      return response;
+    }
+
+    const response = await forwardToStreamDO(request, env, stream, path);
+    if (response.ok) {
+      const cacheable = new Response(response.body, response);
+      cacheable.headers.set("cache-control", `public, max-age=0, s-maxage=${cacheTtl}`);
+      cacheable.headers.set("x-tv49-cache", "MISS");
+      // Cache is intentionally best-effort. A cache failure must never break
+      // playback, and Cache API entries are data-center local.
+      ctx.waitUntil(caches.default.put(cacheKey, cacheable.clone()).catch(() => undefined));
+      return cacheable;
+    }
+    return response;
+  }
+
+  return forwardToStreamDO(request, env, stream, path);
+}
+
+function forwardToStreamDO(request: Request, env: Env, stream: string, path: string): Promise<Response> {
   const id = env.RELAY_TUNNEL.idFromName(stream);
   return env.RELAY_TUNNEL.get(id).fetch(new Request(request, {
     headers: new Headers({
       "x-relay-stream": stream,
       "x-relay-path": path,
-      "x-relay-ticket-exp": String(verified.exp),
+      "x-relay-ticket-exp": request.headers.get("x-relay-ticket-exp") ?? "",
     }),
   }));
 }
 
+function makeCacheKey(request: Request, stream: string, path: string): Request {
+  const base = new URL(request.url);
+  base.pathname = "/__tv49_cache/v1/" + encodeURIComponent(stream) + "/" + encodeURIComponent(path);
+  base.search = "";
+  return new Request(base.toString(), { method: "GET" });
+}
+
+function cacheTtlForPath(path: string): number {
+  if (path === "/live.m3u8") return 1;
+  if (path === "/init.mp4") return 3600;
+  if (path.startsWith("/hls/")) return 30;
+  return 0;
+}
+
 export class RelayTunnel extends DurableObject<Env> {
-  private pending = new Map<number, PendingResponse>();
+  private inflight = new Map<string, InFlight>();
   private nextRequestId = 1;
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
-    this.ctx.getWebSockets().forEach((ws) => {
-      if (!ws.deserializeAttachment()) ws.close(1011, "missing connection state");
-    });
+    for (const ws of this.ctx.getWebSockets()) {
+      const state = ws.deserializeAttachment() as ConnectionState | null;
+      if (!state || state.role !== "producer" || !validStream(state.stream)) {
+        ws.close(1011, "invalid connection state");
+      }
+    }
     this.ctx.setWebSocketAutoResponse(new WebSocketRequestResponsePair("ping", "pong"));
   }
 
@@ -113,25 +179,44 @@ export class RelayTunnel extends DurableObject<Env> {
 
     const stream = request.headers.get("x-relay-stream") ?? "";
     const path = request.headers.get("x-relay-path") ?? "/live.m3u8";
-    if (!validStream(stream) || stream !== this.env.PUBLIC_STREAM_ID || !ALLOWED_PATH.test(path)) {
+    if (!validStream(stream) || !ALLOWED_PATH.test(path)) {
       return json({ error: "invalid_relay_request" }, 400);
     }
 
     const producer = this.findProducer(stream);
     if (!producer) return json({ error: "producer_offline" }, 503);
 
-    const id = this.allocateRequestId();
-    const response = new Promise<Response>((resolve, reject) => {
-      this.pending.set(id, {
-        status: 502,
-        headers: {},
-        chunks: [],
-        bytes: 0,
-        resolve,
-        reject,
-      });
-    });
+    const existing = this.inflight.get(path);
+    if (existing) {
+      if (existing.subscribers.size >= MAX_SUBSCRIBERS_PER_REQUEST) {
+        return json({ error: "fanout_capacity_reached", retry_after: 1 }, 429);
+      }
+      return this.subscribe(existing, request);
+    }
 
+    if (this.inflight.size >= MAX_INFLIGHT) {
+      return json({ error: "stream_capacity_reached", retry_after: 1 }, 429);
+    }
+
+    const id = this.allocateRequestId();
+    let timeout: ReturnType<typeof setTimeout>;
+    const shared: InFlight = {
+      id,
+      path,
+      status: 502,
+      headers: {},
+      headersReceived: false,
+      preHeader: [],
+      preHeaderBytes: 0,
+      bytes: 0,
+      subscribers: new Set(),
+      timer: undefined as unknown as ReturnType<typeof setTimeout>,
+    };
+    timeout = setTimeout(() => this.failShared(shared, "producer_timeout"), REQUEST_TIMEOUT_MS);
+    shared.timer = timeout;
+    this.inflight.set(path, shared);
+
+    const responsePromise = this.subscribe(shared, request);
     try {
       producer.send(JSON.stringify({
         type: "request",
@@ -140,52 +225,106 @@ export class RelayTunnel extends DurableObject<Env> {
         path,
         headers: {
           accept: "application/vnd.apple.mpegurl,video/mp4,video/iso.segment,video/mp2t,application/octet-stream,*/*;q=0.5",
-          "user-agent": "tv49eastz-cloudflare-relay/1",
+          "user-agent": "tv49eastz-cloudflare-relay/2",
         },
       }));
     } catch {
-      this.pending.delete(id);
-      return json({ error: "producer_send_failed" }, 502);
+      this.failShared(shared, "producer_send_failed");
     }
+    return responsePromise;
+  }
 
-    return await withTimeout(response, REQUEST_TIMEOUT_MS, () => {
-      const pending = this.pending.get(id);
-      this.pending.delete(id);
-      pending?.reject(new Error("producer request timeout"));
-    }).catch(() => {
-      this.pending.delete(id);
-      return json({ error: "producer_timeout" }, 504);
+  private subscribe(shared: InFlight, request: Request): Promise<Response> {
+    let resolveHeaders!: (response: Response) => void;
+    let rejectHeaders!: (reason?: unknown) => void;
+    const headersReady = new Promise<Response>((resolve, reject) => {
+      resolveHeaders = resolve;
+      rejectHeaders = reject;
     });
+
+    const subscriber: Subscriber = {
+      controller: null,
+      headersReady,
+      resolveHeaders,
+      rejectHeaders,
+      closed: false,
+    };
+    const stream = new ReadableStream<Uint8Array>({
+      start: (controller) => {
+        subscriber.controller = controller;
+      },
+      cancel: () => {
+        this.removeSubscriber(shared, subscriber);
+      },
+    }, {
+      highWaterMark: MAX_VIEWER_QUEUE_BYTES,
+      size: (chunk) => chunk.byteLength,
+    });
+
+    shared.subscribers.add(subscriber);
+    if (request.signal.aborted) {
+      this.removeSubscriber(shared, subscriber);
+      return Promise.reject(new Error("viewer_aborted"));
+    }
+    request.signal.addEventListener("abort", () => this.removeSubscriber(shared, subscriber), { once: true });
+
+    const response = headersReady.then((headerResponse) => new Response(stream, {
+      status: headerResponse.status,
+      headers: headerResponse.headers,
+    }));
+    return response.catch((error) => {
+      this.removeSubscriber(shared, subscriber);
+      throw error;
+    });
+  }
+
+  private removeSubscriber(shared: InFlight, subscriber: Subscriber): void {
+    if (subscriber.closed) return;
+    subscriber.closed = true;
+    shared.subscribers.delete(subscriber);
+    if (shared.subscribers.size === 0 && this.inflight.get(shared.path) === shared) {
+      this.inflight.delete(shared.path);
+      clearTimeout(shared.timer);
+      const producer = this.findProducerFromAll();
+      try { producer?.send(JSON.stringify({ type: "cancel", id: shared.id })); } catch { /* best effort */ }
+    }
   }
 
   private acceptProducer(request: Request): Response {
     const url = new URL(request.url);
     const stream = url.searchParams.get("stream")?.trim() ?? "";
-    if (!validStream(stream) || stream !== this.env.PUBLIC_STREAM_ID) {
-      return json({ error: "stream_not_allowed" }, 403);
-    }
+    if (!validStream(stream)) return json({ error: "invalid_stream" }, 400);
 
     const existing = this.findProducer(stream);
-    if (existing) return json({ error: "producer_already_connected" }, 409);
+    if (existing) {
+      // Reconnects are expected. Close the stale tunnel and replace it instead
+      // of making the mobile producer permanently stuck in a 409 loop.
+      try { existing.close(1000, "producer_replaced"); } catch { /* ignore */ }
+    }
 
     const pair = new WebSocketPair();
-    const [client, server] = Object.values(pair);
+    const [client, server] = Object.values(pair) as [WebSocket, WebSocket];
     this.ctx.acceptWebSocket(server, [stream]);
     server.serializeAttachment({ stream, role: "producer" } satisfies ConnectionState);
-    server.send(JSON.stringify({ type: "ready", stream, protocol: 1 }));
+    try {
+      server.send(JSON.stringify({ type: "ready", stream, protocol: 2, capabilities: ["request-coalescing", "streaming", "cancel"] }));
+    } catch {
+      server.close(1011, "ready_failed");
+      return json({ error: "producer_handshake_failed" }, 502);
+    }
 
     return new Response(null, { status: 101, webSocket: client });
   }
 
   async webSocketMessage(ws: WebSocket, message: string | ArrayBuffer): Promise<void> {
     const state = ws.deserializeAttachment() as ConnectionState | null;
-    if (!state || state.role !== "producer") {
+    if (!state || state.role !== "producer" || !validStream(state.stream)) {
       ws.close(1008, "unauthorized");
       return;
     }
 
     if (typeof message !== "string") {
-      await this.handleBinary(ws, message);
+      this.handleBinary(message);
       return;
     }
 
@@ -204,70 +343,130 @@ export class RelayTunnel extends DurableObject<Env> {
     } else if (msg?.type === "error") {
       this.failResponse(Number(msg.id), String(msg.error ?? "producer_error"));
     } else if (msg?.type === "hello") {
-      ws.send(JSON.stringify({ type: "ready", stream: state.stream, protocol: 1 }));
+      ws.send(JSON.stringify({ type: "ready", stream: state.stream, protocol: 2, capabilities: ["request-coalescing", "streaming", "cancel"] }));
     }
   }
 
-  private async handleBinary(_ws: WebSocket, message: ArrayBuffer): Promise<void> {
+  private handleBinary(message: ArrayBuffer): void {
     if (message.byteLength < 4) return;
     const view = new DataView(message);
     const id = view.getUint32(0, false);
-    const pending = this.pending.get(id);
-    if (!pending) return;
+    const shared = this.findInflightById(id);
+    if (!shared) return;
 
     const payload = new Uint8Array(message.slice(4));
-    pending.bytes += payload.byteLength;
-    if (pending.bytes > MAX_BODY) {
-      this.failResponse(id, "response_too_large");
+    shared.bytes += payload.byteLength;
+    if (shared.bytes > MAX_RESPONSE_BYTES) {
+      this.failShared(shared, "response_too_large");
       return;
     }
-    pending.chunks.push(payload);
+
+    if (!shared.headersReceived) {
+      shared.preHeaderBytes += payload.byteLength;
+      if (shared.preHeaderBytes > MAX_PREHEADER_BYTES) {
+        this.failShared(shared, "headers_missing");
+        return;
+      }
+      shared.preHeader.push(payload);
+      return;
+    }
+
+    this.broadcast(shared, payload);
   }
 
   private handleResponseHeaders(msg: any): void {
     const id = Number(msg.id);
-    const pending = this.pending.get(id);
-    if (!pending) return;
+    const shared = this.findInflightById(id);
+    if (!shared) return;
+
     const status = Number(msg.status);
     if (!Number.isInteger(status) || status < 100 || status > 599) {
-      this.failResponse(id, "invalid_status");
+      this.failShared(shared, "invalid_status");
       return;
     }
-    pending.status = status;
-    pending.headers = sanitizeHeaders(msg.headers);
+    shared.status = status;
+    shared.headers = sanitizeHeaders(msg.headers);
+    shared.headersReceived = true;
+
+    const headers = new Headers(shared.headers);
+    headers.set("x-tv49east-relay", "cloudflare");
+    headers.set("cache-control", `public, max-age=0, s-maxage=${cacheTtlForPath(shared.path)}`);
+    for (const subscriber of [...shared.subscribers]) {
+      if (subscriber.closed) continue;
+      subscriber.resolveHeaders(new Response(null, { status: shared.status, headers }));
+    }
+
+    for (const chunk of shared.preHeader) this.broadcast(shared, chunk);
+    shared.preHeader = [];
+    shared.preHeaderBytes = 0;
+  }
+
+  private broadcast(shared: InFlight, payload: Uint8Array): void {
+    for (const subscriber of [...shared.subscribers]) {
+      if (subscriber.closed || !subscriber.controller) continue;
+      const desired = subscriber.controller.desiredSize;
+      if (desired !== null && desired < payload.byteLength) {
+        try { subscriber.controller.error(new Error("viewer_backpressure")); } catch { /* ignore */ }
+        subscriber.closed = true;
+        shared.subscribers.delete(subscriber);
+        subscriber.rejectHeaders(new Error("viewer_backpressure"));
+        continue;
+      }
+      try {
+        subscriber.controller.enqueue(payload.slice());
+      } catch {
+        subscriber.closed = true;
+        shared.subscribers.delete(subscriber);
+      }
+    }
   }
 
   private finishResponse(id: number): void {
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    this.pending.delete(id);
+    const shared = this.findInflightById(id);
+    if (!shared) return;
+    this.inflight.delete(shared.path);
+    clearTimeout(shared.timer);
 
-    const body = concat(pending.chunks, pending.bytes);
-    const bodyBuffer = new ArrayBuffer(body.byteLength);
-    new Uint8Array(bodyBuffer).set(body);
-    const headers = new Headers(pending.headers);
-    headers.set("cache-control", "no-store");
-    headers.set("x-tv49east-relay", "cloudflare");
-    pending.resolve(new Response(bodyBuffer, { status: pending.status, headers }));
+    if (!shared.headersReceived) {
+      for (const subscriber of shared.subscribers) subscriber.rejectHeaders(new Error("producer_ended_without_headers"));
+      return;
+    }
+    for (const subscriber of shared.subscribers) {
+      if (subscriber.closed || !subscriber.controller) continue;
+      try { subscriber.controller.close(); } catch { /* ignore */ }
+    }
   }
 
   private failResponse(id: number, error: string): void {
-    const pending = this.pending.get(id);
-    if (!pending) return;
-    this.pending.delete(id);
-    pending.reject(new Error(error));
+    const shared = this.findInflightById(id);
+    if (shared) this.failShared(shared, error);
+  }
+
+  private failShared(shared: InFlight, error: string): void {
+    if (this.inflight.get(shared.path) === shared) this.inflight.delete(shared.path);
+    clearTimeout(shared.timer);
+    const failure = new Error(error);
+    for (const subscriber of shared.subscribers) {
+      subscriber.rejectHeaders(failure);
+      if (subscriber.controller) {
+        try { subscriber.controller.error(failure); } catch { /* ignore */ }
+      }
+      subscriber.closed = true;
+    }
+    shared.subscribers.clear();
   }
 
   async webSocketClose(ws: WebSocket): Promise<void> {
-    for (const pending of this.pending.values()) pending.reject(new Error("producer disconnected"));
-    this.pending.clear();
-    ws.close();
+    const state = ws.deserializeAttachment() as ConnectionState | null;
+    if (state?.role !== "producer") return;
+    for (const shared of [...this.inflight.values()]) this.failShared(shared, "producer_disconnected");
   }
 
   async webSocketError(ws: WebSocket, _error: unknown): Promise<void> {
-    for (const pending of this.pending.values()) pending.reject(new Error("producer websocket error"));
-    this.pending.clear();
-    ws.close(1011, "websocket error");
+    const state = ws.deserializeAttachment() as ConnectionState | null;
+    if (state?.role !== "producer") return;
+    for (const shared of [...this.inflight.values()]) this.failShared(shared, "producer_websocket_error");
+    try { ws.close(1011, "websocket error"); } catch { /* ignore */ }
   }
 
   private findProducer(stream: string): WebSocket | undefined {
@@ -277,11 +476,20 @@ export class RelayTunnel extends DurableObject<Env> {
     });
   }
 
+  private findProducerFromAll(): WebSocket | undefined {
+    return this.ctx.getWebSockets().find((ws) => ws.readyState === WebSocket.OPEN);
+  }
+
+  private findInflightById(id: number): InFlight | undefined {
+    for (const shared of this.inflight.values()) if (shared.id === id) return shared;
+    return undefined;
+  }
+
   private allocateRequestId(): number {
     for (let i = 0; i < 0xffffffff; i++) {
       const id = this.nextRequestId >>> 0;
       this.nextRequestId = (id + 1) >>> 0;
-      if (id !== 0 && !this.pending.has(id)) return id;
+      if (id !== 0 && !this.findInflightById(id)) return id;
     }
     throw new Error("request id space exhausted");
   }
@@ -292,47 +500,35 @@ function validStream(value: string): boolean {
 }
 
 async function verifyTicket(raw: string, secret: string, expectedKind: TicketKind): Promise<Ticket | null> {
-  const [payloadPart, signaturePart] = raw.split(".");
-  if (!payloadPart || !signaturePart || !secret) return null;
+  if (!raw || raw.length > MAX_TICKET_BYTES || !secret) return null;
+  const parts = raw.split(".");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) return null;
   try {
-    const payload = new TextDecoder().decode(fromBase64Url(payloadPart));
-    const [kind, stream, expRaw] = payload.split("\0");
+    const payload = new TextDecoder().decode(fromBase64Url(parts[0]));
+    const fields = payload.split("\0");
+    if (fields.length !== 3) return null;
+    const [kind, stream, expRaw] = fields;
     const exp = Number(expRaw);
-    if (kind !== expectedKind || !validStream(stream) || !Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return null;
+    const now = Math.floor(Date.now() / 1000);
+    if (kind !== expectedKind || !validStream(stream) || !Number.isSafeInteger(exp) || now >= exp) return null;
 
-    const key = await crypto.subtle.importKey(
-      "raw",
-      new TextEncoder().encode(secret),
-      { name: "HMAC", hash: "SHA-256" },
-      false,
-      ["sign"],
-    );
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
     const expected = new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(payload)));
-    const actual = fromBase64Url(signaturePart);
+    const actual = fromBase64Url(parts[1]);
     if (actual.length !== expected.length) return null;
     let diff = 0;
     for (let i = 0; i < expected.length; i++) diff |= expected[i] ^ actual[i];
-    if (diff !== 0) return null;
-    return { kind: expectedKind, stream, exp };
+    return diff === 0 ? { kind: expectedKind, stream, exp } : null;
   } catch {
     return null;
   }
 }
 
 function fromBase64Url(value: string): Uint8Array {
+  if (!/^[A-Za-z0-9_-]+$/.test(value)) throw new Error("invalid base64url");
   const normalized = value.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((value.length + 3) % 4);
   const binary = atob(normalized);
   return Uint8Array.from(binary, (c) => c.charCodeAt(0));
-}
-
-function concat(chunks: Uint8Array[], length: number): Uint8Array {
-  const output = new Uint8Array(length);
-  let offset = 0;
-  for (const chunk of chunks) {
-    output.set(chunk, offset);
-    offset += chunk.byteLength;
-  }
-  return output;
 }
 
 function sanitizeHeaders(input: unknown): Record<string, string> {
@@ -341,7 +537,7 @@ function sanitizeHeaders(input: unknown): Record<string, string> {
   for (const [key, value] of Object.entries(input as Record<string, unknown>)) {
     if (!/^[A-Za-z0-9-]+$/.test(key) || typeof value !== "string") continue;
     const lower = key.toLowerCase();
-    if (["connection", "upgrade", "transfer-encoding", "content-length", "set-cookie"].includes(lower)) continue;
+    if (["connection", "upgrade", "transfer-encoding", "content-length", "set-cookie", "server-timing"].includes(lower)) continue;
     if (value.length > 4096) continue;
     output[key] = value;
   }
@@ -357,21 +553,4 @@ function json(value: unknown, status = 200): Response {
       "x-content-type-options": "nosniff",
     },
   });
-}
-
-async function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void): Promise<T> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<T>((_, reject) => {
-        timer = setTimeout(() => {
-          onTimeout();
-          reject(new Error("timeout"));
-        }, ms);
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
 }
