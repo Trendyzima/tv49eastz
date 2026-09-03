@@ -10,8 +10,7 @@
         broad all-files access or battery-optimization exemption, so remove
         both from the merged release manifest.
 
-        The main manifest also contains legacy alternate launcher aliases
-        (Camera, Notes, Calculator, Weather, security-themed aliases, etc.).
+        The main manifest also contains legacy alternate launcher aliases.
         They are not part of the production identity of FadCam and are removed
         from the release artifact to avoid misleading launcher identities.
 
@@ -20,6 +19,12 @@
         accessibility service is not required by the production camera/recording
         path, so keep that service out of the release artifact while leaving the
         protected main application source unchanged.
+
+        Android 13+ camera apps should not request broad READ_MEDIA_VIDEO access
+        merely to read media they created themselves. FadCam can access its own
+        media through scoped MediaStore/app-owned storage, while user-selected
+        external media should use a picker/URI grant. Remove the broad media
+        permission from the production artifact.
     -->
 
     <uses-permission
@@ -29,9 +34,40 @@
         android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
         tools:node="remove" />
 
+    <uses-permission
+        android:name="android.permission.READ_MEDIA_VIDEO"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.WRITE_MEDIA_VIDEO"
+        tools:node="remove" />
+
+    <!-- Preserve legacy storage access only where the platform still uses it. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"
+        tools:replace="android:maxSdkVersion" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        android:maxSdkVersion="28"
+        tools:replace="android:maxSdkVersion" />
+
     <service
         android:name="com.fadcam.service.FadRecScreenshotAccessibilityService"
         tools:node="remove" />
+
+    <!--
+        Android 14+ requires a declared subtype for TYPE_SPECIAL_USE. Keep the
+        existing specialUse service because the annotation overlay is a real
+        user-facing FadRec feature, but describe its narrow purpose explicitly
+        for the merged production manifest and Play Console review.
+    -->
+    <service
+        android:name="com.fadcam.fadrec.ui.AnnotationService"
+        tools:node="merge">
+        <property
+            android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"
+            android:value="user-initiated on-device screen annotation overlay during FadRec screen recording" />
+    </service>
 
     <activity-alias
         android:name=".MainActivity.AlternativeIcon"
