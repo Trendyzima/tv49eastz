@@ -14,6 +14,7 @@
     "@cloudflare/containers": "latest"
   },
   "devDependencies": {
+    "@types/node": "latest",
     "typescript": "latest",
     "wrangler": "latest"
   }
