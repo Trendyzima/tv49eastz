@@ -31,10 +31,7 @@
         android:icon="@drawable/start_back_shortcut"
         android:shortcutShortLabel="@string/shortcut_start_back"
         android:shortcutLongLabel="@string/shortcut_start_back">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.RecordingStartActivity"
-            android:targetPackage="com.fadcam">
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.RecordingStartActivity" android:targetPackage="com.fadcam">
             <extra android:name="shortcut_camera_mode" android:value="back" />
         </intent>
     </shortcut>
@@ -45,10 +42,7 @@
         android:icon="@drawable/start_front_shortcut"
         android:shortcutShortLabel="@string/shortcut_start_front"
         android:shortcutLongLabel="@string/shortcut_start_front">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.RecordingStartActivity"
-            android:targetPackage="com.fadcam">
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.RecordingStartActivity" android:targetPackage="com.fadcam">
             <extra android:name="shortcut_camera_mode" android:value="front" />
         </intent>
     </shortcut>
@@ -59,10 +53,7 @@
         android:icon="@drawable/start_current_shortcut"
         android:shortcutShortLabel="@string/shortcut_start_current"
         android:shortcutLongLabel="@string/shortcut_start_current">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.RecordingStartActivity"
-            android:targetPackage="com.fadcam">
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.RecordingStartActivity" android:targetPackage="com.fadcam">
             <extra android:name="shortcut_camera_mode" android:value="current" />
         </intent>
     </shortcut>
@@ -73,29 +64,22 @@
         android:icon="@drawable/start_dual_shortcut"
         android:shortcutShortLabel="@string/shortcut_start_dual"
         android:shortcutLongLabel="@string/shortcut_start_dual">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.RecordingStartActivity"
-            android:targetPackage="com.fadcam">
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.RecordingStartActivity" android:targetPackage="com.fadcam">
             <extra android:name="shortcut_camera_mode" android:value="dual" />
         </intent>
     </shortcut>
 
-    <!-- Long-press the FadCam launcher icon and choose this entry to start a
-         dual-camera PiP interview and publish the resulting HLS stream to
-         the TV 49 East receiver on the same LAN. -->
+    <!-- Producer mode: load a local program video and comment on it live from the camera. -->
     <shortcut
         android:id="@+id/live_interview"
         android:enabled="true"
         android:icon="@drawable/start_dual_shortcut"
-        android:shortcutShortLabel="Live Interview"
-        android:shortcutLongLabel="Live Interview • TV 49 East">
+        android:shortcutShortLabel="Live Producer"
+        android:shortcutLongLabel="TV 49 East • Live Producer">
         <intent
             android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.RecordingStartActivity"
-            android:targetPackage="com.fadcam">
-            <extra android:name="shortcut_camera_mode" android:value="live_interview" />
-        </intent>
+            android:targetClass="com.fadcam.LiveProducerActivity"
+            android:targetPackage="com.fadcam" />
     </shortcut>
 
     <shortcut
@@ -104,10 +88,7 @@
         android:icon="@drawable/stop_shortcut"
         android:shortcutShortLabel="@string/stop_recording"
         android:shortcutLongLabel="@string/stop_recording">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.RecordingStopActivity"
-            android:targetPackage="com.fadcam" />
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.RecordingStopActivity" android:targetPackage="com.fadcam" />
     </shortcut>
 
     <shortcut
@@ -116,10 +97,7 @@
         android:icon="@drawable/fadshot_shortcut"
         android:shortcutShortLabel="@string/shortcut_take_photo"
         android:shortcutLongLabel="@string/shortcut_take_photo">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.PhotoCaptureActivity"
-            android:targetPackage="com.fadcam" />
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.PhotoCaptureActivity" android:targetPackage="com.fadcam" />
     </shortcut>
 
     <shortcut
@@ -128,10 +106,7 @@
         android:icon="@drawable/fadshot_front_shortcut"
         android:shortcutShortLabel="@string/shortcut_take_photo_front"
         android:shortcutLongLabel="@string/shortcut_take_photo_front">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.PhotoCaptureActivity"
-            android:targetPackage="com.fadcam">
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.PhotoCaptureActivity" android:targetPackage="com.fadcam">
             <extra android:name="shortcut_photo_camera_mode" android:value="front" />
         </intent>
     </shortcut>
@@ -142,9 +117,6 @@
         android:icon="@drawable/fadrec_screenshot_shortcut"
         android:shortcutShortLabel="@string/shortcut_take_screenshot"
         android:shortcutLongLabel="@string/shortcut_take_screenshot">
-        <intent
-            android:action="android.intent.action.VIEW"
-            android:targetClass="com.fadcam.ScreenShotCaptureActivity"
-            android:targetPackage="com.fadcam" />
+        <intent android:action="android.intent.action.VIEW" android:targetClass="com.fadcam.ScreenShotCaptureActivity" android:targetPackage="com.fadcam" />
     </shortcut>
 </shortcuts>
