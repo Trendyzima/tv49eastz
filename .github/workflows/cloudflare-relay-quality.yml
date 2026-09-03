@@ -27,6 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Set up Node.js
@@ -67,9 +68,10 @@ jobs:
     name: Source/resource duplicate audit
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout full history
         uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - name: Audit duplicate Java/Kotlin top-level types within source roots
@@ -92,9 +94,9 @@ jobs:
               *) continue ;;
             esac
             pkg="$(sed -nE 's/^package[[:space:]]+([^;[:space:]]+).*/\1/p' "$file" | head -n1)"
-            names="$(sed -nE 's/^[[:space:]]*(public[[:space:]]+|private[[:space:]]+|protected[[:space:]]+|internal[[:space:]]+|final[[:space:]]+|abstract[[:space:]]+|open[[:space:]]+|sealed[[:space:]]+|data[[:space:]]+|enum[[:space:]]+|annotation[[:space:]]+|value[[:space:]]+)*(class|interface|object|enum[[:space:]]+class|annotation[[:space:]]+class)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)/\3/p' "$file" | head -n1)"
-            [[ -n "$names" ]] || continue
-            printf '%s|%s.%s|%s\n' "$root" "${pkg:-<default>}" "$names" "$file" >> "$tmp/types"
+            name="$(sed -nE 's/^[[:space:]]*(public[[:space:]]+|private[[:space:]]+|protected[[:space:]]+|internal[[:space:]]+|final[[:space:]]+|abstract[[:space:]]+|open[[:space:]]+|sealed[[:space:]]+|data[[:space:]]+|enum[[:space:]]+|annotation[[:space:]]+|value[[:space:]]+)*(class|interface|object)[[:space:]]+([A-Za-z_][A-Za-z0-9_]*)/\3/p' "$file" | head -n1)"
+            [[ -n "$name" ]] || continue
+            printf '%s|%s.%s|%s\n' "$root" "${pkg:-<default>}" "$name" "$file" >> "$tmp/types"
           done < <(find app/src tv-receiver/src -type f \( -name '*.java' -o -name '*.kt' \) -print0)
 
           dup="$(cut -d'|' -f1-3 "$tmp/types" | sort | uniq -d || true)"
@@ -115,13 +117,11 @@ jobs:
           trap 'rm -rf "$tmp"' EXIT
           : > "$tmp/resources"
           while IFS= read -r -d '' file; do
-            root="${file%%/res/*}/res"
             case "$file" in
               */values/*.xml) ;;
               *) continue ;;
             esac
-            # Only compare resources within one physical source root. Flavor/build-type
-            # overlays are intentionally allowed to override another source root.
+            root="${file%%/res/*}/res"
             grep -oE '<(string|color|dimen|style|item|plurals|array|attr)[[:space:]][^>]*name="[^"]+"' "$file" 2>/dev/null \
               | sed -nE 's/^<([^[:space:]]+).*name="([^"]+)".*/\1|\2/p' \
               | while IFS='|' read -r kind name; do
