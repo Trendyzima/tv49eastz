@@ -109,35 +109,71 @@ jobs:
           fi
           echo 'No duplicate top-level Java/Kotlin types found within the same source roots.'
 
-      - name: Audit duplicate Android values resources within each source root
+      - name: Audit duplicate Android values resources within each resource configuration
         shell: bash
         run: |
           set -euo pipefail
-          tmp="$(mktemp -d)"
-          trap 'rm -rf "$tmp"' EXIT
-          : > "$tmp/resources"
-          while IFS= read -r -d '' file; do
-            case "$file" in
-              */values/*.xml) ;;
-              *) continue ;;
-            esac
-            root="${file%%/res/*}/res"
-            grep -oE '<(string|color|dimen|style|item|plurals|array|attr)[[:space:]][^>]*name="[^"]+"' "$file" 2>/dev/null \
-              | sed -nE 's/^<([^[:space:]]+).*name="([^"]+)".*/\1|\2/p' \
-              | while IFS='|' read -r kind name; do
-                  [[ -n "$kind" && -n "$name" ]] && printf '%s|%s|%s|%s\n' "$root" "$kind" "$name" "$file" >> "$tmp/resources"
-                done
-          done < <(find app/src tv-receiver/src -type f -name '*.xml' -print0)
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
 
-          dup="$(cut -d'|' -f1-3 "$tmp/resources" | sort | uniq -d || true)"
-          if [[ -n "$dup" ]]; then
-            echo 'FAIL: duplicate Android resource names within the same source root:'
-            while IFS= read -r key; do
-              grep -F "${key}|" "$tmp/resources" || true
-            done <<< "$dup"
-            exit 1
-          fi
-          echo 'No duplicate Android values resources found within the same source roots.'
+          roots = [Path('app/src'), Path('tv-receiver/src')]
+          resource_kinds = {
+              'string', 'color', 'dimen', 'style', 'plurals', 'array', 'attr',
+              'declare-styleable', 'menu', 'integer', 'bool', 'fraction', 'drawable',
+              'mipmap', 'anim', 'animator', 'transition', 'layout', 'xml', 'raw', 'font'
+          }
+          duplicates = []
+
+          def local_name(tag):
+              return tag.rsplit('}', 1)[-1]
+
+          for src in roots:
+              for res_dir in sorted(src.rglob('res')):
+                  if not res_dir.is_dir():
+                      continue
+                  for values_dir in sorted(res_dir.glob('values*')):
+                      if not values_dir.is_dir():
+                          continue
+                      # A qualifier such as values-night is a distinct Android
+                      # resource configuration. Duplicate names are only errors
+                      # when they occur inside the same values* directory.
+                      seen = {}
+                      for xml_file in sorted(values_dir.glob('*.xml')):
+                          try:
+                              tree = ET.parse(xml_file)
+                          except ET.ParseError as exc:
+                              print(f'FAIL: malformed XML in {xml_file}: {exc}')
+                              sys.exit(1)
+                          root = tree.getroot()
+                          if local_name(root.tag) != 'resources':
+                              continue
+                          for child in root:
+                              kind = local_name(child.tag)
+                              name = child.attrib.get('name')
+                              if not name:
+                                  continue
+                              if kind == 'item':
+                                  kind = child.attrib.get('type', 'item')
+                              if kind not in resource_kinds and kind != 'item':
+                                  continue
+                              key = (kind, name)
+                              seen.setdefault(key, []).append(str(xml_file))
+                      for key, files in sorted(seen.items()):
+                          if len(files) > 1:
+                              duplicates.append((str(values_dir), key[0], key[1], files))
+
+          if duplicates:
+              print('FAIL: duplicate Android values resources within the same resource configuration:')
+              for directory, kind, name, files in duplicates:
+                  print(f'  {directory}|{kind}|{name}')
+                  for file in files:
+                      print(f'    - {file}')
+              sys.exit(1)
+
+          print('No duplicate Android values resources found within the same resource configurations.')
+          PY
 
       - name: Verify protected FadCam boundary
         shell: bash
