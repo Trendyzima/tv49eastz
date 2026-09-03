@@ -6,8 +6,6 @@ import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.net.Uri;
 import android.os.Bundle;
-import android.os.PowerManager;
-import android.provider.Settings;
 import android.view.LayoutInflater;
 import android.view.View;
 import android.view.ViewGroup;
@@ -31,17 +29,15 @@ import java.util.List;
 /**
  * Production-safe onboarding permission gate.
  *
- * The protected upstream implementation required storage and notification
- * permissions before leaving onboarding. Those permissions are not required to
- * record FadCam's own media on modern Android and, in the release manifest,
- * WRITE_EXTERNAL_STORAGE is intentionally absent on Android 10+ while
- * READ_MEDIA_VIDEO is removed. Treating either as mandatory makes the wizard
- * impossible to complete on Android 12+.
+ * The protected upstream implementation required storage, notification and
+ * battery-exemption state before leaving onboarding. That contract is invalid
+ * for the hardened manifest: Android 10+ gives a camera app access to media it
+ * owns without storage permission, READ_MEDIA_VIDEO is deliberately removed,
+ * and direct battery-optimization exemption is deliberately removed.
  *
  * Camera and microphone are the only mandatory runtime permissions for the
- * recording experience. Storage/media access is handled by scoped storage and
- * user pickers when needed; notification access is requested only by the
- * feature that actually needs it.
+ * recording experience. Optional storage/media access and power-management
+ * choices must never deadlock the onboarding wizard.
  */
 public class OnboardingPermissionsFragment extends Fragment implements SlidePolicy {
     private static final int PERMISSIONS_REQUEST_CODE = 101;
@@ -65,6 +61,25 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
             permissionStatusText.setVisibility(View.GONE);
         }
 
+        // The legacy slide visually presented storage as a permission. It is
+        // not a mandatory runtime permission on Android 10+ for media owned by
+        // this app, so remove that misleading affordance from the active UI.
+        LinearLayout permissionsList = view.findViewById(R.id.permissionsListContainer);
+        if (permissionsList != null && permissionsList.getChildCount() >= 3) {
+            permissionsList.getChildAt(2).setVisibility(View.GONE);
+        }
+
+        // Battery-optimization exemption is intentionally not part of the
+        // production manifest. Do not present it as an onboarding requirement.
+        View batteryButton = view.findViewById(R.id.disable_battery_optimization_button);
+        if (batteryButton != null) {
+            batteryButton.setVisibility(View.GONE);
+        }
+        View andText = view.findViewById(R.id.and_text);
+        if (andText != null) {
+            andText.setVisibility(View.GONE);
+        }
+
         if (grantButton != null) {
             grantButton.setOnClickListener(v -> requestMissingPermissions());
         }
@@ -74,17 +89,11 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
             openSettingsLink.setOnClickListener(v -> openAppSettings());
         }
 
-        MaterialButton batteryButton = view.findViewById(R.id.disable_battery_optimization_button);
-        if (batteryButton != null) {
-            updateBatteryOptimizationButton(batteryButton);
-            batteryButton.setOnClickListener(v -> openBatteryOptimizationSettings());
-        }
-
         checkPermissionsAndUpdateUI();
 
         // Preserve the original onboarding convenience of prompting immediately,
-        // but only ever request permissions that are actually valid and required
-        // by the current recording feature.
+        // but only ever request permissions that are actually required and
+        // declared by the application.
         view.post(() -> {
             if (isAdded() && !permissionsGranted) {
                 requestMissingPermissions();
@@ -163,12 +172,6 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
         } else if (hasPermanentlyDeniedRequiredPermission()) {
             showPermissionStatus(R.string.permissions_note, false);
         }
-
-        View view = getView();
-        if (view != null) {
-            MaterialButton batteryButton = view.findViewById(R.id.disable_battery_optimization_button);
-            if (batteryButton != null) updateBatteryOptimizationButton(batteryButton);
-        }
     }
 
     private void showPermissionStatus(int stringResId, boolean success) {
@@ -190,39 +193,6 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
         Intent intent = new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS);
         intent.setData(Uri.parse("package:" + requireContext().getPackageName()));
         startActivity(intent);
-    }
-
-    private void openBatteryOptimizationSettings() {
-        if (!isAdded()) return;
-
-        try {
-            // The production manifest deliberately does not request the special
-            // REQUEST_IGNORE_BATTERY_OPTIMIZATIONS capability. Open the general
-            // optimization page instead of firing the protected direct-exemption
-            // intent, which would be invalid without that manifest permission.
-            Intent intent = new Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS);
-            startActivity(intent);
-        } catch (Exception e) {
-            try {
-                startActivity(new Intent(Settings.ACTION_SETTINGS));
-            } catch (Exception ignored) {
-                showPermissionStatus(R.string.permissions_note, false);
-            }
-        }
-    }
-
-    private void updateBatteryOptimizationButton(MaterialButton button) {
-        if (!isAdded()) return;
-
-        PowerManager pm = (PowerManager) requireContext().getSystemService(Context.POWER_SERVICE);
-        boolean isIgnoring = pm != null
-                && pm.isIgnoringBatteryOptimizations(requireContext().getPackageName());
-
-        button.setEnabled(!isIgnoring);
-        button.setAlpha(isIgnoring ? 0.5f : 1f);
-        button.setText(isIgnoring
-                ? R.string.permissions_granted
-                : R.string.disable_battery_optimization);
     }
 
     @Override
@@ -271,11 +241,6 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
                     : R.string.grant_permissions);
         }
 
-        MaterialButton batteryButton = view.findViewById(R.id.disable_battery_optimization_button);
-        if (batteryButton != null) {
-            updateBatteryOptimizationButton(batteryButton);
-        }
-
         TextView settingsLink = view.findViewById(R.id.open_settings_link);
         if (settingsLink != null) settingsLink.setText(R.string.open_settings);
 
@@ -286,11 +251,15 @@ public class OnboardingPermissionsFragment extends Fragment implements SlidePoli
         if (permissionsListContainer != null && permissionsListContainer.getChildCount() >= 3) {
             setPermissionLabel(permissionsListContainer.getChildAt(0), R.string.onboarding_camera);
             setPermissionLabel(permissionsListContainer.getChildAt(1), R.string.onboarding_microphone);
-            setPermissionLabel(permissionsListContainer.getChildAt(2), R.string.onboarding_storage);
+            permissionsListContainer.getChildAt(2).setVisibility(View.GONE);
         }
 
         TextView andText = view.findViewById(R.id.and_text);
-        if (andText != null) andText.setText(R.string.onboarding_and);
+        if (andText != null) andText.setVisibility(View.GONE);
+
+        MaterialButton batteryButton = view.findViewById(R.id.disable_battery_optimization_button);
+        if (batteryButton != null) batteryButton.setVisibility(View.GONE);
+
         TextView orText = view.findViewById(R.id.or_text);
         if (orText != null) orText.setText(R.string.onboarding_or);
     }
