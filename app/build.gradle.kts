@@ -147,6 +147,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir("libs/AppLockLibrary/src/main/java")
+            java.srcDir("src/permissionSafe/java")
             res.srcDir("libs/AppLockLibrary/src/main/res")
         }
         getByName("notesPro") { res.srcDir("src/notesPro/res") }
@@ -178,15 +179,17 @@ android {
     }
 }
 
-// AndroidSourceDirectorySet on current AGP exposes source directories but not
-// PatternFilterable. Filter JavaCompile inputs by the absolute source file so
-// only the protected upstream class is removed; the same-FQCN safe replacement
-// under src/permissionSafe remains part of the compilation inputs.
+// The hardened onboarding implementation lives outside the protected upstream
+// source tree under src/permissionSafe. AndroidSourceDirectorySet cannot apply
+// a single-file exclusion, so perform the final JavaCompile input operation as
+// a FileTree after removing the exact protected file object. This avoids the
+// previous FileCollection/FileTree type error and keeps the same-FQCN safe
+// implementation in the compilation inputs.
 tasks.withType<JavaCompile>().configureEach {
-    source = source.filter { element ->
-        val normalized = element.file.absolutePath.replace('\\', '/')
-        !normalized.endsWith("/app/src/main/java/com/fadcam/ui/OnboardingPermissionsFragment.java")
-    }
+    val protectedOnboarding = project.file(
+        "src/main/java/com/fadcam/ui/OnboardingPermissionsFragment.java"
+    )
+    source = source.minus(project.files(protectedOnboarding)).asFileTree
 }
 
 dependencies {
@@ -233,19 +236,3 @@ dependencies {
     implementation(libs.room.runtime)
     implementation(libs.media3.muxer)
     implementation(libs.media3.common)
-    implementation(libs.media3.container)
-    implementation(libs.nanohttpd.core)
-    implementation("com.googlecode.mp4parser:isoparser:1.1.22")
-    annotationProcessor(libs.compiler)
-    annotationProcessor(libs.room.compiler)
-    implementation(mapOf("name" to "ffmpeg-kit-full-6.0-2.LTS", "ext" to "aar"))
-    implementation(libs.smart.exception.java)
-    implementation(fileTree(mapOf("dir" to "libs/aar", "include" to listOf("*.aar"))))
-    testImplementation(libs.junit)
-    testImplementation(libs.robolectric)
-    testImplementation("org.mockito:mockito-core:5.2.0")
-    testImplementation("org.mockito.kotlin:mockito-kotlin:5.1.0")
-    testImplementation("org.json:json:20240303")
-    androidTestImplementation(libs.ext.junit)
-    androidTestImplementation(libs.espresso.core)
-}
