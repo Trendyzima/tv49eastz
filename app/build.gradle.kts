@@ -35,6 +35,14 @@ android {
         versionName = "4.0.1"
         vectorDrawables.useSupportLibrary = true
         ndk { debugSymbolLevel = "FULL" }
+
+        // Public client configuration only. Secrets are intentionally never embedded.
+        buildConfigField("String", "POSTHOG_API_KEY", "\"${providers.gradleProperty(\"posthogApiKey\").orElse(System.getenv(\"POSTHOG_API_KEY\") ?: \"phc_vrg5rr7YaKd9qxiM2Y4mZy8nP37gVTHzcEE9r8UB7n7K\").get()}\"")
+        buildConfigField("String", "POSTHOG_HOST", "\"${providers.gradleProperty(\"posthogHost\").orElse(System.getenv(\"POSTHOG_HOST\") ?: \"https://us.i.posthog.com\").get()}\"")
+        buildConfigField("String", "SENTRY_DSN", "\"${providers.gradleProperty(\"sentryDsn\").orElse(System.getenv(\"SENTRY_DSN\") ?: \"\").get()}\"")
+        buildConfigField("String", "CLOUDINARY_CLOUD_NAME", "\"${providers.gradleProperty(\"cloudinaryCloudName\").orElse(System.getenv(\"CLOUDINARY_CLOUD_NAME\") ?: \"\").get()}\"")
+        buildConfigField("String", "CLOUDINARY_UPLOAD_PRESET", "\"${providers.gradleProperty(\"cloudinaryUploadPreset\").orElse(System.getenv(\"CLOUDINARY_UPLOAD_PRESET\") ?: \"\").get()}\"")
+        buildConfigField("String", "CLOUDINARY_FOLDER", "\"${providers.gradleProperty(\"cloudinaryFolder\").orElse(System.getenv(\"CLOUDINARY_FOLDER\") ?: \"tv49-east\").get()}\"")
     }
 
     signingConfigs {
@@ -95,21 +103,9 @@ android {
 
     flavorDimensions += "pro"
     productFlavors {
-        create("notesPro") {
-            dimension = "pro"
-            applicationIdSuffix = ".notes"
-            resValue("string", "app_name", "Notes")
-        }
-        create("calcPro") {
-            dimension = "pro"
-            applicationIdSuffix = ".calc"
-            resValue("string", "app_name", "Calculator")
-        }
-        create("weatherPro") {
-            dimension = "pro"
-            applicationIdSuffix = ".weather"
-            resValue("string", "app_name", "Weather")
-        }
+        create("notesPro") { dimension = "pro"; applicationIdSuffix = ".notes"; resValue("string", "app_name", "Notes") }
+        create("calcPro") { dimension = "pro"; applicationIdSuffix = ".calc"; resValue("string", "app_name", "Calculator") }
+        create("weatherPro") { dimension = "pro"; applicationIdSuffix = ".weather"; resValue("string", "app_name", "Weather") }
         create("default") { dimension = "pro" }
     }
 
@@ -140,10 +136,7 @@ android {
         targetCompatibility = JavaVersion.VERSION_17
     }
     testOptions { unitTests { isIncludeAndroidResources = true } }
-    dependenciesInfo {
-        includeInApk = false
-        includeInBundle = false
-    }
+    dependenciesInfo { includeInApk = false; includeInBundle = false }
     sourceSets {
         getByName("main") {
             java.srcDir("libs/AppLockLibrary/src/main/java")
@@ -160,22 +153,12 @@ android {
             useLegacyPackaging = false
         }
         resources {
-            excludes += listOf(
-                "META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt",
-                "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "META-INF/AL2.0", "META-INF/LGPL2.1",
-                "**/*.kotlin_metadata", "**/*.kotlin_builtins", "**/*.proto", "assets/PSDs/**"
-            )
+            excludes += listOf("META-INF/LICENSE", "META-INF/LICENSE.txt", "META-INF/NOTICE", "META-INF/NOTICE.txt", "META-INF/DEPENDENCIES", "META-INF/*.kotlin_module", "META-INF/AL2.0", "META-INF/LGPL2.1", "**/*.kotlin_metadata", "**/*.kotlin_builtins", "**/*.proto", "assets/PSDs/**")
         }
     }
-    androidResources {
-        noCompress.add("xml")
-        additionalParameters.add("--no-version-vectors")
-    }
+    androidResources { noCompress.add("xml"); additionalParameters.add("--no-version-vectors") }
     buildFeatures { buildConfig = true }
-    lint {
-        checkReleaseBuilds = false
-        disable += "MissingTranslation"
-    }
+    lint { checkReleaseBuilds = false; disable += "MissingTranslation" }
 }
 
 dependencies {
@@ -230,6 +213,13 @@ dependencies {
     implementation(mapOf("name" to "ffmpeg-kit-full-6.0-2.LTS", "ext" to "aar"))
     implementation(libs.smart.exception.java)
     implementation(fileTree(mapOf("dir" to "libs/aar", "include" to listOf("*.aar"))))
+
+    // Best-of-breed integrations: Cloudinary for media, PostHog for product analytics,
+    // Sentry for crash/performance observability. All versions are pinned in the catalog.
+    implementation(libs.cloudinary.android)
+    implementation(libs.posthog.android)
+    implementation(libs.sentry.android)
+
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     testImplementation("org.mockito:mockito-core:5.2.0")
