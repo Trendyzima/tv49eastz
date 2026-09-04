@@ -1,0 +1,31 @@
+name: TV 49 East Federation Quality Gate
+
+on:
+  pull_request:
+    paths:
+      - 'cloudflare-relay/**'
+      - 'supabase/migrations/006_federation.sql'
+      - '.github/workflows/federation-quality-gate.yml'
+  push:
+    branches: [master, feature/native-tv49-social]
+    paths:
+      - 'cloudflare-relay/**'
+      - 'supabase/migrations/006_federation.sql'
+      - '.github/workflows/federation-quality-gate.yml'
+
+jobs:
+  federation-typecheck:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare-relay
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: cloudflare-relay/package-lock.json
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm run typecheck:federation
