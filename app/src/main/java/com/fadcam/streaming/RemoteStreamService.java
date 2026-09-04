@@ -235,7 +235,6 @@ public class RemoteStreamService extends Service {
             // Log comprehensive server startup info
             String ipAddress = getLocalIpAddress();
             String serverUrl = "http://" + ipAddress + ":" + port;
-            String hlsStreamUrl = serverUrl + "/live.m3u8";
             
             FLog.i(TAG, "════════════════════════════════════════════════════════");
             FLog.i(TAG, "🚀 HTTP SERVER STARTED");
@@ -246,7 +245,7 @@ public class RemoteStreamService extends Service {
             FLog.i(TAG, "   📡 Endpoints:");
             FLog.i(TAG, "      • Dashboard: " + serverUrl + "/");
             FLog.i(TAG, "      • Status API: " + serverUrl + "/status");
-            FLog.i(TAG, "      • HLS Stream: " + hlsStreamUrl);
+            FLog.i(TAG, "      • HLS Stream: " + serverUrl + "/live.m3u8");
             FLog.i(TAG, "════════════════════════════════════════════════════════");
             FLog.i(TAG, "   ⚠️  Open the URL above on a device on the SAME network");
             FLog.i(TAG, "════════════════════════════════════════════════════════");
@@ -328,48 +327,61 @@ public class RemoteStreamService extends Service {
     private String getLocalIpAddress() {
         try {
             java.util.Enumeration<java.net.NetworkInterface> interfaces = java.net.NetworkInterface.getNetworkInterfaces();
-            String vpnIp = null;
-            String hotspotIp = null;
-            String wifiLanIp = null;
-            String cellularIp = null;
-            String otherIp = null;
+            String vpnIp = null;           // VPN IP (fallback)
+            String hotspotIp = null;       // 192.168.x.x range (PREFERRED)
+            String wifiLanIp = null;       // 10.x.x.x or 172.x.x.x (WiFi/LAN)
+            String cellularIp = null;      // 100.x.x.x range (CGNAT cellular)
+            String otherIp = null;         // Any other IP
             
             StringBuilder networkLog = new StringBuilder();
             networkLog.append("📡 [Network Detection]\n");
             
             while (interfaces.hasMoreElements()) {
                 java.net.NetworkInterface networkInterface = interfaces.nextElement();
+                
+                // Skip loopback and inactive interfaces
                 if (networkInterface.isLoopback() || !networkInterface.isUp()) {
                     continue;
                 }
                 
                 String interfaceName = networkInterface.getDisplayName().toLowerCase();
+                
+                // FIRST: Determine interface type by NAME (most reliable)
                 String interfaceType = "OTHER";
                 if (interfaceName.contains("seth") || interfaceName.contains("rmnet") || 
                     interfaceName.contains("ccmni") || interfaceName.contains("ndc")) {
+                    // Cellular interfaces: seth_lte*, seth_5g*, rmnet*, ccmni*, ndc*
                     interfaceType = "CELLULAR";
                 } else if (interfaceName.contains("tun") || interfaceName.contains("tap") || 
                            interfaceName.contains("wg") || interfaceName.contains("tailscale") ||
                            interfaceName.contains("vpn") || interfaceName.contains("ppp")) {
+                    // VPN interfaces
                     interfaceType = "VPN";
                 } else if (interfaceName.contains("wlan") || interfaceName.contains("ap0") ||
                            interfaceName.contains("softap") || interfaceName.contains("eth")) {
+                    // WiFi/LAN/Hotspot interfaces: wlan*, ap0, softap*, eth*
                     interfaceType = "WIFI_LAN_HOTSPOT";
                 }
                 
                 java.util.Enumeration<java.net.InetAddress> addresses = networkInterface.getInetAddresses();
                 while (addresses.hasMoreElements()) {
                     java.net.InetAddress address = addresses.nextElement();
+                    
+                    // Only consider IPv4 non-loopback addresses
                     if (!address.isLoopbackAddress() && address instanceof java.net.Inet4Address) {
                         String ip = address.getHostAddress();
                         String category = "OTHER";
+                        
+                        // SECOND: Refine by IP range based on interface type
                         if (interfaceType.equals("CELLULAR")) {
+                            // Any IP on cellular interface is cellular (can be 10.x, 100.x, etc.)
                             category = "CELLULAR";
                             if (cellularIp == null) cellularIp = ip;
                         } else if (interfaceType.equals("VPN")) {
                             category = "VPN";
                             if (vpnIp == null) vpnIp = ip;
                         } else if (interfaceType.equals("WIFI_LAN_HOTSPOT")) {
+                            // WiFi/LAN can be hotspot (192.168.x.x) or regular WiFi (10.x, 172.x)
                             if (ip.startsWith("192.168.")) {
                                 category = "HOTSPOT [PREFERRED]";
                                 if (hotspotIp == null) hotspotIp = ip;
@@ -380,6 +392,7 @@ public class RemoteStreamService extends Service {
                                 if (otherIp == null) otherIp = ip;
                             }
                         } else {
+                            // Unknown interface with IP
                             if (ip.startsWith("192.168.")) {
                                 category = "HOTSPOT [PREFERRED]";
                                 if (hotspotIp == null) hotspotIp = ip;
@@ -393,11 +406,13 @@ public class RemoteStreamService extends Service {
                                 if (otherIp == null) otherIp = ip;
                             }
                         }
+                        
                         networkLog.append("   • ").append(networkInterface.getDisplayName()).append(": ").append(ip).append(" [").append(category).append("]\n");
                     }
                 }
             }
             
+            // Prioritization by IP range ONLY
             String selectedIp = hotspotIp != null ? hotspotIp :
                                wifiLanIp != null ? wifiLanIp :
                                cellularIp != null ? cellularIp :
@@ -413,6 +428,7 @@ public class RemoteStreamService extends Service {
             }
             
             FLog.i(TAG, networkLog.toString());
+            
             return selectedIp != null ? selectedIp : "N/A";
             
         } catch (Exception e) {
@@ -421,6 +437,9 @@ public class RemoteStreamService extends Service {
         return "N/A";
     }
     
+    /**
+     * Build notification for foreground service.
+     */
     private Notification buildNotification(String contentText, String streamUrl) {
         Intent notificationIntent = new Intent(this, MainActivity.class);
         PendingIntent pendingIntent = PendingIntent.getActivity(
@@ -428,6 +447,7 @@ public class RemoteStreamService extends Service {
             PendingIntent.FLAG_IMMUTABLE | PendingIntent.FLAG_UPDATE_CURRENT
         );
         
+        // Create copy link action
         Intent copyIntent = new Intent(this, RemoteStreamService.class);
         copyIntent.setAction("com.fadcam.COPY_STREAM_URL");
         copyIntent.putExtra("stream_url", streamUrl);
@@ -443,14 +463,19 @@ public class RemoteStreamService extends Service {
             .setContentIntent(pendingIntent)
             .addAction(android.R.drawable.ic_menu_view, "Copy Link", copyPendingIntent)
             .setOngoing(true)
-            .setShowWhen(false)
+            .setShowWhen(false) // Don't show "now" timestamp, it's a persistent notification
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build();
     }
     
+    /**
+     * Update notification with stream URL.
+     * Shows cloud dashboard URL if in cloud mode, local dashboard URL if in local mode.
+     */
     private void updateNotification() {
+        // Check if cloud mode is enabled
         android.content.SharedPreferences cloudPrefs = getSharedPreferences("FadCamCloudPrefs", Context.MODE_PRIVATE);
-        int streamingMode = cloudPrefs.getInt("streaming_mode", 0);
+        int streamingMode = cloudPrefs.getInt("streaming_mode", 0); // 0 = local, 1 = cloud
         boolean isCloudMode = streamingMode == 1;
         
         String dashboardUrl;
@@ -458,20 +483,25 @@ public class RemoteStreamService extends Service {
         String contentText;
         
         if (isCloudMode) {
+            // Cloud mode - show cloud dashboard URL with device ID (even if activePort == -1)
             String deviceId = android.provider.Settings.Secure.getString(getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
             dashboardUrl = "https://fadcam.fadseclab.com/stream/" + deviceId + "/";
+            
             if (fragmentCount > 0) {
                 contentText = "Cloud Streaming: " + dashboardUrl + " (" + fragmentCount + " fragments)";
             } else {
                 contentText = "Cloud Streaming: " + dashboardUrl;
             }
         } else {
+            // Local mode - only show if server is running (activePort != -1)
             if (activePort == -1) {
                 FLog.d(TAG, "Local mode but server not running, skipping notification update");
                 return;
             }
+            
             String ipAddress = getLocalIpAddress();
             dashboardUrl = "http://" + ipAddress + ":" + activePort + "/";
+            
             if (fragmentCount > 0) {
                 contentText = "Streaming: " + dashboardUrl + " (" + fragmentCount + " fragments)";
             } else {
@@ -486,6 +516,9 @@ public class RemoteStreamService extends Service {
         }
     }
     
+    /**
+     * Create notification channel for Android O+.
+     */
     private void createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             NotificationChannel channel = new NotificationChannel(
@@ -495,6 +528,7 @@ public class RemoteStreamService extends Service {
             );
             channel.setDescription("Shows when remote streaming is active");
             channel.setShowBadge(false);
+            
             NotificationManager notificationManager = getSystemService(NotificationManager.class);
             if (notificationManager != null) {
                 notificationManager.createNotificationChannel(channel);
@@ -502,24 +536,34 @@ public class RemoteStreamService extends Service {
         }
     }
     
+    /**
+     * Get current dashboard URL for display in RemoteFragment.
+     * Shows cloud URL if in cloud mode, local URL if in local mode.
+     */
     public String getStreamUrl() {
         if (activePort == -1) {
             return null;
         }
         
+        // Check if cloud mode is enabled
         android.content.SharedPreferences cloudPrefs = getSharedPreferences("FadCamCloudPrefs", Context.MODE_PRIVATE);
-        int streamingMode = cloudPrefs.getInt("streaming_mode", 0);
+        int streamingMode = cloudPrefs.getInt("streaming_mode", 0); // 0 = local, 1 = cloud
         boolean isCloudMode = streamingMode == 1;
         
         if (isCloudMode) {
+            // Cloud mode - return cloud dashboard URL with device ID
             String deviceId = android.provider.Settings.Secure.getString(getContentResolver(), android.provider.Settings.Secure.ANDROID_ID);
             return "https://fadcam.fadseclab.com/stream/" + deviceId + "/";
         } else {
+            // Local mode - return local dashboard URL (root)
             String ipAddress = getLocalIpAddress();
             return "http://" + ipAddress + ":" + activePort + "/";
         }
     }
 
+    /**
+     * Get device IP address with port (without /live.m3u8).
+     */
     public String getDeviceIpWithPort() {
         if (activePort == -1) {
             return null;
@@ -528,6 +572,9 @@ public class RemoteStreamService extends Service {
         return ipAddress + ":" + activePort;
     }
     
+    /**
+     * Get active port.
+     */
     public int getActivePort() {
         return activePort;
     }
