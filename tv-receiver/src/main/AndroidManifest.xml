@@ -2,11 +2,8 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
 
-    <!-- TV devices are often non-touch. Keep touchscreen optional so Play/Android TV
-         does not infer a touchscreen requirement from the UI/dependency graph. -->
-    <uses-feature
-        android:name="android.hardware.touchscreen"
-        android:required="false" />
+    <!-- TV devices are often non-touch. Keep touchscreen optional. -->
+    <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
     <permission
         android:name="com.tv49.com.permission.PUBLISH_FADCAM"
@@ -35,6 +32,14 @@
         </activity>
 
         <activity
+            android:name="com.fadcam.tv.SocialActivity"
+            android:exported="false"
+            android:theme="@style/Theme.TV49East.Platform"
+            android:screenOrientation="unspecified"
+            android:resizeableActivity="true"
+            android:windowSoftInputMode="adjustResize" />
+
+        <activity
             android:name="com.fadcam.tv.TvReelsActivityHardened"
             android:exported="false"
             android:theme="@style/Theme.TV49East.Platform"
@@ -50,7 +55,6 @@
             android:resizeableActivity="true"
             android:windowSoftInputMode="adjustResize" />
 
-        <!-- Existing deep links remain supported. -->
         <activity
             android:name="com.fadcam.tv.TvReelsActivity"
             android:exported="true"
