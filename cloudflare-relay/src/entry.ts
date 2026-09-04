@@ -1,6 +1,8 @@
 import relayWorker, { RelayTunnel } from "./index";
 import { SessionStore } from "./session-store";
 
+export { RelayTunnel, SessionStore };
+
 export interface Env {
   RELAY_TUNNEL: DurableObjectNamespace<RelayTunnel>;
   SESSION_STORE: DurableObjectNamespace<SessionStore>;
@@ -12,10 +14,7 @@ export interface Env {
 
 const DEVICE_PATH = /^(?:\/live\.m3u8|\/init\.mp4|\/status|\/audio\/volume|\/hls\/[A-Za-z0-9_-]+)$/;
 const SESSION_TTL_SECONDS = 15 * 60;
-
-function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
-}
+function json(data: unknown, status = 200): Response { return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
 function validId(value: string): boolean { return /^[A-Za-z0-9._~-]{1,128}$/.test(value); }
 function constantTimeString(a: string, b: string): boolean { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
 function base64Url(bytes: Uint8Array): string { let b = ""; for (const x of bytes) b += String.fromCharCode(x); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""); }
@@ -33,7 +32,7 @@ async function gatewayRequest(request: Request, env: Env): Promise<Response> {
     const channel = String(body.channel_id ?? "").trim(); const stream = String(body.stream_id ?? "").trim();
     if (!channel || !validId(stream)) return json({ error: "invalid_session_request" }, 400);
     const session = crypto.randomUUID(); const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
-    const saved = await env.SESSION_STORE.get(env.SESSION_STORE.idFromName(session)).fetch(new Request("https://session/store", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ session, stream, exp, channel }) }));
+    const saved = await env.SESSION_STORE.get(env.SESSION_STORE.idFromName(session)).fetch(new Request("https://session/store", { method: "POST", body: JSON.stringify({ session, stream, exp, channel }) }));
     if (!saved.ok) return json({ error: "session_store_failed" }, 503);
     return json({ session, expires_in: SESSION_TTL_SECONDS, playlist: `/stream/${session}/index.m3u8`, ticket: await gatewayTicket(env.GATEWAY_CAPABILITY_KEY, session, stream, exp) });
   }
@@ -52,8 +51,7 @@ async function gatewayStream(request: Request, env: Env, ctx: ExecutionContext):
   if (!/^[0-9a-f-]{36}$/i.test(session) || !supplied) return json({ error: "unauthorized" }, 401);
   const verified = await env.SESSION_STORE.get(env.SESSION_STORE.idFromName(session)).fetch(new Request(`https://session/verify?ticket=${encodeURIComponent(supplied)}`));
   if (!verified.ok) return json({ error: "invalid_or_expired_session" }, 401);
-  const state = await verified.json() as { stream: string; exp: number };
-  const ttl = state.exp - Math.floor(Date.now() / 1000); if (ttl <= 0) return json({ error: "expired_session" }, 401);
+  const state = await verified.json() as { stream: string; exp: number }; const ttl = state.exp - Math.floor(Date.now() / 1000); if (ttl <= 0) return json({ error: "expired_session" }, 401);
   const ticket = await relayTicket(env.RELAY_SIGNING_SECRET, state.stream, Math.min(60, ttl));
   const relay = new URL(request.url); relay.pathname = "/v1/relay"; relay.search = new URLSearchParams({ id: state.stream, ticket, path: "/live.m3u8" }).toString();
   return relayWorker.fetch(new Request(relay.toString(), { method: "GET", headers: request.headers }), env, ctx);
