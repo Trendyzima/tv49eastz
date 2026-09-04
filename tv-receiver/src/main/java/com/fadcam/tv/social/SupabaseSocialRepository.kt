@@ -36,7 +36,10 @@ class SupabaseSocialRepository(context: Context) {
             if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
             try {
                 val obj = gson.fromJson(result.value, JsonObject::class.java)
-                val session = SocialSession(obj.get("access_token")?.asString ?: error("Missing access_token"), obj.get("refresh_token")?.asString, obj.getAsJsonObject("user")?.get("id")?.asString)
+                val token = obj.get("access_token")?.asString ?: error("Missing access_token")
+                val refresh = obj.get("refresh_token")?.asString
+                val userId = obj.getAsJsonObject("user")?.get("id")?.asString
+                val session = SocialSession(token, refresh, userId)
                 saveSession(session)
                 callback.onComplete(SocialResult(value = session))
             } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
@@ -62,7 +65,9 @@ class SupabaseSocialRepository(context: Context) {
         }
     }
 
-    fun signUp(email: String, password: String, callback: ResultCallback<SocialSession>) = signUp(email, password, "user_${UUID.randomUUID().toString().replace("-", "").take(10)}", "", callback)
+    fun signUp(email: String, password: String, callback: ResultCallback<SocialSession>) =
+        signUp(email, password, "user_${UUID.randomUUID().toString().replace("-", "").take(10)}", "", callback)
+
     fun signOut() = prefs.edit().clear().apply()
 
     fun loadProfile(callback: ResultCallback<SocialUser?>) {
@@ -81,7 +86,7 @@ class SupabaseSocialRepository(context: Context) {
         val token = currentAccessToken() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
         val id = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Session user id missing; sign in again")))
         if (!username.matches(Regex("[A-Za-z0-9_]{3,32}"))) return callback.onComplete(SocialResult(error = IllegalArgumentException("Invalid username")))
-        val payload = mutableMapOf<String, Any>("username" to username, "display_name" to displayName.trim(), "bio" to bio.trim())
+        val payload = mutableMapOf<String, Any>("username" to username.trim(), "display_name" to displayName.trim(), "bio" to bio.trim())
         if (avatarUrl != null) payload["avatar_url"] = avatarUrl
         request("/rest/v1/profiles?id=eq.$id&select=id,username,display_name,avatar_url,bio", "PATCH", gson.toJson(payload), token, "return=representation") { result ->
             if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
@@ -92,7 +97,8 @@ class SupabaseSocialRepository(context: Context) {
         }
     }
 
-    fun publicMediaUrl(kind: String, userId: String, filename: String): String = BuildConfig.SUPABASE_URL.trimEnd('/') + "/storage/v1/object/public/tv49-profile-media/$kind/$userId/$filename"
+    fun publicMediaUrl(kind: String, userId: String, filename: String): String =
+        BuildConfig.SUPABASE_URL.trimEnd('/') + "/storage/v1/object/public/tv49-profile-media/$kind/$userId/$filename"
 
     fun loadFeed(limit: Int = 30, callback: ResultCallback<List<SocialPost>>) {
         if (!configured) return callback.onComplete(SocialResult(value = emptyList()))
@@ -126,7 +132,10 @@ class SupabaseSocialRepository(context: Context) {
     }
 
     private fun request(path: String, method: String, body: String?, bearer: String?, prefer: String? = null, callback: (SocialResult<String>) -> Unit) {
-        val builder = Request.Builder().url(BuildConfig.SUPABASE_URL.trimEnd('/') + path).header("apikey", BuildConfig.SUPABASE_ANON_KEY).header("Accept", "application/json")
+        val builder = Request.Builder()
+            .url(BuildConfig.SUPABASE_URL.trimEnd('/') + path)
+            .header("apikey", BuildConfig.SUPABASE_ANON_KEY)
+            .header("Accept", "application/json")
         bearer?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
         prefer?.let { builder.header("Prefer", it) }
         builder.method(method, body?.toRequestBody(json))
@@ -135,16 +144,44 @@ class SupabaseSocialRepository(context: Context) {
             override fun onResponse(call: Call, response: okhttp3.Response) {
                 response.use {
                     val text = it.body?.string().orEmpty()
-                    if (!it.isSuccessful) callback(SocialResult(error = IOException("Supabase ${it.code}: ${text.take(300)}"))) else callback(SocialResult(value = text))
+                    if (!it.isSuccessful) callback(SocialResult(error = IOException("Supabase ${it.code}: ${text.take(300)}")))
+                    else callback(SocialResult(value = text))
                 }
             }
         })
     }
 
-    private data class RemoteProfile(val id: String = "", val username: String = "", val display_name: String = "", val avatar_url: String? = null, val bio: String? = null) {
+    private data class RemoteProfile(
+        val id: String = "",
+        val username: String = "",
+        val display_name: String = "",
+        val avatar_url: String? = null,
+        val bio: String? = null
+    ) {
         fun toModel() = SocialUser(id, username, display_name, avatar_url, bio)
     }
-    private data class RemotePost(val id: String = "", val body: String = "", val media_url: String? = null, val media_type: String? = null, val created_at: String = "", val like_count: Int = 0, val reply_count: Int = 0, val repost_count: Int = 0, val author: RemoteProfile? = null) {
-        fun toModel() = SocialPost(id, author?.toModel() ?: SocialUser(), body, media_url, media_type, created_at, like_count, reply_count, repost_count)
+
+    private data class RemotePost(
+        val id: String = "",
+        val body: String = "",
+        val media_url: String? = null,
+        val media_type: String? = null,
+        val created_at: String = "",
+        val like_count: Int = 0,
+        val reply_count: Int = 0,
+        val repost_count: Int = 0,
+        val author: RemoteProfile? = null
+    ) {
+        fun toModel() = SocialPost(
+            id = id,
+            author = author?.toModel() ?: SocialUser("", "", ""),
+            body = body,
+            mediaUrl = media_url,
+            mediaType = media_type,
+            createdAt = created_at,
+            likeCount = like_count,
+            replyCount = reply_count,
+            repostCount = repost_count
+        )
     }
 }
