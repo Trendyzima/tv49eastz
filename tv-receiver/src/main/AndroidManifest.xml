@@ -7,34 +7,24 @@
         <activity android:name="com.fadcam.tv.HomeActivity" android:exported="true" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize">
             <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /><category android:name="android.intent.category.LEANBACK_LAUNCHER" /></intent-filter>
         </activity>
+        <activity android:name="com.fadcam.tv.FootballActivity" android:exported="false" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" />
         <activity android:name="com.fadcam.tv.SocialActivity" android:exported="true" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize">
             <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="testagram.site" />
-                <data android:scheme="http" android:host="testagram.site" />
+                <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="testagram.site" /><data android:scheme="http" android:host="testagram.site" />
             </intent-filter>
             <intent-filter android:autoVerify="true">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="https" android:host="www.testagram.site" />
-                <data android:scheme="http" android:host="www.testagram.site" />
+                <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="www.testagram.site" /><data android:scheme="http" android:host="www.testagram.site" />
             </intent-filter>
         </activity>
         <activity android:name="com.fadcam.tv.WalletActivity" android:exported="true" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="tv49" android:host="wallet" />
-            </intent-filter>
+            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="tv49" android:host="wallet" /></intent-filter>
         </activity>
         <activity android:name="com.fadcam.tv.AiAssistantActivity" android:exported="false" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" />
-        <activity android:name="com.fadcam.tv.TvReelsActivityHardened" android:exported="false" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" />
-        <activity android:name="com.fadcam.tv.FadCamDirectStreamActivity" android:exported="false" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize" />
-        <activity android:name="com.fadcam.tv.TvReelsActivity" android:exported="true" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" android:windowSoftInputMode="adjustResize">
-            <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><category android:name="android.intent.category.BROWSABLE" /><data android:scheme="tv49east" android:host="channel" /></intent-filter>
-        </activity>
+        <activity android:name="com.fadcam.tv.TvReelsActivityHardened" android:exported="false" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" />
+        <activity android:name="com.fadcam.tv.FadCamDirectStreamActivity" android:exported="false" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" />
+        <activity android:name="com.fadcam.tv.TvReelsActivity" android:exported="true" android:theme="@style/Theme.TV49East.Platform" android:screenOrientation="unspecified" android:resizeableActivity="true" />
         <activity android:name="com.fadcam.tv.MainActivity" android:exported="false" android:theme="@style/Theme.TV49East" />
         <activity android:name="com.fadcam.tv.FadCamHandoffActivity" android:exported="true" android:intentMatchingFlags="enforceIntentFilter" android:permission="com.tv49.com.permission.PUBLISH_FADCAM" android:theme="@style/Theme.TV49East.Platform">
             <intent-filter><action android:name="android.intent.action.VIEW" /><category android:name="android.intent.category.DEFAULT" /><data android:scheme="fadcam" android:host="stream" /></intent-filter>
