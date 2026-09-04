@@ -1,0 +1,18 @@
+project_id = "tv49east"
+
+[api]
+enabled = true
+
+[db]
+major_version = 17
+
+[studio]
+enabled = true
+
+[auth]
+enabled = true
+site_url = "tv49://auth"
+additional_redirect_urls = ["tv49://auth"]
+
+[auth.email]
+enabled = true
