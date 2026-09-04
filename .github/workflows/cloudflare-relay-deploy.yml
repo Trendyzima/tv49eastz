@@ -45,8 +45,6 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
-      # Guard against accidentally deploying a historical Wrangler config that
-      # omits already-applied Durable Object migrations.
       - name: Validate canonical Durable Object migration history
         run: |
           set -euo pipefail
@@ -58,9 +56,6 @@ jobs:
           grep -q '"name": "RELAY_TUNNEL"' wrangler.jsonc
           echo 'Canonical Durable Object configuration validated.'
 
-      # Runtime secrets are managed in Cloudflare. Do not mirror them through
-      # GitHub Actions: an absent/renamed GitHub secret would otherwise abort
-      # deployment or overwrite a valid Cloudflare secret with an empty value.
       - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v4
@@ -70,22 +65,31 @@ jobs:
           workingDirectory: cloudflare-relay
           command: deploy --containers-rollout=immediate
 
-      - name: Verify deployed Worker
+      - name: Verify production security and routing
         env:
           CF_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
           [[ -n "$CF_URL" ]] || { echo 'Wrangler did not return a deployment URL'; exit 1; }
           echo "Deployed URL: $CF_URL"
-          body="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
-          echo "$body"
-          grep -q '"ok":true' <<<"$body"
 
-      - name: Verify unauthenticated session rejection
-        env:
-          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
-        run: |
-          set -euo pipefail
+          health="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
+          echo "$health"
+          grep -q '"ok":true' <<<"$health"
+
           code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/session")"
-          [[ "$code" == 401 ]] || { echo "Expected 401, got $code"; exit 1; }
-          echo 'Unauthenticated session rejection passed.'
+          [[ "$code" == 401 ]] || { echo "Expected /v1/session unauthenticated=401, got $code"; exit 1; }
+
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/device/session")"
+          [[ "$code" == 401 ]] || { echo "Expected /v1/device/session unauthenticated=401, got $code"; exit 1; }
+
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/media")"
+          [[ "$code" == 401 ]] || { echo "Expected /v1/media unauthenticated=401, got $code"; exit 1; }
+
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/not-a-session/index.m3u8")"
+          [[ "$code" == 401 ]] || { echo "Expected protected stream=401, got $code"; exit 1; }
+
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/tunnel?stream=smoke-test&ticket=invalid")"
+          [[ "$code" == 401 ]] || { echo "Expected invalid tunnel ticket=401, got $code"; exit 1; }
+
+          echo 'Production security/routing smoke tests passed.'
