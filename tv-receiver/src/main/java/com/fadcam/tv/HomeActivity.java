@@ -11,7 +11,7 @@ import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 
-/** Crash-isolation launcher for the TV 49 East receiver. */
+/** Native TV 49 East launcher. Keeps Live TV and Social as separate first-class modes. */
 public final class HomeActivity extends Activity {
     private static final int BG = Color.rgb(9, 9, 12);
     private static final int CARD = Color.rgb(25, 23, 31);
@@ -37,6 +37,18 @@ public final class HomeActivity extends Activity {
         return t;
     }
 
+    private Button action(String title, View.OnClickListener listener) {
+        Button b = new Button(this);
+        b.setText(title);
+        b.setTextSize(13);
+        b.setTextColor(TEXT);
+        b.setAllCaps(false);
+        b.setOnClickListener(listener);
+        b.setFocusable(true);
+        b.setClickable(true);
+        return b;
+    }
+
     private void buildHome() {
         FrameLayout root = new FrameLayout(this);
         root.setBackgroundColor(BG);
@@ -51,7 +63,7 @@ public final class HomeActivity extends Activity {
         TextView title = label("TV 49 East", 30, TEXT, true);
         title.setGravity(Gravity.CENTER);
         content.addView(title, new LinearLayout.LayoutParams(-1, dp(48)));
-        TextView subtitle = label("FadCam creator streams • authorized relays", 14, MUTED, false);
+        TextView subtitle = label("Television + native social", 14, MUTED, false);
         subtitle.setGravity(Gravity.CENTER);
         content.addView(subtitle, new LinearLayout.LayoutParams(-1, dp(40)));
 
@@ -64,24 +76,26 @@ public final class HomeActivity extends Activity {
         cp.topMargin = dp(28);
         content.addView(card, cp);
 
-        TextView ready = label("FADCAM RECEIVER READY", 13, ACCENT, true);
+        TextView ready = label("CHOOSE A MODE", 13, ACCENT, true);
         ready.setGravity(Gravity.CENTER);
         card.addView(ready, new LinearLayout.LayoutParams(-1, dp(30)));
-        TextView detail = label("The receiver surface is dedicated to authorized FadCam-originated streams.", 13, MUTED, false);
+
+        TextView detail = label("Both modes are implemented natively. Social never embeds or depends on the XClone web application.", 13, MUTED, false);
         detail.setGravity(Gravity.CENTER);
         detail.setPadding(0, dp(6), 0, dp(16));
         card.addView(detail, new LinearLayout.LayoutParams(-1, -2));
 
-        Button open = new Button(this);
-        open.setText("OPEN FADCAM RECEIVER");
-        open.setTextColor(Color.BLACK);
-        open.setTextSize(14);
-        open.setAllCaps(false);
-        open.setBackgroundColor(ACCENT);
-        open.setOnClickListener(v -> openReceiver());
-        card.addView(open, new LinearLayout.LayoutParams(-1, dp(52)));
+        Button live = action("OPEN LIVE TV / FADCAM", v -> openReceiver());
+        live.setBackgroundColor(ACCENT);
+        live.setTextColor(Color.BLACK);
+        card.addView(live, new LinearLayout.LayoutParams(-1, dp(52)));
 
-        TextView footer = label("Clean device-adaptive viewport • IPTV catalog not included", 11, MUTED, false);
+        Button social = action("OPEN SOCIAL", v -> openSocial());
+        LinearLayout.LayoutParams sp = new LinearLayout.LayoutParams(-1, dp(52));
+        sp.topMargin = dp(10);
+        card.addView(social, sp);
+
+        TextView footer = label("Touch + D-pad ready • authorized stream boundary preserved", 11, MUTED, false);
         footer.setGravity(Gravity.CENTER);
         LinearLayout.LayoutParams fp = new LinearLayout.LayoutParams(-1, -2);
         fp.topMargin = dp(28);
@@ -91,8 +105,12 @@ public final class HomeActivity extends Activity {
     }
 
     private void openReceiver() {
-        try {
-            startActivity(new android.content.Intent(this, MainActivity.class));
-        } catch (Throwable ignored) { }
+        try { startActivity(new android.content.Intent(this, MainActivity.class)); }
+        catch (Throwable ignored) { }
+    }
+
+    private void openSocial() {
+        try { startActivity(new android.content.Intent(this, SocialActivity.class)); }
+        catch (Throwable ignored) { }
     }
 }
