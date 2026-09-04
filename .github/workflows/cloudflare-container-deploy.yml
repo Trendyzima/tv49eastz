@@ -96,7 +96,41 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/stream-gateway ./
           file /tmp/stream-gateway
 
-      - name: Deploy Worker and build Container through Wrangler
+      - name: Build and push Cloudflare Container image
+        id: image
+        working-directory: cloudflare-relay
+        shell: bash
+        env:
+          CF_ACCOUNT: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          set -euo pipefail
+          IMAGE_TAG="tv49eastz-stream-gateway:${GITHUB_SHA}"
+          echo "Building and pushing ${IMAGE_TAG}"
+          npx --yes wrangler@latest containers build -p -t "$IMAGE_TAG" ../stream-gateway
+          IMAGE_REF="registry.cloudflare.com/${CF_ACCOUNT}/tv49eastz-stream-gateway:${GITHUB_SHA}"
+          echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "Published image: $IMAGE_REF"
+
+      - name: Pin deployed Worker to published image
+        working-directory: cloudflare-relay
+        env:
+          IMAGE_REF: ${{ steps.image.outputs.IMAGE_REF }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require('fs');
+          const path = 'wrangler.jsonc';
+          const image = process.env.IMAGE_REF;
+          if (!image) throw new Error('IMAGE_REF is empty');
+          const text = fs.readFileSync(path, 'utf8');
+          const updated = text.replace(/("image"\s*:\s*)"[^"]+"/, `$1"${image}"`);
+          if (updated === text) throw new Error('Container image entry not found');
+          fs.writeFileSync(path, updated);
+          NODE
+          grep -n '"image"' wrangler.jsonc
+
+      - name: Deploy Worker with published Container
         id: initial_deploy
         uses: cloudflare/wrangler-action@v4
         with:
