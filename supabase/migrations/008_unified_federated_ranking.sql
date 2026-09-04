@@ -2,6 +2,7 @@
 -- Ranking is X-style (candidate generation -> filtering -> scoring -> diversity -> pagination),
 -- not a copy of any proprietary implementation.
 -- Remote actions use ActivityPub Follow/Like/Announce/Undo semantics and signed delivery.
+-- Feed clients consume this RPC so local and federated candidates share one ranking surface.
 
 alter table public.federated_activities add column if not exists direction text not null default 'inbound' check(direction in ('inbound','outbound'));
 alter table public.federated_activities add column if not exists local_user_id uuid references public.profiles(id) on delete set null;
@@ -45,8 +46,7 @@ create policy federated_feed_events_own on public.federated_feed_events for inse
 
 create or replace function public.record_federated_feed_event(p_object_uri text,p_event_type text,p_dwell_ms bigint default 0)
 returns uuid language plpgsql security definer set search_path=public as $$ declare v_id uuid; begin
-  if auth.uid() is null then raise exception 'unauthorized'; end if;
-  if not exists(select 1 from public.federated_objects where uri=p_object_uri) then raise exception 'object_not_found'; end if;
+  if auth.uid() is null then raise exception 'unauthorized'; end if; if not exists(select 1 from public.federated_objects where uri=p_object_uri) then raise exception 'object_not_found'; end if;
   insert into public.federated_feed_events(user_id,object_uri,event_type,dwell_ms) values(auth.uid(),p_object_uri,p_event_type,greatest(coalesce(p_dwell_ms,0),0)) returning id into v_id; return v_id;
 end; $$;
 revoke all on function public.record_federated_feed_event(text,text,bigint) from public;
