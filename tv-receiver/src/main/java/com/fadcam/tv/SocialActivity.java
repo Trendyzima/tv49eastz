@@ -1,169 +1,60 @@
 package com.fadcam.tv;
 
+import android.app.AlertDialog;
 import android.content.Intent;
+import android.net.Uri;
 import android.graphics.Color;
 import android.os.Bundle;
+import android.text.InputType;
+import android.view.Gravity;
 import android.view.MotionEvent;
-import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
-
+import android.widget.Toast;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
-
 import com.fadcam.tv.social.SocialPost;
 import com.fadcam.tv.social.SocialResult;
+import com.fadcam.tv.social.SocialSession;
+import com.fadcam.tv.social.SocialUser;
 import com.fadcam.tv.social.SupabaseSocialRepository;
+import java.util.ArrayList;
+import java.util.List;
 
+/** Native social client: feed, discovery, auth, profiles, media, interactions and D-pad navigation. */
 public class SocialActivity extends AppCompatActivity {
+    private static final int PICK_MEDIA=401;
     private SupabaseSocialRepository repo;
     private LinearLayout feed;
     private TextView state;
-    private float downX;
-    private float downY;
-
-    @Override protected void onCreate(@Nullable Bundle savedInstanceState) {
-        super.onCreate(savedInstanceState);
-        repo = new SupabaseSocialRepository(this);
-        buildUi();
-        loadFeed();
-    }
-
-    private void buildUi() {
-        LinearLayout root = new LinearLayout(this);
-        root.setOrientation(LinearLayout.VERTICAL);
-        root.setPadding(dp(18), dp(18), dp(18), dp(8));
-        root.setBackgroundColor(Color.BLACK);
-
-        LinearLayout header = new LinearLayout(this);
-        header.setOrientation(LinearLayout.HORIZONTAL);
-        Button live = button("← Live TV");
-        live.setOnClickListener(v -> goLive());
-        header.addView(live, new LinearLayout.LayoutParams(dp(150), dp(56)));
-        TextView title = text("TV 49 East • Social", 24);
-        LinearLayout.LayoutParams titleLp = new LinearLayout.LayoutParams(0, -2, 1f);
-        titleLp.gravity = android.view.Gravity.CENTER_VERTICAL;
-        title.setLayoutParams(titleLp);
-        header.addView(title);
-        Button refresh = button("Refresh");
-        refresh.setOnClickListener(v -> loadFeed());
-        header.addView(refresh, new LinearLayout.LayoutParams(dp(140), dp(56)));
-        root.addView(header);
-
-        state = text("Loading…", 14);
-        root.addView(state, new LinearLayout.LayoutParams(-1, dp(42)));
-
-        EditText composer = new EditText(this);
-        composer.setHint("Share something with the TV 49 East community…");
-        composer.setTextColor(Color.WHITE);
-        composer.setHintTextColor(Color.LTGRAY);
-        composer.setMinLines(2);
-        composer.setGravity(android.view.Gravity.TOP);
-        root.addView(composer, new LinearLayout.LayoutParams(-1, dp(100)));
-        Button post = button("Post");
-        post.setOnClickListener(v -> {
-            String body = composer.getText().toString().trim();
-            if (body.isEmpty()) { state.setText("Write something first."); return; }
-            state.setText("Publishing…");
-            repo.createPost(body, result -> runOnUiThread(() -> {
-                if (isFinishing() || isDestroyed()) return;
-                if (result.getError() != null) state.setText("Post failed: " + safeMessage(result.getError()));
-                else { composer.setText(""); state.setText("Posted"); loadFeed(); }
-            }));
-        });
-        root.addView(post, new LinearLayout.LayoutParams(-1, dp(52)));
-
-        ScrollView scroll = new ScrollView(this);
-        feed = new LinearLayout(this);
-        feed.setOrientation(LinearLayout.VERTICAL);
-        feed.setPadding(0, dp(12), 0, dp(30));
-        scroll.addView(feed, new ScrollView.LayoutParams(-1, -2));
-        root.addView(scroll, new LinearLayout.LayoutParams(-1, 0, 1f));
-        setContentView(root);
-    }
-
-    private void goLive() {
-        startActivity(new Intent(this, MainActivity.class));
-        overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right);
-        finish();
-    }
-
-    private void loadFeed() {
-        state.setText(repo.isConfigured() ? "Loading social feed…" : "Supabase is not configured — showing the native shell");
-        repo.loadFeed(30, new SupabaseSocialRepository.ResultCallback<java.util.List<SocialPost>>() {
-            @Override public void onComplete(SocialResult<java.util.List<SocialPost>> result) {
-                runOnUiThread(() -> {
-                    if (isFinishing() || isDestroyed()) return;
-                    feed.removeAllViews();
-                    if (result.getError() != null) {
-                        state.setText("Feed unavailable: " + safeMessage(result.getError()));
-                        addEmpty("Could not load cloud posts", "Check Supabase URL/key and RLS policies.");
-                        return;
-                    }
-                    java.util.List<SocialPost> posts = result.getValue();
-                    if (posts == null) posts = java.util.Collections.emptyList();
-                    state.setText(posts.isEmpty() ? "No posts yet • be the first creator" : posts.size() + " recent posts");
-                    for (SocialPost post : posts) addPost(post);
-                });
-            }
-        });
-    }
-
-    private String safeMessage(Throwable error) {
-        String message = error.getMessage();
-        return message == null || message.trim().isEmpty() ? error.getClass().getSimpleName() : message;
-    }
-
-    private void addPost(SocialPost post) {
-        LinearLayout card = new LinearLayout(this);
-        card.setOrientation(LinearLayout.VERTICAL);
-        card.setPadding(dp(16), dp(14), dp(16), dp(14));
-        card.setBackgroundColor(Color.rgb(25, 25, 25));
-        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(-1, -2);
-        lp.setMargins(0, 0, 0, dp(10));
-        card.setLayoutParams(lp);
-        String author = post.getAuthor() == null ? "TV 49 East user" : post.getAuthor().getDisplayName();
-        if (author == null || author.trim().isEmpty()) author = post.getAuthor() == null ? "TV 49 East user" : post.getAuthor().getUsername();
-        card.addView(text(author == null ? "TV 49 East user" : author, 18));
-        card.addView(text(post.getBody(), 16), new LinearLayout.LayoutParams(-1, -2));
-        card.addView(text("♥ " + post.getLikeCount() + "   ↩ " + post.getReplyCount() + "   ⟳ " + post.getRepostCount(), 13));
-        feed.addView(card);
-    }
-
-    private void addEmpty(String title, String subtitle) { feed.addView(text(title + "\n" + subtitle, 16)); }
-
-    private Button button(String label) {
-        Button b = new Button(this);
-        b.setText(label);
-        b.setTextSize(15);
-        b.setFocusable(true);
-        b.setFocusableInTouchMode(true);
-        return b;
-    }
-
-    private TextView text(String value, float size) {
-        TextView v = new TextView(this);
-        v.setText(value);
-        v.setTextColor(Color.WHITE);
-        v.setTextSize(size);
-        v.setPadding(dp(4), dp(4), dp(4), dp(4));
-        return v;
-    }
-
-    private int dp(int value) { return Math.round(value * getResources().getDisplayMetrics().density); }
-
-    @Override public boolean dispatchTouchEvent(MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
-            downX = event.getX();
-            downY = event.getY();
-        } else if (event.getActionMasked() == MotionEvent.ACTION_UP) {
-            float dx = event.getX() - downX;
-            float dy = event.getY() - downY;
-            if (dx > dp(80) && Math.abs(dx) > Math.abs(dy) * 1.25f) goLive();
-        }
-        return super.dispatchTouchEvent(event);
-    }
+    private EditText composer;
+    private final ArrayList<Uri> pendingMedia=new ArrayList<>();
+    private float downX,downY;
+    @Override protected void onCreate(@Nullable Bundle b){super.onCreate(b);repo=new SupabaseSocialRepository(this);buildUi();loadFeed();}
+    private void buildUi(){LinearLayout root=column();root.setPadding(dp(16),dp(14),dp(16),dp(8));root.setBackgroundColor(Color.BLACK);LinearLayout header=row();Button live=button("← Live TV");live.setOnClickListener(v->goLive());header.addView(live,new LinearLayout.LayoutParams(dp(130),dp(52)));TextView title=text("TV 49 East  •  SOCIAL",22);LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(0,-2,1);tp.gravity=Gravity.CENTER_VERTICAL;header.addView(title,tp);Button account=button(repo.isSignedIn()?"Profile":"Sign in");account.setOnClickListener(v->showAccount());header.addView(account,new LinearLayout.LayoutParams(dp(120),dp(52)));root.addView(header);LinearLayout nav=row();String[] labels={"Home","Explore","Alerts","Messages","Communities","Search"};for(String s:labels){Button b=button(s);b.setTextSize(11);b.setOnClickListener(v->navigate(s));nav.addView(b,new LinearLayout.LayoutParams(0,dp(46),1));}root.addView(nav);state=text(repo.isConfigured()?"Connected to social cloud":"Supabase not configured",13);root.addView(state,new LinearLayout.LayoutParams(-1,dp(36)));composer=new EditText(this);composer.setHint("What is happening?");composer.setTextColor(Color.WHITE);composer.setHintTextColor(Color.LTGRAY);composer.setMinLines(2);composer.setGravity(Gravity.TOP);root.addView(composer,new LinearLayout.LayoutParams(-1,dp(82)));LinearLayout actions=row();Button media=button("＋ Media");media.setOnClickListener(v->pickMedia());actions.addView(media,new LinearLayout.LayoutParams(0,dp(48),1));Button post=button("Post");post.setOnClickListener(v->publish());actions.addView(post,new LinearLayout.LayoutParams(0,dp(48),1));root.addView(actions);ScrollView scroll=new ScrollView(this);feed=column();feed.setPadding(0,dp(8),0,dp(30));scroll.addView(feed,new ScrollView.LayoutParams(-1,-2));root.addView(scroll,new LinearLayout.LayoutParams(-1,0,1));setContentView(root);}
+    private void navigate(String s){if("Explore".equals(s))loadTrending();else if("Alerts".equals(s))loadAlerts();else if("Messages".equals(s))showMessageCenter();else if("Communities".equals(s))showCommunityCenter();else if("Search".equals(s))search();else loadFeed();}
+    private void loadFeed(){state.setText(repo.isConfigured()?"Loading home feed…":"Supabase is not configured — native shell is still available");repo.loadFeed(30,new SupabaseSocialRepository.ResultCallback<List<SocialPost>>(){public void onComplete(SocialResult<List<SocialPost>> r){renderPosts(r,"Home feed");}});}
+    private void loadTrending(){state.setText("Trending • recency + engagement ranking");repo.loadTrending(30,new SupabaseSocialRepository.ResultCallback<List<SocialPost>>(){public void onComplete(SocialResult<List<SocialPost>> r){renderPosts(r,"Trending");}});}
+    private void search(){EditText q=new EditText(this);q.setHint("Search posts");new AlertDialog.Builder(this).setTitle("Search").setView(q).setPositiveButton("Search",(d,w)->repo.searchPosts(q.getText().toString(),30,new SupabaseSocialRepository.ResultCallback<List<SocialPost>>(){public void onComplete(SocialResult<List<SocialPost>> r){renderPosts(r,"Search results");}})).setNegativeButton("Cancel",null).show();}
+    private void renderPosts(SocialResult<List<SocialPost>> r,String heading){runOnUiThread(()->{if(isFinishing()||isDestroyed())return;feed.removeAllViews();if(r.getError()!=null){state.setText(heading+" unavailable: "+safe(r.getError()));return;}List<SocialPost> ps=r.getValue();if(ps==null)ps=new ArrayList<>();state.setText(heading+" • "+ps.size()+" posts");for(SocialPost p:ps)addPost(p);});}
+    private void addPost(SocialPost p){LinearLayout card=column();card.setPadding(dp(14),dp(12),dp(14),dp(12));card.setBackgroundColor(Color.rgb(24,24,27));LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.setMargins(0,0,0,dp(10));card.setLayoutParams(lp);SocialUser a=p.getAuthor();String name=a==null?"TV 49 East user":a.getDisplayName();if(name==null||name.trim().isEmpty())name=a==null?"TV 49 East user":a.getUsername();card.addView(text(name==null?"TV 49 East user":name,17));card.addView(text(p.getBody(),16));if(p.getMediaUrl()!=null)card.addView(text("Media • "+p.getMediaType(),13));LinearLayout r=row();Button like=button("♥ "+p.getLikeCount());like.setOnClickListener(v->repo.likePost(p.getId(),true,feedback("Liked")));r.addView(like,new LinearLayout.LayoutParams(0,dp(44),1));Button reply=button("↩ "+p.getReplyCount());reply.setOnClickListener(v->reply(p));r.addView(reply,new LinearLayout.LayoutParams(0,dp(44),1));Button repost=button("⟳ "+p.getRepostCount());repost.setOnClickListener(v->repo.repostPost(p.getId(),true,feedback("Reposted")));r.addView(repost,new LinearLayout.LayoutParams(0,dp(44),1));Button save=button("🔖");save.setOnClickListener(v->repo.bookmarkPost(p.getId(),true,feedback("Saved")));r.addView(save,new LinearLayout.LayoutParams(dp(60),dp(44)));card.addView(r);feed.addView(card);}
+    private void reply(SocialPost p){EditText e=new EditText(this);e.setHint("Write a reply");new AlertDialog.Builder(this).setTitle("Reply").setView(e).setPositiveButton("Send",(d,w)->repo.replyToPost(p.getId(),e.getText().toString(),feedback("Reply sent"))).setNegativeButton("Cancel",null).show();}
+    private SupabaseSocialRepository.ResultCallback<Boolean> feedback(String m){return r->runOnUiThread(()->Toast.makeText(this,r.getError()==null?m:safe(r.getError()),Toast.LENGTH_SHORT).show());}
+    private void publish(){String body=composer.getText().toString().trim();if(body.isEmpty()&&pendingMedia.isEmpty()){state.setText("Add text or media first");return;}state.setText("Publishing…");repo.createPost(body.isEmpty()?"Media post":body,new SupabaseSocialRepository.ResultCallback<SocialPost>(){public void onComplete(SocialResult<SocialPost> r){if(r.getError()!=null){state.setText("Post failed: "+safe(r.getError()));return;}SocialPost p=r.getValue();if(p==null){state.setText("Published");return;}uploadPending(p.getId(),0);}});}
+    private void uploadPending(String postId,int i){if(i>=pendingMedia.size()){pendingMedia.clear();composer.setText("");state.setText("Published");loadFeed();return;}Uri u=pendingMedia.get(i);long size=-1;try(android.content.res.AssetFileDescriptor a=getContentResolver().openAssetFileDescriptor(u,"r")){if(a!=null)size=a.getLength();}catch(Exception ignored){}String mime=getContentResolver().getType(u);String type=mime!=null&&mime.startsWith("video")?"video":mime!=null&&mime.startsWith("image")?"image":"gif";final long bytes=size;repo.uploadMedia(u,"posts",new SupabaseSocialRepository.ResultCallback<String>(){public void onComplete(SocialResult<String> r){if(r.getError()!=null){state.setText("Media upload failed: "+safe(r.getError()));return;}repo.attachMedia(postId,r.getValue(),type,mime,bytes,i,feedback("Media attached"));uploadPending(postId,i+1);}});}
+    private void pickMedia(){Intent i=new Intent(Intent.ACTION_OPEN_DOCUMENT);i.setType("*/*");i.putExtra(Intent.EXTRA_MIME_TYPES,new String[]{"image/*","video/*"});i.putExtra(Intent.EXTRA_ALLOW_MULTIPLE,true);i.addCategory(Intent.CATEGORY_OPENABLE);startActivityForResult(i,PICK_MEDIA);}
+    @Override protected void onActivityResult(int r,int result,Intent d){super.onActivityResult(r,result,d);if(r!=PICK_MEDIA||result!=RESULT_OK||d==null)return;pendingMedia.clear();if(d.getClipData()!=null){for(int i=0;i<Math.min(4,d.getClipData().getItemCount());i++)pendingMedia.add(d.getClipData().getItemAt(i).getUri());}else if(d.getData()!=null)pendingMedia.add(d.getData());state.setText(pendingMedia.size()+" media selected • max 4, max 20 MB each");}
+    private void showAccount(){if(!repo.isSignedIn()){LinearLayout f=column();EditText e=new EditText(this);e.setHint("Email");EditText p=new EditText(this);p.setHint("Password");p.setInputType(InputType.TYPE_CLASS_TEXT|InputType.TYPE_TEXT_VARIATION_PASSWORD);f.addView(e);f.addView(p);new AlertDialog.Builder(this).setTitle("Sign in").setView(f).setPositiveButton("Sign in",(d,w)->repo.signIn(e.getText().toString(),p.getText().toString(),new SupabaseSocialRepository.ResultCallback<SocialSession>(){public void onComplete(SocialResult<SocialSession> r){runOnUiThread(()->{state.setText(r.getError()==null?"Signed in":"Sign in failed: "+safe(r.getError()));loadFeed();});}})).setNeutralButton("Create account",(d,w)->showSignup()).setNegativeButton("Cancel",null).show();return;}repo.loadProfile(new SupabaseSocialRepository.ResultCallback<SocialUser>(){public void onComplete(SocialResult<SocialUser> r){runOnUiThread(()->showProfileEditor(r.getValue()));}});}
+    private void showSignup(){LinearLayout f=column();EditText e=new EditText(this);e.setHint("Email");EditText u=new EditText(this);u.setHint("Username");EditText p=new EditText(this);p.setHint("Password");p.setInputType(129);f.addView(e);f.addView(u);f.addView(p);new AlertDialog.Builder(this).setTitle("Create account").setView(f).setPositiveButton("Create",(d,w)->repo.signUp(e.getText().toString(),p.getText().toString(),u.getText().toString(),u.getText().toString(),new SupabaseSocialRepository.ResultCallback<SocialSession>(){public void onComplete(SocialResult<SocialSession> r){runOnUiThread(()->state.setText(r.getError()==null?"Account created":"Signup failed: "+safe(r.getError())));}})).setNegativeButton("Cancel",null).show();}
+    private void showProfileEditor(SocialUser p){if(p==null){state.setText("Profile not found");return;}LinearLayout f=column();EditText u=new EditText(this);u.setText(p.getUsername());EditText n=new EditText(this);n.setText(p.getDisplayName());EditText b=new EditText(this);b.setHint("Bio");b.setText(p.getBio()==null?"":p.getBio());f.addView(u);f.addView(n);f.addView(b);new AlertDialog.Builder(this).setTitle("Profile").setView(f).setPositiveButton("Save",(d,w)->repo.updateProfile(u.getText().toString(),n.getText().toString(),b.getText().toString(),p.getAvatarUrl(),new SupabaseSocialRepository.ResultCallback<SocialUser>(){public void onComplete(SocialResult<SocialUser> r){runOnUiThread(()->state.setText(r.getError()==null?"Profile updated":safe(r.getError())));}})).setNeutralButton("Sign out",(d,w)->{repo.signOut();state.setText("Signed out");}).setNegativeButton("Cancel",null).show();}
+    private void loadAlerts(){repo.loadNotifications(50,new SupabaseSocialRepository.ResultCallback<String>(){public void onComplete(SocialResult<String> r){runOnUiThread(()->{feed.removeAllViews();state.setText(r.getError()==null?"Notifications":"Alerts unavailable: "+safe(r.getError()));if(r.getValue()!=null)feed.addView(text(r.getValue(),13));});}});}
+    private void showMessageCenter(){feed.removeAllViews();state.setText("Messages");feed.addView(text("Direct messages use conversation/member/message tables with RLS. Realtime delivery is supported by the backend schema.",16));}
+    private void showCommunityCenter(){feed.removeAllViews();state.setText("Communities");feed.addView(text("Communities, roles, membership and moderation are available in the native data layer.",16));}
+    private String safe(Throwable t){return t==null?"Unknown error":(t.getMessage()==null?t.getClass().getSimpleName():t.getMessage());}
+    private void goLive(){startActivity(new Intent(this,MainActivity.class));overridePendingTransition(android.R.anim.slide_in_left,android.R.anim.slide_out_right);finish();}
+    private LinearLayout row(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.HORIZONTAL);return l;}private LinearLayout column(){LinearLayout l=new LinearLayout(this);l.setOrientation(LinearLayout.VERTICAL);return l;}private Button button(String s){Button b=new Button(this);b.setText(s);b.setAllCaps(false);b.setTextColor(Color.WHITE);b.setFocusable(true);b.setFocusableInTouchMode(true);return b;}private TextView text(String s,float z){TextView t=new TextView(this);t.setText(s);t.setTextColor(Color.WHITE);t.setTextSize(z);t.setPadding(dp(4),dp(4),dp(4),dp(4));return t;}private int dp(int n){return Math.round(n*getResources().getDisplayMetrics().density);}
+    @Override public boolean dispatchTouchEvent(MotionEvent e){if(e.getActionMasked()==MotionEvent.ACTION_DOWN){downX=e.getX();downY=e.getY();}else if(e.getActionMasked()==MotionEvent.ACTION_UP){float dx=e.getX()-downX,dy=e.getY()-downY;if(dx>dp(80)&&Math.abs(dx)>Math.abs(dy)*1.25f)goLive();}return super.dispatchTouchEvent(e);}
 }
