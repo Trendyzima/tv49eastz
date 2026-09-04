@@ -18,6 +18,7 @@ import android.widget.Toast;
 import androidx.core.content.ContextCompat;
 
 import com.fadcam.dualcam.service.DualCameraRecordingService;
+import com.fadcam.streaming.CloudRelayTunnel;
 import com.fadcam.streaming.RemoteStreamService;
 
 import java.net.HttpURLConnection;
@@ -30,7 +31,7 @@ import java.net.URL;
  *   local program video -> compositor primary/fullscreen input
  *   camera -> compositor secondary/PiP input
  *   microphone -> live commentary audio
- *   compositor -> FadCam HLS -> TV 49 East receiver
+ *   compositor -> local HLS -> Cloudflare producer tunnel -> TV 49 East viewers
  */
 public final class LiveProducerActivity extends Activity {
     public static final String EXTRA_VIDEO_URI = "producer_video_uri";
@@ -48,6 +49,7 @@ public final class LiveProducerActivity extends Activity {
     private TextView stateLabel;
     private Button startButton;
     private boolean starting;
+    private CloudRelayTunnel cloudRelayTunnel;
 
     @Override protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -61,6 +63,10 @@ public final class LiveProducerActivity extends Activity {
 
     @Override protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
+        if (cloudRelayTunnel != null) {
+            cloudRelayTunnel.stop();
+            cloudRelayTunnel = null;
+        }
         super.onDestroy();
     }
 
@@ -207,8 +213,8 @@ public final class LiveProducerActivity extends Activity {
                 .putBoolean(PREF_LIVE_INTERVIEW, true)
                 .putString(PREF_PRODUCER_VIDEO_URI, selectedVideoUri.toString())
                 .apply();
-        // Producer mode is deliberately LAN-first: the TV receiver can discover the
-        // FadCam HLS endpoint without exposing a local HTTP server to the public internet.
+        // The local HLS server remains the private producer origin for the Cloudflare tunnel.
+        // The tunnel carries the stream to the public relay; no legacy cloud segment uploader is used.
         getSharedPreferences(PREF_STREAMING_MODE, MODE_PRIVATE).edit().putInt("streaming_mode", 0).apply();
 
         try {
@@ -225,7 +231,7 @@ public final class LiveProducerActivity extends Activity {
         if (isFinishing() || isDestroyed()) return;
         int port = getSharedPreferences("FadCamPrefs", MODE_PRIVATE).getInt("stream_server_port", -1);
         if (port > 0 && probeLocalServer(port)) {
-            startDualProducerService();
+            startCloudRelayTunnel(port);
             return;
         }
         if (System.currentTimeMillis() - startedAt >= SERVER_TIMEOUT_MS) {
@@ -233,6 +239,27 @@ public final class LiveProducerActivity extends Activity {
             return;
         }
         main.postDelayed(() -> waitForStreamServer(startedAt), SERVER_POLL_MS);
+    }
+
+    private void startCloudRelayTunnel(int port) {
+        if (cloudRelayTunnel != null) cloudRelayTunnel.stop();
+        cloudRelayTunnel = new CloudRelayTunnel(this);
+        setState("Authenticating TV 49 East cloud tunnel…", true);
+        cloudRelayTunnel.start(port, new CloudRelayTunnel.Listener() {
+            @Override public void onReady() {
+                main.post(() -> {
+                    if (!starting || isFinishing() || isDestroyed()) return;
+                    startDualProducerService();
+                });
+            }
+
+            @Override public void onError(String message) {
+                main.post(() -> {
+                    if (!starting || isFinishing() || isDestroyed()) return;
+                    failStart(message);
+                });
+            }
+        });
     }
 
     private boolean probeLocalServer(int port) {
@@ -259,7 +286,7 @@ public final class LiveProducerActivity extends Activity {
             dual.putExtra("producer_video_uri", selectedVideoUri.toString());
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, dual);
             else startService(dual);
-            setState("LIVE • Video fullscreen • Camera PiP • Mic commentary", true);
+            setState("LIVE • Cloudflare tunnel connected • Video fullscreen • Camera PiP • Mic commentary", true);
             Toast.makeText(this, "TV 49 East producer is live", Toast.LENGTH_SHORT).show();
             main.postDelayed(this::finish, 350L);
         } catch (RuntimeException e) {
@@ -269,6 +296,10 @@ public final class LiveProducerActivity extends Activity {
 
     private void failStart(String message) {
         main.removeCallbacksAndMessages(null);
+        if (cloudRelayTunnel != null) {
+            cloudRelayTunnel.stop();
+            cloudRelayTunnel = null;
+        }
         try { stopService(new Intent(this, RemoteStreamService.class)); } catch (Exception ignored) { }
         SharedPreferencesManager.getInstance(this).sharedPreferences.edit()
                 .putBoolean(PREF_LIVE_INTERVIEW, false)
