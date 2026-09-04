@@ -29,14 +29,18 @@ public final class TV49ObservabilityProvider extends ContentProvider {
             metadata = info.metaData;
         } catch (Exception ignored) {}
 
-        TV49ObservabilityRuntime.INSTANCE.initialize(
+        boolean debug = (context.getApplicationInfo().flags
+                & android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE) != 0;
+
+        TV49ObservabilityRuntime.initialize(
                 context,
                 value(metadata, POSTHOG_KEY),
                 value(metadata, POSTHOG_HOST, "https://us.i.posthog.com"),
                 value(metadata, SENTRY_DSN),
                 value(metadata, CLOUDINARY_CLOUD),
                 value(metadata, CLOUDINARY_PRESET),
-                value(metadata, CLOUDINARY_FOLDER, "tv49-east"));
+                value(metadata, CLOUDINARY_FOLDER, "tv49-east"),
+                debug);
 
         return true;
     }
