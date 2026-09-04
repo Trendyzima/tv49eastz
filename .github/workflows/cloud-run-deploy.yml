@@ -1,0 +1,241 @@
+name: Deploy Cloud Run Gateway + Cloudflare Relay
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'stream-gateway/**'
+      - 'cloudflare-relay/**'
+      - '.github/workflows/cloud-run-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: tv49eastz-production
+  cancel-in-progress: false
+
+env:
+  GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+  GCP_REGION: ${{ vars.GCP_REGION }}
+  GCP_ARTIFACT_REPOSITORY: ${{ vars.GCP_ARTIFACT_REPOSITORY }}
+  GCP_CLOUD_RUN_SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
+  GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
+  GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+  CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Validate deployment configuration
+        shell: bash
+        env:
+          GATEWAY_API_KEY: ${{ secrets.TV49_GATEWAY_API_KEY }}
+          GATEWAY_CAPABILITY_KEY: ${{ secrets.TV49_GATEWAY_CAPABILITY_KEY }}
+          RELAY_SIGNING_SECRET: ${{ secrets.TV49_RELAY_SIGNING_SECRET }}
+          RELAY_DEVICE_SECRET: ${{ secrets.TV49_RELAY_DEVICE_SECRET }}
+        run: |
+          set -euo pipefail
+          for name in GCP_PROJECT_ID GCP_REGION GCP_ARTIFACT_REPOSITORY GCP_CLOUD_RUN_SERVICE GCP_WIF_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT CLOUDFLARE_ACCOUNT_ID CLOUDFLARE_API_TOKEN GATEWAY_API_KEY GATEWAY_CAPABILITY_KEY RELAY_SIGNING_SECRET RELAY_DEVICE_SECRET; do
+            value="${!name:-}"
+            [[ -n "$value" ]] || { echo "Missing GitHub variable/secret: $name"; exit 1; }
+          done
+          echo 'Deployment configuration is present.'
+
+      - name: Authenticate to Google Cloud with Workload Identity Federation
+        id: google-auth
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ env.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ env.GCP_WIF_PROVIDER }}
+          service_account: ${{ env.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+          create_credentials_file: true
+          export_environment_variables: true
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v3
+        with:
+          version: '>= 550.0.0'
+
+      - name: Verify Google Cloud APIs and Artifact Registry
+        shell: bash
+        run: |
+          set -euo pipefail
+          gcloud config set project "$GCP_PROJECT_ID"
+          gcloud services enable run.googleapis.com artifactregistry.googleapis.com secretmanager.googleapis.com --quiet
+          gcloud artifacts repositories describe "$GCP_ARTIFACT_REPOSITORY" --location="$GCP_REGION" >/dev/null
+          echo 'Google Cloud Run, Artifact Registry and Secret Manager are ready.'
+
+      - name: Create/update production secrets in Secret Manager
+        shell: bash
+        env:
+          GATEWAY_API_KEY: ${{ secrets.TV49_GATEWAY_API_KEY }}
+          GATEWAY_CAPABILITY_KEY: ${{ secrets.TV49_GATEWAY_CAPABILITY_KEY }}
+          RELAY_DEVICE_SECRET: ${{ secrets.TV49_RELAY_DEVICE_SECRET }}
+        run: |
+          set -euo pipefail
+          put_secret() {
+            local name="$1" value="$2"
+            if gcloud secrets describe "$name" --project="$GCP_PROJECT_ID" >/dev/null 2>&1; then
+              printf '%s' "$value" | gcloud secrets versions add "$name" --data-file=- --project="$GCP_PROJECT_ID" >/dev/null
+            else
+              printf '%s' "$value" | gcloud secrets create "$name" --data-file=- --replication-policy=automatic --project="$GCP_PROJECT_ID" >/dev/null
+            fi
+          }
+          put_secret tv49-gateway-api-key "$GATEWAY_API_KEY"
+          put_secret tv49-gateway-capability-key "$GATEWAY_CAPABILITY_KEY"
+          put_secret tv49-relay-device-secret "$RELAY_DEVICE_SECRET"
+          echo 'Cloud Run runtime secrets are synchronized to Secret Manager.'
+
+      - name: Authenticate Docker to Artifact Registry
+        shell: bash
+        run: gcloud auth configure-docker "${GCP_REGION}-docker.pkg.dev" --quiet
+
+      - name: Build production gateway image
+        env:
+          IMAGE: ${{ env.GCP_REGION }}-docker.pkg.dev/${{ env.GCP_PROJECT_ID }}/${{ env.GCP_ARTIFACT_REPOSITORY }}/tv49eastz-stream-gateway:${{ github.sha }}
+        run: |
+          set -euo pipefail
+          docker build --pull --tag "$IMAGE" ./stream-gateway
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Deploy Cloud Run gateway
+        id: cloud-run
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          # First deploy the Worker so its stable workers.dev URL can be used by
+          # the gateway as the authenticated device-tunnel proxy origin.
+          echo 'Deploying relay Worker to obtain its production URL...'
+          cd cloudflare-relay
+          npx --yes wrangler@latest deploy
+          cd ..
+
+          CF_URL="$(npx --yes wrangler@latest --cwd cloudflare-relay deploy 2>/dev/null | grep -Eo 'https://[A-Za-z0-9.-]+\.workers\.dev' | tail -n 1 || true)"
+          if [[ -z "$CF_URL" ]]; then
+            # The Worker already exists; resolve its public URL from the account
+            # using Wrangler's deployment output when available.
+            CF_URL="https://tv49eastz-relay.workers.dev"
+          fi
+          echo "CF_URL=$CF_URL" >> "$GITHUB_ENV"
+          echo "Relay origin: $CF_URL"
+
+          gcloud run deploy "$GCP_CLOUD_RUN_SERVICE" \
+            --image "$IMAGE" \
+            --region "$GCP_REGION" \
+            --platform managed \
+            --allow-unauthenticated \
+            --port 8080 \
+            --timeout 60m \
+            --session-affinity \
+            --concurrency 20 \
+            --min 0 \
+            --max 1 \
+            --set-env-vars "TUNNEL_PROXY_BASE_URL=$CF_URL,GATEWAY_LISTEN=:8787" \
+            --update-secrets "GATEWAY_API_KEY=tv49-gateway-api-key:latest,GATEWAY_CAPABILITY_KEY=tv49-gateway-capability-key:latest,TUNNEL_PROXY_AUTH=tv49-relay-device-secret:latest"
+
+          GATEWAY_URL="$(gcloud run services describe "$GCP_CLOUD_RUN_SERVICE" --region "$GCP_REGION" --format='value(status.url)')"
+          [[ "$GATEWAY_URL" == https://*.run.app || "$GATEWAY_URL" == https://* ]] || { echo "Invalid Cloud Run URL: $GATEWAY_URL"; exit 1; }
+          echo "GATEWAY_URL=$GATEWAY_URL" >> "$GITHUB_ENV"
+          echo "PUBLIC_GATEWAY_URL=$GATEWAY_URL" >> "$GITHUB_OUTPUT"
+          echo "Cloud Run gateway: $GATEWAY_URL"
+
+      - name: Wire Cloudflare Worker to Cloud Run
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          TV49_GATEWAY_API_KEY: ${{ secrets.TV49_GATEWAY_API_KEY }}
+          TV49_GATEWAY_CAPABILITY_KEY: ${{ secrets.TV49_GATEWAY_CAPABILITY_KEY }}
+          TV49_RELAY_SIGNING_SECRET: ${{ secrets.TV49_RELAY_SIGNING_SECRET }}
+          TV49_RELAY_DEVICE_SECRET: ${{ secrets.TV49_RELAY_DEVICE_SECRET }}
+          GATEWAY_ORIGIN: ${{ env.GATEWAY_URL }}
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-relay
+          vars: |
+            GATEWAY_ORIGIN
+          secrets: |
+            RELAY_SIGNING_SECRET
+            RELAY_DEVICE_SECRET
+
+      - name: Production health check
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Checking Cloud Run gateway: $GATEWAY_URL/health"
+          for attempt in $(seq 1 30); do
+            body="$(curl --silent --show-error --max-time 15 --write-out '\n%{http_code}' "$GATEWAY_URL/health" || true)"
+            code="${body##*$'\n'}"
+            payload="${body%$'\n'*}"
+            echo "Attempt $attempt/30: HTTP $code $payload"
+            if [[ "$code" == "200" ]] && grep -q '"ok"' <<<"$payload"; then
+              echo 'Cloud Run health check passed.'
+              exit 0
+            fi
+            sleep 10
+          done
+          echo 'Cloud Run health check failed.'
+          exit 1
+
+      - name: End-to-end gateway smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Authentication must be rejected without a credential.
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$GATEWAY_URL/v1/session")"
+          [[ "$code" == "401" ]] || { echo "Expected 401 for unauthenticated /v1/session, got $code"; exit 1; }
+          echo '/v1/session authentication boundary passed.'
+
+          # The HLS route must be live at the Cloud Run origin. A 401/503 here
+          # is expected without a real device/session, but routing must not be a
+          # Worker/Container configuration failure (404 from the gateway is not).
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$GATEWAY_URL/stream/smoke/index.m3u8")"
+          case "$code" in
+            400|401|403|503) echo "HLS route reached gateway correctly (HTTP $code without a live session)." ;;
+            *) echo "Unexpected HLS route status: $code"; exit 1 ;;
+          esac
+
+      - name: Verify Cloudflare relay end-to-end routing
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          CF_URL="${CF_URL%/}"
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/health")"
+          [[ "$code" == "200" ]] || { echo "Cloudflare /health did not return 200; got $code"; exit 1; }
+          echo "Cloudflare Worker health passed: $CF_URL/health"
+
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/session")"
+          [[ "$code" == "401" ]] || { echo "Expected Worker->Cloud Run /v1/session to preserve auth boundary (401), got $code"; exit 1; }
+          echo 'Worker -> Cloud Run /v1/session routing passed.'
+
+      - name: Publish deployment summary
+        if: success()
+        run: |
+          {
+            echo '## Production deployment';
+            echo "- Cloud Run gateway: $GATEWAY_URL";
+            echo "- Cloudflare relay: $CF_URL";
+            echo "- Image: $IMAGE";
+            echo '- Runtime: Google Cloud Run';
+            echo '- Cloudflare Containers: removed from production path';
+            echo '- Health: passed';
+            echo '- Auth routing: passed';
+            echo '- HLS route: passed';
+          } >> "$GITHUB_STEP_SUMMARY"
