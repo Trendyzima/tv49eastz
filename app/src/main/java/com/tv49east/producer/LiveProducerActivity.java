@@ -24,15 +24,7 @@ import com.fadcam.streaming.RemoteStreamService;
 import java.net.HttpURLConnection;
 import java.net.URL;
 
-/**
- * TV 49 East producer console outside the protected FadCam source boundary.
- *
- * Pipeline:
- *   local program video -> compositor primary/fullscreen input
- *   camera -> compositor secondary/PiP input
- *   microphone -> live commentary audio
- *   compositor -> local HLS -> Cloudflare producer tunnel -> TV 49 East viewers
- */
+/** TV 49 East producer console. */
 public final class LiveProducerActivity extends Activity {
     public static final String EXTRA_VIDEO_URI = "producer_video_uri";
     private static final String PREF_LIVE_INTERVIEW = "fadcam_live_interview_active";
@@ -63,10 +55,8 @@ public final class LiveProducerActivity extends Activity {
 
     @Override protected void onDestroy() {
         main.removeCallbacksAndMessages(null);
-        if (cloudRelayTunnel != null) {
-            cloudRelayTunnel.stop();
-            cloudRelayTunnel = null;
-        }
+        // The foreground RemoteStreamService owns the live process. Do not stop the
+        // WebSocket here, otherwise the normal Activity finish() would kill a live stream.
         super.onDestroy();
     }
 
@@ -133,9 +123,8 @@ public final class LiveProducerActivity extends Activity {
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("video/*");
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        try {
-            startActivityForResult(intent, REQUEST_VIDEO);
-        } catch (RuntimeException e) {
+        try { startActivityForResult(intent, REQUEST_VIDEO); }
+        catch (RuntimeException e) {
             Intent fallback = new Intent(Intent.ACTION_GET_CONTENT);
             fallback.addCategory(Intent.CATEGORY_OPENABLE);
             fallback.setType("video/*");
@@ -150,9 +139,8 @@ public final class LiveProducerActivity extends Activity {
         Uri uri = data.getData();
         try {
             int takeFlags = data.getFlags() & (Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_WRITE_URI_PERMISSION);
-            if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0 && takeFlags != 0) {
+            if ((data.getFlags() & Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION) != 0 && takeFlags != 0)
                 getContentResolver().takePersistableUriPermission(uri, takeFlags);
-            }
         } catch (SecurityException ignored) { }
         selectedVideoUri = uri;
         updateSelectionLabel();
@@ -185,10 +173,7 @@ public final class LiveProducerActivity extends Activity {
 
     private void startLiveCommentary() {
         if (selectedVideoUri == null || starting) return;
-        if (!hasCapturePermissions()) {
-            requestCapturePermissions();
-            return;
-        }
+        if (!hasCapturePermissions()) { requestCapturePermissions(); return; }
         launchProducerPipeline();
     }
 
@@ -198,9 +183,8 @@ public final class LiveProducerActivity extends Activity {
     }
 
     private void requestCapturePermissions() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M)
             requestPermissions(new String[]{Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO}, REQUEST_CAPTURE_PERMISSIONS);
-        }
     }
 
     private void launchProducerPipeline() {
@@ -213,8 +197,7 @@ public final class LiveProducerActivity extends Activity {
                 .putBoolean(PREF_LIVE_INTERVIEW, true)
                 .putString(PREF_PRODUCER_VIDEO_URI, selectedVideoUri.toString())
                 .apply();
-        // The local HLS server remains the private producer origin for the Cloudflare tunnel.
-        // The tunnel carries the stream to the public relay; no legacy cloud segment uploader is used.
+        // The local HLS server is the private producer origin. CloudRelayTunnel carries it to Cloudflare.
         getSharedPreferences(PREF_STREAMING_MODE, MODE_PRIVATE).edit().putInt("streaming_mode", 0).apply();
 
         try {
@@ -222,21 +205,15 @@ public final class LiveProducerActivity extends Activity {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) ContextCompat.startForegroundService(this, stream);
             else startService(stream);
             waitForStreamServer(System.currentTimeMillis());
-        } catch (RuntimeException e) {
-            failStart("Unable to start the TV 49 East stream service");
-        }
+        } catch (RuntimeException e) { failStart("Unable to start the TV 49 East stream service"); }
     }
 
     private void waitForStreamServer(long startedAt) {
         if (isFinishing() || isDestroyed()) return;
         int port = getSharedPreferences("FadCamPrefs", MODE_PRIVATE).getInt("stream_server_port", -1);
-        if (port > 0 && probeLocalServer(port)) {
-            startCloudRelayTunnel(port);
-            return;
-        }
+        if (port > 0 && probeLocalServer(port)) { startCloudRelayTunnel(port); return; }
         if (System.currentTimeMillis() - startedAt >= SERVER_TIMEOUT_MS) {
-            failStart("TV 49 East stream server did not become ready");
-            return;
+            failStart("TV 49 East stream server did not become ready"); return;
         }
         main.postDelayed(() -> waitForStreamServer(startedAt), SERVER_POLL_MS);
     }
@@ -247,17 +224,10 @@ public final class LiveProducerActivity extends Activity {
         setState("Authenticating TV 49 East cloud tunnel…", true);
         cloudRelayTunnel.start(port, new CloudRelayTunnel.Listener() {
             @Override public void onReady() {
-                main.post(() -> {
-                    if (!starting || isFinishing() || isDestroyed()) return;
-                    startDualProducerService();
-                });
+                main.post(() -> { if (starting && !isFinishing() && !isDestroyed()) startDualProducerService(); });
             }
-
             @Override public void onError(String message) {
-                main.post(() -> {
-                    if (!starting || isFinishing() || isDestroyed()) return;
-                    failStart(message);
-                });
+                main.post(() -> { if (starting && !isFinishing() && !isDestroyed()) failStart(message); });
             }
         });
     }
@@ -272,11 +242,8 @@ public final class LiveProducerActivity extends Activity {
             connection.setUseCaches(false);
             connection.setRequestMethod("GET");
             return connection.getResponseCode() >= 200 && connection.getResponseCode() < 500;
-        } catch (Exception ignored) {
-            return false;
-        } finally {
-            if (connection != null) connection.disconnect();
-        }
+        } catch (Exception ignored) { return false; }
+        finally { if (connection != null) connection.disconnect(); }
     }
 
     private void startDualProducerService() {
@@ -289,17 +256,12 @@ public final class LiveProducerActivity extends Activity {
             setState("LIVE • Cloudflare tunnel connected • Video fullscreen • Camera PiP • Mic commentary", true);
             Toast.makeText(this, "TV 49 East producer is live", Toast.LENGTH_SHORT).show();
             main.postDelayed(this::finish, 350L);
-        } catch (RuntimeException e) {
-            failStart("Unable to start producer camera");
-        }
+        } catch (RuntimeException e) { failStart("Unable to start producer camera"); }
     }
 
     private void failStart(String message) {
         main.removeCallbacksAndMessages(null);
-        if (cloudRelayTunnel != null) {
-            cloudRelayTunnel.stop();
-            cloudRelayTunnel = null;
-        }
+        if (cloudRelayTunnel != null) { cloudRelayTunnel.stop(); cloudRelayTunnel = null; }
         try { stopService(new Intent(this, RemoteStreamService.class)); } catch (Exception ignored) { }
         SharedPreferencesManager.getInstance(this).sharedPreferences.edit()
                 .putBoolean(PREF_LIVE_INTERVIEW, false)
