@@ -16,9 +16,6 @@ concurrency:
   cancel-in-progress: false
 
 env:
-  # Production deploys must use the canonical master Wrangler configuration,
-  # including the complete Durable Object migration history. Do not deploy
-  # historical container-era configs from older commits.
   CLOUDFLARE_DEPLOY_ARCHITECTURE: native-relay
 
 jobs:
@@ -89,33 +86,36 @@ jobs:
           code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/not-a-session/index.m3u8")"
           [[ "$code" == 401 ]] || { echo "Expected protected stream=401, got $code"; exit 1; }
 
-          # Build a real HTTP/1.1 WebSocket handshake. curl's Upgrade header
-          # alone is not a complete handshake and Cloudflare correctly returns
-          # 426 before the Worker receives the request. This socket-level check
-          # reaches the Worker ticket verifier and must return 401 for the bad
-          # device ticket.
+          # Send a complete HTTP/1.1 WebSocket handshake so Cloudflare forwards
+          # the request to the Worker. The invalid device ticket must then hit
+          # ticket validation and return 401 rather than the pre-upgrade 426.
           code="$(python3 - "$CF_URL" <<'PY'
-import base64, os, socket, ssl, sys
+import base64
+import os
+import socket
+import ssl
+import sys
 from urllib.parse import urlsplit
 
 url = urlsplit(sys.argv[1] + "/tunnel?stream=smoke-test&ticket=invalid")
-key = base64.b64encode(os.urandom(16)).decode()
+key = base64.b64encode(os.urandom(16)).decode("ascii")
 request = (
-    f"GET {url.path}?{url.query} HTTP/1.1\\r\\n"
-    f"Host: {url.netloc}\\r\\n"
-    "Connection: Upgrade\\r\\n"
-    "Upgrade: websocket\\r\\n"
-    "Sec-WebSocket-Version: 13\\r\\n"
-    f"Sec-WebSocket-Key: {key}\\r\\n"
-    "\\r\\n"
-).encode()
+    f"GET {url.path}?{url.query} HTTP/1.1\r\n"
+    f"Host: {url.netloc}\r\n"
+    "Connection: Upgrade\r\n"
+    "Upgrade: websocket\r\n"
+    "Sec-WebSocket-Version: 13\r\n"
+    f"Sec-WebSocket-Key: {key}\r\n"
+    "\r\n"
+).encode("ascii")
 
 raw = socket.create_connection((url.hostname, 443), timeout=15)
 with ssl.create_default_context().wrap_socket(raw, server_hostname=url.hostname) as sock:
     sock.sendall(request)
     data = sock.recv(4096).decode("iso-8859-1", "replace")
-    print(data.split("\\r\\n", 1)[0])
-    if not data.startswith("HTTP/1.1 401 "):
+    status = data.split("\r\n", 1)[0]
+    print(status)
+    if not status.startswith("HTTP/1.1 401 "):
         raise SystemExit(1)
 PY
 )"
