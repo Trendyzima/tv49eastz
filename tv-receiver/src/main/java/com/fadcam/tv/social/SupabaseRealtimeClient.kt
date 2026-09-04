@@ -8,12 +8,12 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
-import java.util.UUID
+import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
-/** Minimal native Supabase Realtime protocol client; no WebView or JS dependency. */
+/** Native Supabase Realtime protocol client for notifications and DMs. */
 class SupabaseRealtimeClient {
     interface Listener {
         fun onConnected() {}
@@ -27,6 +27,7 @@ class SupabaseRealtimeClient {
     private var socket: WebSocket? = null
     private var listener: Listener? = null
     private var topic = ""
+    private var userId = ""
     private var joinRef = ""
     private var heartbeat: Thread? = null
     private val seq = AtomicInteger(1)
@@ -39,14 +40,18 @@ class SupabaseRealtimeClient {
             return
         }
         this.listener = listener
+        this.userId = userId
         topic = "realtime:tv49-social-${userId.replace("-", "").take(24)}"
         joinRef = nextRef()
         running.set(true)
-        val base = BuildConfig.SUPABASE_URL.trimEnd('/')
-        val projectUrl = base.removePrefix("https://").removePrefix("http://")
-        val url = "wss://$projectUrl/realtime/v1/websocket?apikey=${enc(BuildConfig.SUPABASE_ANON_KEY)}&vsn=1.0.0"
-        val request = Request.Builder().url(url).build()
-        socket = http.newWebSocket(request, SocketListener(accessToken, conversationId))
+        val projectHost = BuildConfig.SUPABASE_URL.trimEnd('/').removePrefix("https://").removePrefix("http://")
+        val url = "wss://$projectHost/realtime/v1/websocket?apikey=${enc(BuildConfig.SUPABASE_ANON_KEY)}&vsn=1.0.0"
+        socket = http.newWebSocket(Request.Builder().url(url).build(), SocketListener(accessToken, conversationId))
+    }
+
+    fun updateAccessToken(accessToken: String) {
+        if (!running.get()) return
+        send("access_token", topic, mapOf("access_token" to accessToken), nextRef())
     }
 
     fun stop() {
@@ -56,17 +61,19 @@ class SupabaseRealtimeClient {
         socket?.close(1000, "client_stop")
         socket = null
         listener = null
+        userId = ""
+        topic = ""
     }
 
     private inner class SocketListener(private val token: String, private val conversationId: String?) : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
             val changes = mutableListOf<Map<String, String>>()
-            changes += mapOf("event" to "INSERT", "schema" to "public", "table" to "notifications", "filter" to "recipient_id=eq.${userIdFromTopic()}")
+            changes += mapOf("event" to "INSERT", "schema" to "public", "table" to "notifications", "filter" to "recipient_id=eq.$userId")
             if (!conversationId.isNullOrBlank()) {
                 changes += mapOf("event" to "INSERT", "schema" to "public", "table" to "messages", "filter" to "conversation_id=eq.$conversationId")
                 changes += mapOf("event" to "UPDATE", "schema" to "public", "table" to "messages", "filter" to "conversation_id=eq.$conversationId")
             }
-            val payload = mapOf(
+            send("phx_join", topic, mapOf(
                 "config" to mapOf(
                     "broadcast" to mapOf("ack" to false, "self" to false),
                     "presence" to mapOf("enabled" to false),
@@ -74,30 +81,32 @@ class SupabaseRealtimeClient {
                     "private" to false
                 ),
                 "access_token" to token
-            )
-            send("phx_join", topic, payload, joinRef)
-            startHeartbeat(webSocket)
+            ), joinRef)
+            startHeartbeat()
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) {
             try {
                 val o = gson.fromJson(text, JsonObject::class.java)
-                val event = o.get("event")?.asString.orEmpty()
-                when (event) {
+                when (o.get("event")?.asString.orEmpty()) {
                     "phx_reply" -> {
-                        val status = o.getAsJsonObject("payload")?.get("status")?.asString.orEmpty()
-                        if (status == "ok") listener?.onConnected() else listener?.onError("Realtime join failed: $status")
+                        val p = o.getAsJsonObject("payload")
+                        val status = p?.get("status")?.asString.orEmpty()
+                        if (status == "ok") listener?.onConnected() else listener?.onError("Realtime join failed: ${p?.get("response")?.toString() ?: status}")
                     }
                     "postgres_changes" -> {
-                        val p = o.getAsJsonObject("payload") ?: return
-                        val data = p.getAsJsonObject("data") ?: p
+                        val payload = o.getAsJsonObject("payload") ?: return
+                        val data = payload.getAsJsonObject("data") ?: return
                         val table = data.get("table")?.asString.orEmpty()
                         val change = data.get("type")?.asString ?: data.get("eventType")?.asString ?: "*"
                         listener?.onChange(table, change, data)
                     }
-                    "phx_error", "phx_close" -> listener?.onError("Realtime channel closed")
+                    "phx_error" -> listener?.onError("Realtime channel error")
+                    "phx_close" -> listener?.onClosed()
                 }
-            } catch (t: Throwable) { listener?.onError("Realtime message error: ${t.message ?: "invalid payload"}") }
+            } catch (t: Throwable) {
+                listener?.onError("Realtime message error: ${t.message ?: "invalid payload"}")
+            }
         }
 
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -112,25 +121,22 @@ class SupabaseRealtimeClient {
         }
     }
 
-    private fun startHeartbeat(ws: WebSocket) {
+    private fun startHeartbeat() {
         heartbeat?.interrupt()
         heartbeat = Thread {
             while (running.get()) {
                 try {
                     Thread.sleep(20_000L)
-                    if (!running.get()) break
-                    send("heartbeat", "phoenix", emptyMap(), nextRef())
+                    if (running.get()) send("heartbeat", "phoenix", emptyMap<String, Any>(), nextRef())
                 } catch (_: InterruptedException) { break }
             }
         }.apply { isDaemon = true; start() }
     }
 
     private fun send(event: String, channel: String, payload: Any, ref: String) {
-        val message = mapOf("topic" to channel, "event" to event, "payload" to payload, "ref" to ref, "join_ref" to joinRef)
-        socket?.send(gson.toJson(message))
+        socket?.send(gson.toJson(mapOf("topic" to channel, "event" to event, "payload" to payload, "ref" to ref, "join_ref" to joinRef)))
     }
 
     private fun nextRef(): String = seq.getAndIncrement().toString()
-    private fun userIdFromTopic(): String = topic.removePrefix("realtime:tv49-social-")
-    private fun enc(value: String): String = java.net.URLEncoder.encode(value, "UTF-8")
+    private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 }
