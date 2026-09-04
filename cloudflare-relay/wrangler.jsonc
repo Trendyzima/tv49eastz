@@ -4,29 +4,17 @@
   "main": "src/entry.ts",
   "compatibility_date": "2026-09-04",
   "workers_dev": true,
-  "vars": {
-    "GATEWAY_ORIGIN": ""
-  },
+  "vars": {},
   "durable_objects": {
     "bindings": [
-      {
-        "name": "RELAY_TUNNEL",
-        "class_name": "RelayTunnel"
-      }
+      { "name": "RELAY_TUNNEL", "class_name": "RelayTunnel" },
+      { "name": "SESSION_STORE", "class_name": "SessionStore" }
     ]
   },
   "migrations": [
-    {
-      "tag": "v1",
-      "new_sqlite_classes": ["RelayTunnel"]
-    },
-    {
-      "tag": "v2",
-      "new_sqlite_classes": ["StreamGatewayContainer"]
-    },
-    {
-      "tag": "v3-cloud-run",
-      "deleted_classes": ["StreamGatewayContainer"]
-    }
+    { "tag": "v1", "new_sqlite_classes": ["RelayTunnel"] },
+    { "tag": "v2", "new_sqlite_classes": ["StreamGatewayContainer"] },
+    { "tag": "v3-cloud-run", "deleted_classes": ["StreamGatewayContainer"] },
+    { "tag": "v4-native-gateway", "new_sqlite_classes": ["SessionStore"] }
   ]
 }
