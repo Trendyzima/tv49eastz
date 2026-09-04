@@ -1,5 +1,6 @@
 package com.fadcam.tv
 
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
@@ -15,9 +16,12 @@ import android.widget.Toast
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import com.fadcam.tv.social.SocialPost
+import com.fadcam.tv.social.SocialResult
+import com.fadcam.tv.social.SocialSession
 import com.fadcam.tv.social.SupabaseSocialRepository
+import kotlin.math.abs
 
-/** Native social screen. Swipe right anywhere to return to the Live TV screen. */
+/** Native social screen. Swipe right anywhere to return to Live TV. */
 class SocialActivity : AppCompatActivity() {
     private lateinit var repo: SupabaseSocialRepository
     private lateinit var feed: LinearLayout
@@ -40,7 +44,6 @@ class SocialActivity : AppCompatActivity() {
         loadFeed()
     }
 
-    /** Keep vertical scrolling and buttons intact while reserving horizontal gestures for mode switching. */
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
@@ -51,11 +54,9 @@ class SocialActivity : AppCompatActivity() {
                 if (!navigating) {
                     val dx = event.rawX - downX
                     val dy = event.rawY - downY
-                    if (dx > dp(80) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * 1.25f) {
+                    if (dx > dp(80) && abs(dx) > abs(dy) * 1.25f) {
                         navigating = true
-                        startActivity(android.content.Intent(this, MainActivity::class.java))
-                        overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right)
-                        finish()
+                        goLive()
                         return true
                     }
                 }
@@ -64,14 +65,14 @@ class SocialActivity : AppCompatActivity() {
         return super.dispatchTouchEvent(event)
     }
 
-    private fun dp(v: Int): Int = (v * resources.displayMetrics.density).toInt()
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun label(value: String, size: Float, color: Int, bold: Boolean = false): TextView =
         TextView(this).apply {
             text = value
             textSize = size
             setTextColor(color)
-            typeface = Typeface.DEFAULT.copy(if (bold) Typeface.BOLD else Typeface.NORMAL)
+            typeface = Typeface.create(Typeface.DEFAULT, if (bold) Typeface.BOLD else Typeface.NORMAL)
         }
 
     private fun button(value: String, listener: View.OnClickListener): Button =
@@ -101,7 +102,12 @@ class SocialActivity : AppCompatActivity() {
         root.addView(header)
 
         root.addView(label("Social", 30f, text, true), LinearLayout.LayoutParams(-1, dp(48)))
-        state = label(if (repo.isConfigured()) "Native feed • Supabase connected" else "Native feed • configure Supabase to enable cloud data", 12f, muted)
+        state = label(
+            if (repo.isConfigured()) "Native feed • Supabase connected"
+            else "Native feed • configure Supabase to enable cloud data",
+            12f,
+            muted
+        )
         root.addView(state, LinearLayout.LayoutParams(-1, dp(34)))
 
         val actions = LinearLayout(this).apply { gravity = Gravity.CENTER_VERTICAL }
@@ -110,8 +116,7 @@ class SocialActivity : AppCompatActivity() {
         actions.addView(button("REFRESH") { loadFeed() }, LinearLayout.LayoutParams(0, dp(50), 1f).apply { leftMargin = dp(8) })
         root.addView(actions, LinearLayout.LayoutParams(-1, dp(58)))
 
-        val hint = label("← Swipe right to Live TV", 11f, accent, true).apply { gravity = Gravity.CENTER }
-        root.addView(hint, LinearLayout.LayoutParams(-1, dp(30)))
+        root.addView(label("← Swipe right to Live TV", 11f, accent, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, dp(30)))
 
         val scroll = ScrollView(this).apply { isFillViewport = true }
         feed = LinearLayout(this).apply {
@@ -124,27 +129,29 @@ class SocialActivity : AppCompatActivity() {
     }
 
     private fun goLive() {
-        startActivity(android.content.Intent(this, MainActivity::class.java))
+        startActivity(Intent(this, MainActivity::class.java))
         overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right)
         finish()
     }
 
     private fun loadFeed() {
         state.text = if (repo.isConfigured()) "Loading social feed…" else "Supabase is not configured — showing the native shell"
-        repo.loadFeed { result ->
-            runOnUiThread {
-                if (isFinishing || isDestroyed) return@runOnUiThread
-                feed.removeAllViews()
-                val posts = result.value.orEmpty()
-                if (result.error != null) {
-                    state.text = "Feed unavailable: ${result.error.message?.take(110)}"
-                    addEmpty("Could not load cloud posts", "Check Supabase URL/key and RLS policies.")
-                    return@runOnUiThread
+        repo.loadFeed(object : SupabaseSocialRepository.ResultCallback<List<SocialPost>> {
+            override fun onComplete(result: SocialResult<List<SocialPost>>) {
+                runOnUiThread {
+                    if (isFinishing || isDestroyed) return@runOnUiThread
+                    feed.removeAllViews()
+                    if (result.error != null) {
+                        state.text = "Feed unavailable: ${result.error.message?.take(110)}"
+                        addEmpty("Could not load cloud posts", "Check Supabase URL/key and RLS policies.")
+                        return@runOnUiThread
+                    }
+                    val posts = result.value.orEmpty()
+                    state.text = if (posts.isEmpty()) "No posts yet • be the first creator" else "${posts.size} recent posts"
+                    posts.forEach { post -> addPost(post) }
                 }
-                state.text = if (posts.isEmpty()) "No posts yet • be the first creator" else "${posts.size} recent posts"
-                posts.forEach { addPost(it) }
             }
-        }
+        })
     }
 
     private fun addPost(post: SocialPost) {
@@ -160,7 +167,7 @@ class SocialActivity : AppCompatActivity() {
         c.addView(label(post.body, 16f, text), LinearLayout.LayoutParams(-1, -2))
         val stats = label("♥ ${post.likeCount}    ↩ ${post.replyCount}    ⟳ ${post.repostCount}", 12f, muted)
         stats.setPadding(0, dp(12), 0, 0)
-        c.addView(stats)
+        c.addView(stats, LinearLayout.LayoutParams(-1, -2))
         feed.addView(c, LinearLayout.LayoutParams(-1, -2).apply { bottomMargin = dp(10) })
     }
 
@@ -171,10 +178,8 @@ class SocialActivity : AppCompatActivity() {
             setPadding(dp(20), dp(40), dp(20), dp(40))
             setBackgroundColor(card)
         }
-        val a = label(title, 18f, text, true).apply { gravity = Gravity.CENTER }
-        val b = label(detail, 13f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }
-        c.addView(a, LinearLayout.LayoutParams(-1, -2))
-        c.addView(b, LinearLayout.LayoutParams(-1, -2))
+        c.addView(label(title, 18f, text, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
+        c.addView(label(detail, 13f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }, LinearLayout.LayoutParams(-1, -2))
         feed.addView(c, LinearLayout.LayoutParams(-1, -2))
     }
 
@@ -199,13 +204,16 @@ class SocialActivity : AppCompatActivity() {
             .setPositiveButton("POST") { _, _ ->
                 val body = input.text.toString().trim()
                 if (body.isEmpty()) return@setPositiveButton
-                repo.createPost(body) { result ->
-                    runOnUiThread {
-                        if (result.error != null) Toast.makeText(this, result.error.message ?: "Post failed", Toast.LENGTH_LONG).show()
-                        else loadFeed()
+                repo.createPost(body, object : SupabaseSocialRepository.ResultCallback<SocialPost?> {
+                    override fun onComplete(result: SocialResult<SocialPost?>) {
+                        runOnUiThread {
+                            if (result.error != null) Toast.makeText(this@SocialActivity, result.error.message ?: "Post failed", Toast.LENGTH_LONG).show()
+                            else loadFeed()
+                        }
                     }
-                }
-            }.show()
+                })
+            }
+            .show()
     }
 
     private fun showAuth() {
@@ -213,9 +221,18 @@ class SocialActivity : AppCompatActivity() {
             Toast.makeText(this, "Add -PsupabaseUrl and -PsupabaseAnonKey when building the APK", Toast.LENGTH_LONG).show()
             return
         }
-        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(22), 0, dp(22), 0) }
-        val email = EditText(this).apply { hint = "Email"; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS }
-        val password = EditText(this).apply { hint = "Password"; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD }
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), 0, dp(22), 0)
+        }
+        val email = EditText(this).apply {
+            hint = "Email"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+        }
+        val password = EditText(this).apply {
+            hint = "Password"
+            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+        }
         box.addView(email, LinearLayout.LayoutParams(-1, dp(56)))
         box.addView(password, LinearLayout.LayoutParams(-1, dp(56)))
         AlertDialog.Builder(this)
@@ -227,12 +244,16 @@ class SocialActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun authCallback(): SupabaseSocialRepository.ResultCallback<com.fadcam.tv.social.SocialSession> =
-        object : SupabaseSocialRepository.ResultCallback<com.fadcam.tv.social.SocialSession> {
-            override fun onComplete(result: com.fadcam.tv.social.SocialResult<com.fadcam.tv.social.SocialSession>) {
+    private fun authCallback(): SupabaseSocialRepository.ResultCallback<SocialSession> =
+        object : SupabaseSocialRepository.ResultCallback<SocialSession> {
+            override fun onComplete(result: SocialResult<SocialSession>) {
                 runOnUiThread {
-                    if (result.error != null) Toast.makeText(this@SocialActivity, result.error.message ?: "Authentication failed", Toast.LENGTH_LONG).show()
-                    else { Toast.makeText(this@SocialActivity, "Signed in", Toast.LENGTH_SHORT).show(); loadFeed() }
+                    if (result.error != null) {
+                        Toast.makeText(this@SocialActivity, result.error.message ?: "Authentication failed", Toast.LENGTH_LONG).show()
+                    } else {
+                        Toast.makeText(this@SocialActivity, "Signed in", Toast.LENGTH_SHORT).show()
+                        loadFeed()
+                    }
                 }
             }
         }
