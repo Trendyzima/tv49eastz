@@ -24,6 +24,7 @@ env:
   GCP_CLOUD_RUN_SERVICE: ${{ vars.GCP_CLOUD_RUN_SERVICE }}
   GCP_WIF_PROVIDER: ${{ vars.GCP_WIF_PROVIDER }}
   GCP_DEPLOYER_SERVICE_ACCOUNT: ${{ vars.GCP_DEPLOYER_SERVICE_ACCOUNT }}
+  GCP_RUNTIME_SERVICE_ACCOUNT: ${{ vars.GCP_RUNTIME_SERVICE_ACCOUNT }}
 
 jobs:
   deploy:
@@ -43,7 +44,7 @@ jobs:
           RELAY_DEVICE_SECRET: ${{ secrets.TV49_RELAY_DEVICE_SECRET }}
         run: |
           set -euo pipefail
-          for name in GCP_PROJECT_ID GCP_REGION GCP_ARTIFACT_REPOSITORY GCP_CLOUD_RUN_SERVICE GCP_WIF_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT CF_ACCOUNT CF_TOKEN GATEWAY_API_KEY GATEWAY_CAPABILITY_KEY RELAY_SIGNING_SECRET RELAY_DEVICE_SECRET; do
+          for name in GCP_PROJECT_ID GCP_REGION GCP_ARTIFACT_REPOSITORY GCP_CLOUD_RUN_SERVICE GCP_WIF_PROVIDER GCP_DEPLOYER_SERVICE_ACCOUNT GCP_RUNTIME_SERVICE_ACCOUNT CF_ACCOUNT CF_TOKEN GATEWAY_API_KEY GATEWAY_CAPABILITY_KEY RELAY_SIGNING_SECRET RELAY_DEVICE_SECRET; do
             [[ -n "${!name:-}" ]] || { echo "Missing GitHub variable/secret: $name"; exit 1; }
           done
 
@@ -128,11 +129,11 @@ jobs:
           CF_URL: ${{ steps.relay-bootstrap.outputs.deployment-url }}
         run: |
           set -euo pipefail
-          [[ -n "$CF_URL" ]] || exit 1
           gcloud run deploy "$GCP_CLOUD_RUN_SERVICE" \
             --image "$IMAGE" \
             --region "$GCP_REGION" \
             --platform managed \
+            --service-account "$GCP_RUNTIME_SERVICE_ACCOUNT" \
             --allow-unauthenticated \
             --port 8080 \
             --timeout 60m \
