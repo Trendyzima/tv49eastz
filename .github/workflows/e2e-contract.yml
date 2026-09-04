@@ -11,6 +11,7 @@ on:
       - 'stream-catalog/**'
       - 'stream-gateway/**'
       - 'origin-shield/**'
+      - 'cloudflare-relay/**'
       - 'deploy/edge/**'
       - '.github/workflows/e2e-contract.yml'
   pull_request:
@@ -22,6 +23,7 @@ on:
       - 'stream-catalog/**'
       - 'stream-gateway/**'
       - 'origin-shield/**'
+      - 'cloudflare-relay/**'
       - 'deploy/edge/**'
       - '.github/workflows/e2e-contract.yml'
   workflow_dispatch:
@@ -74,6 +76,36 @@ jobs:
       - name: Build
         run: go build -trimpath ./...
 
+  cloudflare-relay:
+    name: Cloudflare relay typecheck and contract
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cloudflare-relay
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cloudflare-relay/package.json
+      - name: Install dependencies
+        run: npm install
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Verify relay contract surface
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -q 'RELAY_TUNNEL' src/entry.ts
+          grep -q 'SESSION_STORE' src/entry.ts
+          grep -q '/v1/device/session' src/entry.ts
+          grep -q '/stream/' src/entry.ts
+          grep -q 'rewritePlaylist' src/entry.ts
+          grep -q '/tunnel' src/index.ts
+          grep -q 'request-coalescing' src/index.ts
+          echo 'Cloudflare relay contract is structurally present.'
+
   android-receiver:
     name: TV 49 East receiver build
     runs-on: ubuntu-latest
@@ -110,7 +142,7 @@ jobs:
   wiring-contract:
     name: Verify deployment wiring contract
     runs-on: ubuntu-latest
-    needs: [go-contracts, android-receiver]
+    needs: [go-contracts, cloudflare-relay, android-receiver]
     steps:
       - uses: actions/checkout@v4
       - name: Check required integration boundaries
@@ -123,6 +155,8 @@ jobs:
           test -f stream-gateway/go.mod
           test -f origin-shield/go.mod
           test -f tv-receiver/build.gradle.kts
+          test -f cloudflare-relay/package.json
+          test -f cloudflare-relay/src/entry.ts
           grep -q 'TUNNEL_PROXY_BASE_URL' deploy/edge/.env.example
           grep -q 'CREATOR_REGISTRY_FILE' deploy/edge/.env.example
           grep -q 'RELAY_SIGNING_SECRET' deploy/edge/.env.example
