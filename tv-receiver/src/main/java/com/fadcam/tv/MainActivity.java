@@ -8,6 +8,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.Gravity;
+import android.view.KeyEvent;
 import android.view.MotionEvent;
 import android.view.View;
 import android.widget.Button;
@@ -46,6 +47,8 @@ public final class MainActivity extends AppCompatActivity {
     private static final int GOOD = Color.rgb(119, 221, 119);
     private static final int ERROR = Color.rgb(244, 91, 91);
     private static final long NAV_HIDE_DELAY_MS = 3000L;
+    private static final int SWIPE_DISTANCE_DP = 80;
+    private static final float SWIPE_DOMINANCE = 1.25f;
 
     private final Handler chromeHandler = new Handler(Looper.getMainLooper());
     private final Runnable hideBottomNavRunnable = () -> {
@@ -68,6 +71,9 @@ public final class MainActivity extends AppCompatActivity {
     private boolean leftOpen;
     private boolean rightOpen;
     private boolean bottomNavHidden = true;
+    private float swipeDownX;
+    private float swipeDownY;
+    private boolean swipeNavigationStarted;
 
     @Override protected void onCreate(@Nullable Bundle state) {
         super.onCreate(state);
@@ -83,10 +89,57 @@ public final class MainActivity extends AppCompatActivity {
         refreshCatalog();
     }
 
-    /** Every real screen touch reveals the bottom navigation and restarts its 3-second timer. */
+    /** Reveals chrome and turns a clear left swipe into the Social screen without consuming normal player gestures. */
     @Override public boolean dispatchTouchEvent(MotionEvent event) {
-        if (event.getActionMasked() == MotionEvent.ACTION_DOWN) showBottomNavForInteraction();
+        switch (event.getActionMasked()) {
+            case MotionEvent.ACTION_DOWN:
+                swipeDownX = event.getRawX();
+                swipeDownY = event.getRawY();
+                swipeNavigationStarted = false;
+                showBottomNavForInteraction();
+                break;
+            case MotionEvent.ACTION_UP:
+                if (!swipeNavigationStarted) {
+                    float dx = event.getRawX() - swipeDownX;
+                    float dy = event.getRawY() - swipeDownY;
+                    if (isHorizontalSwipe(dx, dy) && dx < -dp(SWIPE_DISTANCE_DP)) {
+                        swipeNavigationStarted = true;
+                        openSocial();
+                        return true;
+                    }
+                }
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                swipeNavigationStarted = false;
+                break;
+            default:
+                break;
+        }
         return super.dispatchTouchEvent(event);
+    }
+
+    /** Android TV remotes get the same two-mode navigation as touch users. */
+    @Override public boolean onKeyDown(int keyCode, KeyEvent event) {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            openSocial();
+            return true;
+        }
+        return super.onKeyDown(keyCode, event);
+    }
+
+    private boolean isHorizontalSwipe(float dx, float dy) {
+        return Math.abs(dx) > Math.abs(dy) * SWIPE_DOMINANCE;
+    }
+
+    private void openSocial() {
+        if (isFinishing() || isDestroyed()) return;
+        try {
+            IntentLauncher.open(this, SocialActivity.class, true);
+        } catch (Throwable ignored) {
+            startActivity(new android.content.Intent(this, SocialActivity.class));
+            overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right);
+            finish();
+        }
     }
 
     @Override protected void onSaveInstanceState(@NonNull Bundle out) {
