@@ -18,45 +18,15 @@ const SUPABASE_URL = "https://vfhehknmxxedvesdvpew.supabase.co";
 const SUPABASE_PUBLISHABLE_KEY = "sb_publishable_PwOotJZQHwS9xnCFwUjHsQ_uXLNqkk9";
 
 function json(data: unknown, status = 200): Response {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: {
-      "content-type": "application/json; charset=utf-8",
-      "cache-control": "no-store",
-      "x-content-type-options": "nosniff",
-    },
-  });
+  return new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } });
 }
 function validId(value: string): boolean { return /^[A-Za-z0-9._~-]{1,128}$/.test(value); }
-function constantTimeString(a: string, b: string): boolean {
-  if (a.length !== b.length) return false;
-  let d = 0;
-  for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return d === 0;
-}
-function base64Url(bytes: Uint8Array): string {
-  let b = "";
-  for (const x of bytes) b += String.fromCharCode(x);
-  return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
-}
-async function hmac(secret: string, value: string): Promise<string> {
-  const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
-  return base64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value))));
-}
-async function gatewayTicket(secret: string, session: string, stream: string, exp: number): Promise<string> {
-  const payload = `gateway\x00${session}\x00${stream}\x00${exp}`;
-  return `${base64Url(new TextEncoder().encode(payload))}.${await hmac(secret, payload)}`;
-}
-async function relayTicket(secret: string, stream: string, ttlSeconds: number): Promise<string> {
-  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const payload = `relay\x00${stream}\x00${exp}`;
-  return `${base64Url(new TextEncoder().encode(payload))}.${await hmac(secret, payload)}`;
-}
-async function deviceTicket(secret: string, stream: string, ttlSeconds: number): Promise<string> {
-  const exp = Math.floor(Date.now() / 1000) + ttlSeconds;
-  const payload = `device\x00${stream}\x00${exp}`;
-  return `${base64Url(new TextEncoder().encode(payload))}.${await hmac(secret, payload)}`;
-}
+function constantTimeString(a: string, b: string): boolean { if (a.length !== b.length) return false; let d = 0; for (let i = 0; i < a.length; i++) d |= a.charCodeAt(i) ^ b.charCodeAt(i); return d === 0; }
+function base64Url(bytes: Uint8Array): string { let b = ""; for (const x of bytes) b += String.fromCharCode(x); return btoa(b).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, ""); }
+async function hmac(secret: string, value: string): Promise<string> { const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]); return base64Url(new Uint8Array(await crypto.subtle.sign("HMAC", key, new TextEncoder().encode(value)))); }
+async function gatewayTicket(secret: string, session: string, stream: string, exp: number): Promise<string> { const payload = `gateway\x00${session}\x00${stream}\x00${exp}`; return `${base64Url(new TextEncoder().encode(payload))}.${await hmac(secret, payload)}`; }
+async function relayTicket(secret: string, stream: string, ttlSeconds: number): Promise<string> { const exp = Math.floor(Date.now() / 1000) + ttlSeconds; const payload = `relay\x00${stream}\x00${exp}`; return `${base64Url(new TextEncoder().encode(payload))}.${await hmac(secret, payload)}`; }
+async function deviceTicket(secret: string, stream: string, ttlSeconds: number): Promise<string> { const exp = Math.floor(Date.now() / 1000) + ttlSeconds; const payload = `device\x00${stream}\x00${exp}`; return `${base64Url(new TextEncoder().encode(payload))}.${await hmac(secret, payload)}`; }
 
 async function authenticateSupabase(request: Request): Promise<{ userId: string } | null> {
   const authorization = request.headers.get("Authorization") ?? "";
@@ -64,29 +34,23 @@ async function authenticateSupabase(request: Request): Promise<{ userId: string 
   const token = authorization.slice("Bearer ".length).trim();
   if (!token || token.length > 8192) return null;
   try {
-    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, {
-      method: "GET",
-      headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_PUBLISHABLE_KEY, Accept: "application/json" },
-    });
+    const response = await fetch(`${SUPABASE_URL}/auth/v1/user`, { method: "GET", headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_PUBLISHABLE_KEY, Accept: "application/json" } });
     if (!response.ok) return null;
     const user = await response.json() as { id?: string };
     return user.id && /^[0-9a-f-]{36}$/i.test(user.id) ? { userId: user.id } : null;
-  } catch {
-    return null;
-  }
+  } catch { return null; }
 }
 
 async function createProducerSession(request: Request, env: Env): Promise<Response> {
   const identity = await authenticateSupabase(request);
   if (!identity) return json({ error: "unauthorized" }, 401);
-
   let body: { channel_id?: string; stream_id?: string; device_id?: string };
   try { body = await request.json(); } catch { return json({ error: "invalid_json" }, 400); }
-
   const stream = String(body.stream_id ?? "").trim();
   const device = String(body.device_id ?? "").trim();
   const channel = String(body.channel_id ?? stream).trim();
   if (!validId(stream) || !validId(device) || !channel) return json({ error: "invalid_device_session_request" }, 400);
+  if (stream !== device) return json({ error: "stream_device_mismatch" }, 400);
 
   const session = crypto.randomUUID();
   const exp = Math.floor(Date.now() / 1000) + SESSION_TTL_SECONDS;
@@ -95,9 +59,8 @@ async function createProducerSession(request: Request, env: Env): Promise<Respon
     body: JSON.stringify({ session, stream, exp, channel, user_id: identity.userId, device_id: device }),
   }));
   if (!saved.ok) return json({ error: "session_store_failed" }, 503);
-
   const viewerTicket = await gatewayTicket(env.GATEWAY_CAPABILITY_KEY, session, stream, exp);
-  const producerTicket = await deviceTicket(env.RELAY_DEVICE_SECRET, stream, Math.min(SESSION_TTL_SECONDS, 10 * 60));
+  const producerTicket = await deviceTicket(env.RELAY_DEVICE_SECRET, stream, SESSION_TTL_SECONDS);
   const origin = new URL(request.url).origin;
   const playlistPath = `/stream/${session}/index.m3u8?ticket=${encodeURIComponent(viewerTicket)}`;
   return json({ session, stream_id: stream, expires_in: SESSION_TTL_SECONDS, playlist: playlistPath, playlist_url: `${origin}${playlistPath}`, producer_ticket: producerTicket, user_id: identity.userId, device_id: device });
@@ -133,9 +96,7 @@ function appendTicket(uri: string, ticket: string): string {
 }
 function rewritePlaylist(text: string, ticket: string): string {
   return text.split(/\r?\n/).map((line) => {
-    if (!line || line.startsWith("#EXTM3U") || line.startsWith("#EXT-X")) {
-      return line.replace(/URI="([^"]+)"/g, (_m, uri: string) => `URI="${appendTicket(uri, ticket)}"`);
-    }
+    if (!line || line.startsWith("#EXTM3U") || line.startsWith("#EXT-X")) return line.replace(/URI="([^"]+)"/g, (_m, uri: string) => `URI="${appendTicket(uri, ticket)}"`);
     if (line.startsWith("#")) return line.replace(/URI="([^"]+)"/g, (_m, uri: string) => `URI="${appendTicket(uri, ticket)}"`);
     return appendTicket(line.trim(), ticket);
   }).join("\n");
@@ -143,48 +104,39 @@ function rewritePlaylist(text: string, ticket: string): string {
 
 async function gatewayStream(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-  const url = new URL(request.url);
-  const match = url.pathname.match(/^\/stream\/([^/]+)\/index\.m3u8$/);
+  const url = new URL(request.url); const match = url.pathname.match(/^\/stream\/([^/]+)\/index\.m3u8$/);
   if (!match) return json({ error: "not_found" }, 404);
   const session = decodeURIComponent(match[1]); const supplied = url.searchParams.get("ticket") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(session) || !supplied) return json({ error: "unauthorized" }, 401);
   const verified = await env.SESSION_STORE.get(env.SESSION_STORE.idFromName(session)).fetch(new Request(`https://session/verify?ticket=${encodeURIComponent(supplied)}`));
   if (!verified.ok) return json({ error: "invalid_or_expired_session" }, 401);
-  const state = await verified.json() as { stream: string; exp: number };
-  const ttl = state.exp - Math.floor(Date.now() / 1000); if (ttl <= 0) return json({ error: "expired_session" }, 401);
+  const state = await verified.json() as { stream: string; exp: number }; const ttl = state.exp - Math.floor(Date.now() / 1000);
+  if (ttl <= 0) return json({ error: "expired_session" }, 401);
   const relay = new URL(request.url); const ticket = await relayTicket(env.RELAY_SIGNING_SECRET, state.stream, Math.min(60, ttl));
   relay.pathname = "/v1/relay"; relay.search = new URLSearchParams({ id: state.stream, ticket, path: "/live.m3u8" }).toString();
   const upstream = await relayWorker.fetch(new Request(relay.toString(), { method: "GET", headers: request.headers }), env, ctx);
   if (!upstream.ok) return upstream;
-  const playlist = await upstream.text();
-  const rewritten = rewritePlaylist(playlist, supplied);
-  const headers = new Headers(upstream.headers);
-  headers.set("content-type", "application/vnd.apple.mpegurl; charset=utf-8");
-  headers.set("cache-control", "private, no-store");
-  headers.delete("content-length");
+  const playlist = await upstream.text(); const rewritten = rewritePlaylist(playlist, supplied);
+  const headers = new Headers(upstream.headers); headers.set("content-type", "application/vnd.apple.mpegurl; charset=utf-8"); headers.set("cache-control", "private, no-store"); headers.delete("content-length");
   return new Response(rewritten, { status: upstream.status, headers });
 }
 
 async function gatewayResource(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
   if (request.method !== "GET") return json({ error: "method_not_allowed" }, 405);
-  const url = new URL(request.url);
-  const match = url.pathname.match(/^\/stream\/([^/]+)\/(.+)$/);
+  const url = new URL(request.url); const match = url.pathname.match(/^\/stream\/([^/]+)\/(.+)$/);
   if (!match) return json({ error: "not_found" }, 404);
-  const session = decodeURIComponent(match[1]);
-  const supplied = url.searchParams.get("ticket") ?? "";
+  const session = decodeURIComponent(match[1]); const supplied = url.searchParams.get("ticket") ?? "";
   if (!/^[0-9a-f-]{36}$/i.test(session) || !supplied) return json({ error: "unauthorized" }, 401);
   const verified = await env.SESSION_STORE.get(env.SESSION_STORE.idFromName(session)).fetch(new Request(`https://session/verify?ticket=${encodeURIComponent(supplied)}`));
   if (!verified.ok) return json({ error: "invalid_or_expired_session" }, 401);
-  const state = await verified.json() as { stream: string; exp: number };
-  const ttl = state.exp - Math.floor(Date.now() / 1000); if (ttl <= 0) return json({ error: "expired_session" }, 401);
-
+  const state = await verified.json() as { stream: string; exp: number }; const ttl = state.exp - Math.floor(Date.now() / 1000);
+  if (ttl <= 0) return json({ error: "expired_session" }, 401);
   let resource = "/" + match[2].split("?")[0];
   if (resource === "/live.m3u8") return gatewayStream(request, env, ctx);
   if (/^\/seg-[0-9]+\.m4s$/.test(resource)) resource = "/hls/" + resource.slice(1, -4);
   if (!DEVICE_PATH.test(resource)) return json({ error: "path_not_allowed" }, 403);
   const ticket = await relayTicket(env.RELAY_SIGNING_SECRET, state.stream, Math.min(60, ttl));
-  const relay = new URL(request.url); relay.pathname = "/v1/relay";
-  relay.search = new URLSearchParams({ id: state.stream, ticket, path: resource }).toString();
+  const relay = new URL(request.url); relay.pathname = "/v1/relay"; relay.search = new URLSearchParams({ id: state.stream, ticket, path: resource }).toString();
   return relayWorker.fetch(new Request(relay.toString(), { method: "GET", headers: request.headers }), env, ctx);
 }
 
