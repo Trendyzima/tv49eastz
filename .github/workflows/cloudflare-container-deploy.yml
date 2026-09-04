@@ -96,46 +96,14 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/stream-gateway ./
           file /tmp/stream-gateway
 
-      - name: Resolve immutable deployment revision
-        id: revision
-        shell: bash
-        run: echo "image_tag=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push immutable Go Container image
-        working-directory: stream-gateway
-        env:
-          IMAGE_TAG: ${{ steps.revision.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-          npx --yes wrangler@latest containers build -p -t "stream-gateway:${IMAGE_TAG}" .
-
-      - name: Create CI Wrangler config with immutable image tag
-        shell: bash
-        env:
-          IMAGE_TAG: ${{ steps.revision.outputs.image_tag }}
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          import json, os
-          from pathlib import Path
-          raw = Path('cloudflare-relay/wrangler.jsonc').read_text()
-          try:
-              src = json.loads(raw)
-          except json.JSONDecodeError as exc:
-              raise SystemExit(f'wrangler.jsonc must be valid JSON for CI generation: {exc}')
-          src['containers'][0]['image'] = f"registry.cloudflare.com/{os.environ['CLOUDFLARE_ACCOUNT_ID']}/stream-gateway:{os.environ['IMAGE_TAG']}"
-          Path('cloudflare-relay/wrangler.ci.json').write_text(json.dumps(src, indent=2) + '\n')
-          PY
-          grep -Fq "registry.cloudflare.com/${CLOUDFLARE_ACCOUNT_ID}/stream-gateway:${IMAGE_TAG}" cloudflare-relay/wrangler.ci.json
-
-      - name: Deploy Worker and discover public URL
+      - name: Deploy Worker and build Container through Wrangler
         id: initial_deploy
         uses: cloudflare/wrangler-action@v4
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
-          command: deploy --config wrangler.ci.json --containers-rollout=immediate
+          command: deploy --containers-rollout=immediate
 
       - name: Bootstrap persistent Worker secrets
         working-directory: cloudflare-relay
@@ -147,7 +115,7 @@ jobs:
           [[ -n "$PUBLIC_URL" ]] || { echo 'Wrangler did not return a deployment URL.'; exit 1; }
           PUBLIC_URL="${PUBLIC_URL%/}"
           echo "Discovered Cloudflare Worker URL: $PUBLIC_URL"
-          secrets_json="$(npx --yes wrangler@latest secret list --config wrangler.ci.json)"
+          secrets_json="$(npx --yes wrangler@latest secret list)"
           ensure_secret() {
             local name="$1" value="$2"
             if printf '%s' "$secrets_json" | grep -q '"name"[[:space:]]*:[[:space:]]*"'"$name"'"'; then
@@ -155,8 +123,8 @@ jobs:
               return 0
             fi
             echo "Creating missing Worker secret: $name"
-            printf '%s' "$value" | npx --yes wrangler@latest secret put "$name" --config wrangler.ci.json
-            secrets_json="$(npx --yes wrangler@latest secret list --config wrangler.ci.json)"
+            printf '%s' "$value" | npx --yes wrangler@latest secret put "$name"
+            secrets_json="$(npx --yes wrangler@latest secret list)"
           }
           ensure_secret GATEWAY_API_KEY "$(openssl rand -hex 64)"
           ensure_secret GATEWAY_CAPABILITY_KEY "$(openssl rand -hex 64)"
@@ -171,7 +139,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
-          command: deploy --config wrangler.ci.json --containers-rollout=immediate
+          command: deploy --containers-rollout=immediate
 
       - name: Verify production deployment
         env:
