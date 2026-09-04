@@ -13,5 +13,11 @@
         { "key": "Referrer-Policy", "value": "no-referrer" }
       ]
     }
+  ],
+  "crons": [
+    {
+      "path": "/api/federation/health",
+      "schedule": "*/5 * * * *"
+    }
   ]
 }
