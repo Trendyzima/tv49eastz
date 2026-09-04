@@ -12,9 +12,10 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import java.io.IOException
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
-/** Native Supabase REST adapter. Only the public anon key is accepted; RLS remains authoritative. */
+/** Native Supabase REST adapter. The APK only receives the public anon key; RLS remains authoritative. */
 class SupabaseSocialRepository(context: Context) {
     interface ResultCallback<T> { fun onComplete(result: SocialResult<T>) }
 
@@ -26,10 +27,11 @@ class SupabaseSocialRepository(context: Context) {
 
     fun isConfigured() = configured
     fun currentAccessToken(): String? = prefs.getString("access_token", null)
+    fun currentUserId(): String? = prefs.getString("user_id", null)
 
     fun signIn(email: String, password: String, callback: ResultCallback<SocialSession>) {
         if (!configured) return callback.onComplete(SocialResult(error = IllegalStateException("Supabase is not configured")))
-        val body = gson.toJson(mapOf("email" to email, "password" to password))
+        val body = gson.toJson(mapOf("email" to email.trim(), "password" to password))
         request("/auth/v1/token?grant_type=password", "POST", body, null) { result ->
             if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
             try {
@@ -41,9 +43,12 @@ class SupabaseSocialRepository(context: Context) {
         }
     }
 
-    fun signUp(email: String, password: String, callback: ResultCallback<SocialSession>) {
+    fun signUp(email: String, password: String, username: String, displayName: String, callback: ResultCallback<SocialSession>) {
         if (!configured) return callback.onComplete(SocialResult(error = IllegalStateException("Supabase is not configured")))
-        val body = gson.toJson(mapOf("email" to email, "password" to password))
+        val cleanUsername = username.trim()
+        if (!cleanUsername.matches(Regex("[A-Za-z0-9_]{3,32}"))) return callback.onComplete(SocialResult(error = IllegalArgumentException("Username must be 3-32 letters, numbers or underscores")))
+        if (password.length < 6) return callback.onComplete(SocialResult(error = IllegalArgumentException("Password must be at least 6 characters")))
+        val body = gson.toJson(mapOf("email" to email.trim(), "password" to password, "data" to mapOf("username" to cleanUsername, "display_name" to displayName.trim())))
         request("/auth/v1/signup", "POST", body, null) { result ->
             if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
             try {
@@ -57,33 +62,60 @@ class SupabaseSocialRepository(context: Context) {
         }
     }
 
+    fun signUp(email: String, password: String, callback: ResultCallback<SocialSession>) = signUp(email, password, "user_${UUID.randomUUID().toString().replace("-", "").take(10)}", "", callback)
     fun signOut() = prefs.edit().clear().apply()
+
+    fun loadProfile(callback: ResultCallback<SocialUser?>) {
+        if (!configured) return callback.onComplete(SocialResult(value = null))
+        val id = currentUserId() ?: return callback.onComplete(SocialResult(value = null))
+        request("/rest/v1/profiles?id=eq.$id&select=id,username,display_name,avatar_url,bio", "GET", null, currentAccessToken()) { result ->
+            if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
+            try {
+                val rows: List<RemoteProfile> = gson.fromJson(result.value, object : TypeToken<List<RemoteProfile>>() {}.type) ?: emptyList()
+                callback.onComplete(SocialResult(value = rows.firstOrNull()?.toModel()))
+            } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+    }
+
+    fun updateProfile(username: String, displayName: String, bio: String, avatarUrl: String?, callback: ResultCallback<SocialUser?>) {
+        val token = currentAccessToken() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        val id = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Session user id missing; sign in again")))
+        if (!username.matches(Regex("[A-Za-z0-9_]{3,32}"))) return callback.onComplete(SocialResult(error = IllegalArgumentException("Invalid username")))
+        val payload = mutableMapOf<String, Any>("username" to username, "display_name" to displayName.trim(), "bio" to bio.trim())
+        if (avatarUrl != null) payload["avatar_url"] = avatarUrl
+        request("/rest/v1/profiles?id=eq.$id&select=id,username,display_name,avatar_url,bio", "PATCH", gson.toJson(payload), token, "return=representation") { result ->
+            if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
+            try {
+                val rows: List<RemoteProfile> = gson.fromJson(result.value, object : TypeToken<List<RemoteProfile>>() {}.type) ?: emptyList()
+                callback.onComplete(SocialResult(value = rows.firstOrNull()?.toModel()))
+            } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+    }
+
+    fun publicMediaUrl(kind: String, userId: String, filename: String): String = BuildConfig.SUPABASE_URL.trimEnd('/') + "/storage/v1/object/public/tv49-profile-media/$kind/$userId/$filename"
 
     fun loadFeed(limit: Int = 30, callback: ResultCallback<List<SocialPost>>) {
         if (!configured) return callback.onComplete(SocialResult(value = emptyList()))
-        val token = currentAccessToken()
+        val token = currentAccessToken() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
         val path = "/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)&order=created_at.desc&limit=${limit.coerceIn(1,50)}"
         request(path, "GET", null, token) { result ->
             if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
             try {
-                val type = object : TypeToken<List<RemotePost>>() {}.type
-                val rows: List<RemotePost> = gson.fromJson(result.value, type) ?: emptyList()
+                val rows: List<RemotePost> = gson.fromJson(result.value, object : TypeToken<List<RemotePost>>() {}.type) ?: emptyList()
                 callback.onComplete(SocialResult(value = rows.map { it.toModel() }))
             } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
         }
     }
 
     fun createPost(bodyText: String, callback: ResultCallback<SocialPost?>) {
-        if (!configured) return callback.onComplete(SocialResult(error = IllegalStateException("Supabase is not configured")))
         val token = currentAccessToken() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
-        val userId = prefs.getString("user_id", null) ?: return callback.onComplete(SocialResult(error = IllegalStateException("Session user id missing; sign in again")))
+        val userId = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Session user id missing; sign in again")))
         if (bodyText.trim().isEmpty()) return callback.onComplete(SocialResult(error = IllegalArgumentException("Post cannot be empty")))
         val body = gson.toJson(mapOf("author_id" to userId, "body" to bodyText.trim()))
         request("/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)", "POST", body, token, "return=representation") { result ->
             if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
             try {
-                val type = object : TypeToken<List<RemotePost>>() {}.type
-                val rows: List<RemotePost> = gson.fromJson(result.value, type) ?: emptyList()
+                val rows: List<RemotePost> = gson.fromJson(result.value, object : TypeToken<List<RemotePost>>() {}.type) ?: emptyList()
                 callback.onComplete(SocialResult(value = rows.firstOrNull()?.toModel()))
             } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
         }
@@ -109,8 +141,10 @@ class SupabaseSocialRepository(context: Context) {
         })
     }
 
-    private data class RemoteProfile(val id: String = "", val username: String = "", val display_name: String = "", val avatar_url: String? = null, val bio: String? = null)
+    private data class RemoteProfile(val id: String = "", val username: String = "", val display_name: String = "", val avatar_url: String? = null, val bio: String? = null) {
+        fun toModel() = SocialUser(id, username, display_name, avatar_url, bio)
+    }
     private data class RemotePost(val id: String = "", val body: String = "", val media_url: String? = null, val media_type: String? = null, val created_at: String = "", val like_count: Int = 0, val reply_count: Int = 0, val repost_count: Int = 0, val author: RemoteProfile? = null) {
-        fun toModel() = SocialPost(id, SocialUser(author?.id.orEmpty(), author?.username.orEmpty(), author?.display_name.orEmpty(), author?.avatar_url, author?.bio), body, media_url, media_type, created_at, like_count, reply_count, repost_count)
+        fun toModel() = SocialPost(id, author?.toModel() ?: SocialUser(), body, media_url, media_type, created_at, like_count, reply_count, repost_count)
     }
 }
