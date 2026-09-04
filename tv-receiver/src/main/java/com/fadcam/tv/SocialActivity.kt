@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
+import android.text.InputType
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
@@ -34,7 +35,7 @@ class SocialActivity : AppCompatActivity() {
     private val card = Color.rgb(27, 24, 35)
     private val card2 = Color.rgb(39, 34, 51)
     private val accent = Color.rgb(207, 186, 253)
-    private val text = Color.WHITE
+    private val textColor = Color.WHITE
     private val muted = Color.rgb(190, 184, 205)
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -79,7 +80,7 @@ class SocialActivity : AppCompatActivity() {
         Button(this).apply {
             text = value
             textSize = 13f
-            setTextColor(text)
+            setTextColor(textColor)
             isAllCaps = false
             setOnClickListener(listener)
             isFocusable = true
@@ -101,7 +102,7 @@ class SocialActivity : AppCompatActivity() {
         header.addView(button("LIVE TV") { goLive() }, LinearLayout.LayoutParams(dp(105), dp(48)))
         root.addView(header)
 
-        root.addView(label("Social", 30f, text, true), LinearLayout.LayoutParams(-1, dp(48)))
+        root.addView(label("Social", 30f, textColor, true), LinearLayout.LayoutParams(-1, dp(48)))
         state = label(
             if (repo.isConfigured()) "Native feed • Supabase connected"
             else "Native feed • configure Supabase to enable cloud data",
@@ -164,7 +165,7 @@ class SocialActivity : AppCompatActivity() {
         }
         val author = post.author.displayName.ifBlank { post.author.username.ifBlank { "TV 49 creator" } }
         c.addView(label("$author  •  @${post.author.username}", 14f, accent, true), LinearLayout.LayoutParams(-1, dp(28)))
-        c.addView(label(post.body, 16f, text), LinearLayout.LayoutParams(-1, -2))
+        c.addView(label(post.body, 16f, textColor), LinearLayout.LayoutParams(-1, -2))
         val stats = label("♥ ${post.likeCount}    ↩ ${post.replyCount}    ⟳ ${post.repostCount}", 12f, muted)
         stats.setPadding(0, dp(12), 0, 0)
         c.addView(stats, LinearLayout.LayoutParams(-1, -2))
@@ -178,7 +179,7 @@ class SocialActivity : AppCompatActivity() {
             setPadding(dp(20), dp(40), dp(20), dp(40))
             setBackgroundColor(card)
         }
-        c.addView(label(title, 18f, text, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
+        c.addView(label(title, 18f, textColor, true).apply { gravity = Gravity.CENTER }, LinearLayout.LayoutParams(-1, -2))
         c.addView(label(detail, 13f, muted).apply { gravity = Gravity.CENTER; setPadding(0, dp(8), 0, 0) }, LinearLayout.LayoutParams(-1, -2))
         feed.addView(c, LinearLayout.LayoutParams(-1, -2))
     }
@@ -190,7 +191,7 @@ class SocialActivity : AppCompatActivity() {
         }
         val input = EditText(this).apply {
             hint = "What is happening in TV 49 East?"
-            setTextColor(text)
+            setTextColor(textColor)
             setHintTextColor(muted)
             minLines = 4
             gravity = Gravity.TOP
@@ -227,11 +228,11 @@ class SocialActivity : AppCompatActivity() {
         }
         val email = EditText(this).apply {
             hint = "Email"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_EMAIL_ADDRESS
         }
         val password = EditText(this).apply {
             hint = "Password"
-            inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_PASSWORD
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PASSWORD
         }
         box.addView(email, LinearLayout.LayoutParams(-1, dp(56)))
         box.addView(password, LinearLayout.LayoutParams(-1, dp(56)))
