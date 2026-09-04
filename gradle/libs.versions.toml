@@ -35,6 +35,9 @@ tensorflowLite = "2.17.0"
 tensorflowLiteTaskVision = "0.4.4"
 opencvAndroid = "4.13.0"
 room = "2.8.4"
+cloudinaryAndroid = "3.1.2"
+posthogAndroid = "3.61.1"
+sentryAndroid = "8.54.0"
 
 [libraries]
 appintro-v631 = { module = "com.github.AppIntro:AppIntro", version.ref = "appintroVersion" }
@@ -92,6 +95,9 @@ tensorflow-lite-task-vision = { module = "org.tensorflow:tensorflow-lite-task-vi
 opencv-android = { module = "org.opencv:opencv", version.ref = "opencvAndroid" }
 room-runtime = { module = "androidx.room:room-runtime", version.ref = "room" }
 room-compiler = { module = "androidx.room:room-compiler", version.ref = "room" }
+cloudinary-android = { module = "com.cloudinary:cloudinary-android", version.ref = "cloudinaryAndroid" }
+posthog-android = { module = "com.posthog:posthog-android", version.ref = "posthogAndroid" }
+sentry-android = { module = "io.sentry:sentry-android", version.ref = "sentryAndroid" }
 
 [plugins]
 androidApplication = { id = "com.android.application", version.ref = "agp" }
