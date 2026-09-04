@@ -12,7 +12,6 @@ import android.widget.Button;
 import android.widget.FrameLayout;
 import android.widget.LinearLayout;
 import android.widget.TextView;
-import android.widget.Toast;
 
 import com.tv49.com.BuildConfig;
 
@@ -83,18 +82,22 @@ public final class Tv49ExperienceApplication extends Application {
                     while(card.getChildCount()>3) card.removeViewAt(1);
                     int count=Math.min(4,events.length());
                     for(int i=0;i<count;i++){
-                        JSONObject e=events.optJSONObject(i); if(e==null)continue; JSONObject c=e.optJSONObject("competitions")!=null?e.optJSONArray("competitions").optJSONObject(0):null; if(c==null)continue; JSONArray comps=c.optJSONArray("competitors"); if(comps==null||comps.length()<2)continue;
-                        JSONObject home=comps.optJSONObject(0), away=comps.optJSONObject(1); String hn=home==null?"Home":home.optJSONObject("team").optString("displayName","Home"); String an=away==null?"Away":away.optJSONObject("team").optString("displayName","Away"); String hs=home==null?"-":home.optString("score","-"); String as=away==null?"-":away.optString("score","-");
+                        JSONObject e=events.optJSONObject(i); if(e==null)continue;
+                        JSONArray eventCompetitions=e.optJSONArray("competitions"); JSONObject competition=eventCompetitions==null?null:eventCompetitions.optJSONObject(0); if(competition==null)continue;
+                        JSONArray comps=competition.optJSONArray("competitors"); if(comps==null||comps.length()<2)continue;
+                        JSONObject home=comps.optJSONObject(0), away=comps.optJSONObject(1);
+                        JSONObject ht=home==null?null:home.optJSONObject("team"); JSONObject at=away==null?null:away.optJSONObject("team");
+                        String hn=ht==null?"Home":ht.optString("displayName","Home"); String an=at==null?"Away":at.optString("displayName","Away"); String hs=home==null?"-":home.optString("score","-"); String as=away==null?"-":away.optString("score","-");
                         TextView m=label(activity,hn+"  "+hs+"   ·   "+as+"  "+an,13,INK,true); m.setPadding(dp(activity,2),dp(activity,5),0,dp(activity,5)); card.addView(m,1,new LinearLayout.LayoutParams(-1,dp(activity,30)));
                     }
-                    TextView foot=label(activity,"Scores refresh when the feed opens • powered by the configured football adapter",10,MUTED,false); card.addView(foot,new LinearLayout.LayoutParams(-1,dp(activity,24)));
+                    TextView foot=label(activity,"Scores refresh when the feed opens • configured football adapter",10,MUTED,false); card.addView(foot,new LinearLayout.LayoutParams(-1,dp(activity,24)));
                 });
             }catch(Exception ignored){} finally {if(c!=null)c.disconnect();}
         }
     }
 
     static final class StreamChromeInjector {
-        private static final int BG=Color.argb(220,20,18,25); private static final int ACCENT=Color.rgb(207,186,253); private static final String TAG="tv49_stream_chrome";
+        private static final int BG=Color.argb(220,20,18,25); private static final String TAG="tv49_stream_chrome";
         static void attach(MainActivity activity) {
             if(activity.findViewById(TAG.hashCode())!=null)return;
             FrameLayout root=(FrameLayout)activity.getWindow().getDecorView().findViewById(android.R.id.content); if(root==null)return;
