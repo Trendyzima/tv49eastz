@@ -1,3 +1,5 @@
+import { DurableObject } from "cloudflare:workers";
+
 type SessionEnv = { GATEWAY_CAPABILITY_KEY: string };
 export type SessionRecord = { session: string; stream: string; exp: number; channel: string; revoked?: boolean };
 
