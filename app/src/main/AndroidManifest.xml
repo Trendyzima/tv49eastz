@@ -44,6 +44,8 @@
     <uses-permission android:name="android.permission.INTERNET"/>
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <!-- Secure FadCam -> TV 49 East publisher handoff permission. -->
+    <uses-permission android:name="com.tv49.com.permission.PUBLISH_FADCAM" />
 
     <uses-permission android:name="android.permission.CAMERA"/>
 
@@ -191,8 +193,7 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
-            </intent-filter>
-        </activity-alias>
+            </activity-alias>
 
         <!-- Clock App Icon (Activity Alias) -->
         <activity-alias android:name=".MainActivity.ClockIcon" android:enabled="false" android:label="Clock" android:icon="@mipmap/ic_launcher_clock" android:roundIcon="@mipmap/ic_launcher_clock_round" android:targetActivity=".MainActivity" android:exported="true">
