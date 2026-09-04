@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application>
+        <provider
+            android:name="com.tv49east.observability.TV49ObservabilityProvider"
+            android:authorities="${applicationId}.tv49-observability"
+            android:exported="false"
+            android:initOrder="1000">
+            <meta-data
+                android:name="tv49east.posthog.key"
+                android:value="${tv49PosthogKey}" />
+            <meta-data
+                android:name="tv49east.posthog.host"
+                android:value="${tv49PosthogHost}" />
+            <meta-data
+                android:name="tv49east.sentry.dsn"
+                android:value="${tv49SentryDsn}" />
+            <meta-data
+                android:name="tv49east.cloudinary.cloud_name"
+                android:value="${tv49CloudinaryCloudName}" />
+            <meta-data
+                android:name="tv49east.cloudinary.upload_preset"
+                android:value="${tv49CloudinaryUploadPreset}" />
+            <meta-data
+                android:name="tv49east.cloudinary.folder"
+                android:value="${tv49CloudinaryFolder}" />
+        </provider>
+    </application>
+</manifest>
