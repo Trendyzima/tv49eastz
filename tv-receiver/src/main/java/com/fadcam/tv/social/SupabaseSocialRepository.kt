@@ -8,11 +8,11 @@ import com.google.gson.reflect.TypeToken
 import com.tv49.com.BuildConfig
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
 import okio.BufferedSink
 import java.io.IOException
 import java.net.URLEncoder
@@ -22,52 +22,286 @@ import java.util.concurrent.TimeUnit
 /** Native Supabase REST adapter. The APK only receives the public anon key; RLS remains authoritative. */
 class SupabaseSocialRepository(context: Context) {
     interface ResultCallback<T> { fun onComplete(result: SocialResult<T>) }
-    private val appContext=context.applicationContext
-    private val prefs=appContext.getSharedPreferences("tv49_social_session",Context.MODE_PRIVATE)
-    private val gson=Gson()
-    private val http=OkHttpClient.Builder().connectTimeout(12,TimeUnit.SECONDS).readTimeout(20,TimeUnit.SECONDS).writeTimeout(60,TimeUnit.SECONDS).build()
-    private val json="application/json; charset=utf-8".toMediaType()
-    private val configured get()=BuildConfig.SUPABASE_URL.isNotBlank()&&BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
-    fun isConfigured()=configured
-    fun currentAccessToken():String?=prefs.getString("access_token",null)
-    fun currentRefreshToken():String?=prefs.getString("refresh_token",null)
-    fun currentUserId():String?=prefs.getString("user_id",null)
-    fun isSignedIn()=!currentAccessToken().isNullOrBlank()
-    fun signIn(email:String,password:String,callback:ResultCallback<SocialSession>){if(!configured)return callback.onComplete(SocialResult(error=IllegalStateException("Supabase is not configured")));if(email.trim().isEmpty()||password.isEmpty())return callback.onComplete(SocialResult(error=IllegalArgumentException("Email and password are required")));request("/auth/v1/token?grant_type=password","POST",gson.toJson(mapOf("email" to email.trim(),"password" to password)),null){r->if(r.error!=null)return@request callback.onComplete(SocialResult(error=r.error));try{callback.onComplete(SocialResult(value=parseAndSaveSession(r.value)))}catch(t:Throwable){callback.onComplete(SocialResult(error=t))}}}
-    fun signUp(email:String,password:String,username:String,displayName:String,callback:ResultCallback<SocialSession>){if(!configured)return callback.onComplete(SocialResult(error=IllegalStateException("Supabase is not configured")));val u=username.trim();if(!u.matches(Regex("[A-Za-z0-9_]{3,32}")))return callback.onComplete(SocialResult(error=IllegalArgumentException("Username must be 3-32 letters, numbers or underscores")));if(password.length<6)return callback.onComplete(SocialResult(error=IllegalArgumentException("Password must be at least 6 characters")));val body=gson.toJson(mapOf("email" to email.trim(),"password" to password,"data" to mapOf("username" to u,"display_name" to displayName.trim())));request("/auth/v1/signup","POST",body,null){r->if(r.error!=null)return@request callback.onComplete(SocialResult(error=r.error));try{val o=gson.fromJson(r.value,JsonObject::class.java);if(o.get("access_token")?.asString.isNullOrBlank())return@request callback.onComplete(SocialResult(error=IllegalStateException("Account created. Confirm the email before signing in.")));callback.onComplete(SocialResult(value=parseAndSaveSession(r.value)))}catch(t:Throwable){callback.onComplete(SocialResult(error=t))}}}
-    fun signUp(email:String,password:String,callback:ResultCallback<SocialSession>)=signUp(email,password,"user_${UUID.randomUUID().toString().replace("-","").take(10)}","",callback)
-    fun signOut()=prefs.edit().clear().apply()
-    fun refreshSession(callback:ResultCallback<SocialSession>){val refresh=currentRefreshToken()?:return callback.onComplete(SocialResult(error=IllegalStateException("No refresh token")));request("/auth/v1/token?grant_type=refresh_token","POST",gson.toJson(mapOf("refresh_token" to refresh)),null){r->if(r.error!=null)return@request callback.onComplete(SocialResult(error=r.error));try{callback.onComplete(SocialResult(value=parseAndSaveSession(r.value)))}catch(t:Throwable){callback.onComplete(SocialResult(error=t))}}}
-    fun loadProfile(callback:ResultCallback<SocialUser?>){val id=currentUserId()?:return callback.onComplete(SocialResult(value=null));get("/rest/v1/profiles?id=eq.$id&select=id,username,display_name,avatar_url,bio",callback){parseProfiles(it).firstOrNull()}}
-    fun updateProfile(username:String,displayName:String,bio:String,avatarUrl:String?,callback:ResultCallback<SocialUser?>){val id=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));if(!username.trim().matches(Regex("[A-Za-z0-9_]{3,32}")))return callback.onComplete(SocialResult(error=IllegalArgumentException("Invalid username")));val p=mutableMapOf<String,Any>("username" to username.trim(),"display_name" to displayName.trim(),"bio" to bio.trim());if(avatarUrl!=null)p["avatar_url"]=avatarUrl;mutate("/rest/v1/profiles?id=eq.$id&select=id,username,display_name,avatar_url,bio","PATCH",gson.toJson(p),callback){parseProfiles(it).firstOrNull()}}
-    fun loadFeed(limit:Int=30,callback:ResultCallback<List<SocialPost>>)=get(postsPath(limit),callback){parsePosts(it)}
-    fun searchPosts(query:String,limit:Int=30,callback:ResultCallback<List<SocialPost>>){val q=URLEncoder.encode(query.trim(),"UTF-8");get("${postsPath(limit)}&body=ilike.*$q*",callback){parsePosts(it)}}
-    fun loadTrending(limit:Int=20,callback:ResultCallback<List<SocialPost>>)=get("/rest/v1/trending_posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count&limit=${limit.coerceIn(1,50)}",callback){parsePosts(it)}
-    fun createPost(bodyText:String,callback:ResultCallback<SocialPost?>){val user=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));if(bodyText.trim().isEmpty())return callback.onComplete(SocialResult(error=IllegalArgumentException("Post cannot be empty")));mutate("/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)","POST",gson.toJson(mapOf("author_id" to user,"body" to bodyText.trim())),callback){parsePosts(it).firstOrNull()}}
-    /** Direct authenticated upload; rejects files over 20 MiB. */
-    fun uploadMedia(uri:Uri,kind:String,callback:ResultCallback<String>){val token=currentAccessToken()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));val uid=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Session user id missing")));val size=appContext.contentResolver.openAssetFileDescriptor(uri,"r")?.use{it.length}?:-1L;if(size>20L*1024L*1024L)return callback.onComplete(SocialResult(error=IllegalArgumentException("Media exceeds 20 MB")));val mime=appContext.contentResolver.getType(uri)?:if(kind=="avatars")"image/jpeg" else "application/octet-stream";val ext=mime.substringAfter('/','bin').substringBefore(';');val filename=UUID.randomUUID().toString()+"."+ext;val path="$kind/$uid/$filename";val rb=object:RequestBody(){override fun contentType()=mime.toMediaType();override fun contentLength()=size;override fun writeTo(sink:BufferedSink){appContext.contentResolver.openInputStream(uri)?.use{input->input.copyTo(sink.outputStream())}?:throw IOException("Cannot open selected media")}};val b=Request.Builder().url(BuildConfig.SUPABASE_URL.trimEnd('/')+"/storage/v1/object/tv49-profile-media/$path").header("apikey",BuildConfig.SUPABASE_ANON_KEY).header("Authorization","Bearer $token").header("x-upsert","false").put(rb);http.newCall(b.build()).enqueue(object:Callback{override fun onFailure(c:Call,e:IOException)=callback(SocialResult(error=e));override fun onResponse(c:Call,r:okhttp3.Response){r.use{if(!it.isSuccessful)return callback(SocialResult(error=IOException("Storage ${it.code}: ${(it.body?.string().orEmpty()).take(300)}")));callback(SocialResult(value=publicMediaUrl(kind,uid,filename)))}}})}
-    fun attachMedia(postId:String,url:String,mediaType:String,mimeType:String?,size:Long,order:Int,callback:ResultCallback<Boolean>){val user=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));if(size>20L*1024L*1024L||order !in 0..3)return callback.onComplete(SocialResult(error=IllegalArgumentException("Invalid media")));rawMutation("/rest/v1/post_media","POST",gson.toJson(mapOf("post_id" to postId,"owner_id" to user,"media_url" to url,"media_type" to mediaType,"mime_type" to mimeType,"byte_size" to size,"sort_order" to order)),callback)}
-    fun likePost(postId:String,enabled:Boolean,callback:ResultCallback<Boolean>)=toggle("post_likes","post_id",postId,"user_id",enabled,callback)
-    fun repostPost(postId:String,enabled:Boolean,callback:ResultCallback<Boolean>)=toggle("post_reposts","post_id",postId,"user_id",enabled,callback)
-    fun bookmarkPost(postId:String,enabled:Boolean,callback:ResultCallback<Boolean>)=toggle("bookmarks","post_id",postId,"user_id",enabled,callback)
-    fun followUser(userId:String,enabled:Boolean,callback:ResultCallback<Boolean>)=toggle("follows","following_id",userId,"follower_id",enabled,callback)
-    fun replyToPost(postId:String,bodyText:String,callback:ResultCallback<Boolean>){val user=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));if(bodyText.trim().isEmpty())return callback.onComplete(SocialResult(error=IllegalArgumentException("Reply cannot be empty")));rawMutation("/rest/v1/post_replies","POST",gson.toJson(mapOf("post_id" to postId,"author_id" to user,"body" to bodyText.trim())),callback)}
-    fun loadNotifications(limit:Int=50,callback:ResultCallback<String>)=getText("/rest/v1/notifications?select=id,kind,post_id,read_at,created_at,data&order=created_at.desc&limit=${limit.coerceIn(1,100)}",callback)
-    fun markNotificationRead(id:String,callback:ResultCallback<Boolean>)=rawMutation("/rest/v1/notifications?id=eq.$id","PATCH",gson.toJson(mapOf("read_at" to "now()")),callback)
-    fun sendMessage(conversationId:String,bodyText:String,callback:ResultCallback<Boolean>){val user=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));rawMutation("/rest/v1/messages","POST",gson.toJson(mapOf("conversation_id" to conversationId,"sender_id" to user,"body" to bodyText.trim())),callback)}
-    fun loadMessages(conversationId:String,limit:Int=50,callback:ResultCallback<String>)=getText("/rest/v1/messages?conversation_id=eq.$conversationId&select=id,sender_id,body,media_url,media_type,created_at,edited_at&order=created_at.desc&limit=${limit.coerceIn(1,100)}",callback)
-    fun publicMediaUrl(kind:String,userId:String,filename:String)=BuildConfig.SUPABASE_URL.trimEnd('/')+"/storage/v1/object/public/tv49-profile-media/$kind/$userId/$filename"
-    private fun postsPath(limit:Int)="/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)&order=created_at.desc&limit=${limit.coerceIn(1,50)}"
-    private fun parseAndSaveSession(text:String):SocialSession{val o=gson.fromJson(text,JsonObject::class.java);val s=SocialSession(o.get("access_token")?.asString?:error("Missing access_token"),o.get("refresh_token")?.asString,o.getAsJsonObject("user")?.get("id")?.asString);saveSession(s);return s}
-    private fun parseProfiles(text:String):List<SocialUser>=(gson.fromJson(text,object:TypeToken<List<RemoteProfile>>(){}.type)?:emptyList<RemoteProfile>()).map{it.toModel()}
-    private fun parsePosts(text:String):List<SocialPost>=(gson.fromJson(text,object:TypeToken<List<RemotePost>>(){}.type)?:emptyList<RemotePost>()).map{it.toModel()}
-    private fun <T> get(path:String,callback:ResultCallback<T>,parser:(String)->T)=request(path,"GET",null,currentAccessToken(),null){r->if(r.error!=null)callback.onComplete(SocialResult(error=r.error))else try{callback.onComplete(SocialResult(value=parser(r.value)))}catch(t:Throwable){callback.onComplete(SocialResult(error=t))}}
-    private fun getText(path:String,callback:ResultCallback<String>)=request(path,"GET",null,currentAccessToken(),null){r->callback.onComplete(if(r.error==null)SocialResult(value=r.value)else SocialResult(error=r.error))}
-    private fun <T> mutate(path:String,method:String,body:String,callback:ResultCallback<T>,parser:(String)->T)=request(path,method,body,currentAccessToken(),"return=representation"){r->if(r.error!=null)callback.onComplete(SocialResult(error=r.error))else try{callback.onComplete(SocialResult(value=parser(r.value)))}catch(t:Throwable){callback.onComplete(SocialResult(error=t))}}
-    private fun rawMutation(path:String,method:String,body:String,callback:ResultCallback<Boolean>)=request(path,method,body,currentAccessToken(),"return=minimal"){r->callback.onComplete(if(r.error==null)SocialResult(value=true)else SocialResult(error=r.error))}
-    private fun toggle(table:String,key:String,value:String,owner:String,enabled:Boolean,callback:ResultCallback<Boolean>){val user=currentUserId()?:return callback.onComplete(SocialResult(error=IllegalStateException("Sign in required")));if(enabled)rawMutation("/rest/v1/$table","POST",gson.toJson(mapOf(key to value,owner to user)),callback)else rawMutation("/rest/v1/$table?$key=eq.$value&$owner=eq.$user","DELETE","",callback)}
-    private fun saveSession(s:SocialSession)=prefs.edit().putString("access_token",s.accessToken).putString("refresh_token",s.refreshToken).putString("user_id",s.userId).apply()
-    private fun request(path:String,method:String,body:String?,bearer:String?,prefer:String?,callback:(SocialResult<String>)->Unit){if(!configured)return callback(SocialResult(error=IllegalStateException("Supabase is not configured")));val b=Request.Builder().url(BuildConfig.SUPABASE_URL.trimEnd('/')+path).header("apikey",BuildConfig.SUPABASE_ANON_KEY).header("Accept","application/json");bearer?.takeIf{it.isNotBlank()}?.let{b.header("Authorization","Bearer $it")};prefer?.let{b.header("Prefer",it)};b.method(method,body?.toRequestBody(json));http.newCall(b.build()).enqueue(object:Callback{override fun onFailure(c:Call,e:IOException)=callback(SocialResult(error=e));override fun onResponse(c:Call,r:okhttp3.Response){r.use{val t=it.body?.string().orEmpty();if(!it.isSuccessful)callback(SocialResult(error=IOException("Supabase ${it.code}: ${t.take(300)}")))else callback(SocialResult(value=t))}}})}
-    private data class RemoteProfile(val id:String="",val username:String="",val display_name:String="",val avatar_url:String?=null,val bio:String?=null){fun toModel()=SocialUser(id,username,display_name,avatar_url,bio)}
-    private data class RemotePost(val id:String="",val body:String="",val media_url:String?=null,val media_type:String?=null,val created_at:String="",val like_count:Int=0,val reply_count:Int=0,val repost_count:Int=0,val author:RemoteProfile?=null){fun toModel()=SocialPost(id,author?.toModel()?:SocialUser("","",""),body,media_url,media_type,created_at,like_count,reply_count,repost_count)}
+
+    private val appContext = context.applicationContext
+    private val prefs = appContext.getSharedPreferences("tv49_social_session", Context.MODE_PRIVATE)
+    private val gson = Gson()
+    private val http = OkHttpClient.Builder()
+        .connectTimeout(12, TimeUnit.SECONDS)
+        .readTimeout(20, TimeUnit.SECONDS)
+        .writeTimeout(60, TimeUnit.SECONDS)
+        .build()
+    private val json = "application/json; charset=utf-8".toMediaTypeCompat()
+    private val configured: Boolean
+        get() = BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
+
+    fun isConfigured(): Boolean = configured
+    fun currentAccessToken(): String? = prefs.getString("access_token", null)
+    fun currentRefreshToken(): String? = prefs.getString("refresh_token", null)
+    fun currentUserId(): String? = prefs.getString("user_id", null)
+    fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
+
+    fun signIn(email: String, password: String, callback: ResultCallback<SocialSession>) {
+        if (!configured) return callback.onComplete(SocialResult(error = IllegalStateException("Supabase is not configured")))
+        if (email.trim().isEmpty() || password.isEmpty()) return callback.onComplete(SocialResult(error = IllegalArgumentException("Email and password are required")))
+        request(
+            "/auth/v1/token?grant_type=password",
+            "POST",
+            gson.toJson(mapOf("email" to email.trim(), "password" to password)),
+            null,
+            null
+        ) { result ->
+            if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
+            try { callback.onComplete(SocialResult(value = parseAndSaveSession(result.value))) }
+            catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+    }
+
+    fun signUp(email: String, password: String, username: String, displayName: String, callback: ResultCallback<SocialSession>) {
+        if (!configured) return callback.onComplete(SocialResult(error = IllegalStateException("Supabase is not configured")))
+        val u = username.trim()
+        if (!u.matches(Regex("[A-Za-z0-9_]{3,32}"))) return callback.onComplete(SocialResult(error = IllegalArgumentException("Username must be 3-32 letters, numbers or underscores")))
+        if (password.length < 6) return callback.onComplete(SocialResult(error = IllegalArgumentException("Password must be at least 6 characters")))
+        val body = gson.toJson(mapOf("email" to email.trim(), "password" to password, "data" to mapOf("username" to u, "display_name" to displayName.trim())))
+        request("/auth/v1/signup", "POST", body, null, null) { result ->
+            if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
+            try {
+                val objectValue = gson.fromJson(result.value, JsonObject::class.java)
+                if (objectValue.get("access_token")?.asString.isNullOrBlank()) {
+                    return@request callback.onComplete(SocialResult(error = IllegalStateException("Account created. Confirm the email before signing in.")))
+                }
+                callback.onComplete(SocialResult(value = parseAndSaveSession(result.value)))
+            } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+    }
+
+    fun signUp(email: String, password: String, callback: ResultCallback<SocialSession>) =
+        signUp(email, password, "user_${UUID.randomUUID().toString().replace("-", "").take(10)}", "", callback)
+
+    fun signOut() = prefs.edit().clear().apply()
+
+    fun refreshSession(callback: ResultCallback<SocialSession>) {
+        val refresh = currentRefreshToken() ?: return callback.onComplete(SocialResult(error = IllegalStateException("No refresh token")))
+        request("/auth/v1/token?grant_type=refresh_token", "POST", gson.toJson(mapOf("refresh_token" to refresh)), null, null) { result ->
+            if (result.error != null) return@request callback.onComplete(SocialResult(error = result.error))
+            try { callback.onComplete(SocialResult(value = parseAndSaveSession(result.value))) }
+            catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+    }
+
+    fun loadProfile(callback: ResultCallback<SocialUser?>) {
+        val id = currentUserId() ?: return callback.onComplete(SocialResult(value = null))
+        get("/rest/v1/profiles?id=eq.${encodePath(id)}&select=id,username,display_name,avatar_url,bio", callback) { parseProfiles(it).firstOrNull() }
+    }
+
+    fun updateProfile(username: String, displayName: String, bio: String, avatarUrl: String?, callback: ResultCallback<SocialUser?>) {
+        val id = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        val cleanUsername = username.trim()
+        if (!cleanUsername.matches(Regex("[A-Za-z0-9_]{3,32}"))) return callback.onComplete(SocialResult(error = IllegalArgumentException("Invalid username")))
+        val profile = mutableMapOf<String, Any>("username" to cleanUsername, "display_name" to displayName.trim(), "bio" to bio.trim())
+        if (avatarUrl != null) profile["avatar_url"] = avatarUrl
+        mutate("/rest/v1/profiles?id=eq.${encodePath(id)}&select=id,username,display_name,avatar_url,bio", "PATCH", gson.toJson(profile), callback) { parseProfiles(it).firstOrNull() }
+    }
+
+    fun loadFeed(limit: Int = 30, callback: ResultCallback<List<SocialPost>>) =
+        get(postsPath(limit), callback) { parsePosts(it) }
+
+    fun searchPosts(query: String, limit: Int = 30, callback: ResultCallback<List<SocialPost>>) {
+        val q = URLEncoder.encode(query.trim(), "UTF-8")
+        get("${postsPath(limit)}&body=ilike.*$q*", callback) { parsePosts(it) }
+    }
+
+    fun loadTrending(limit: Int = 20, callback: ResultCallback<List<SocialPost>>) =
+        get("/rest/v1/trending_posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count&limit=${limit.coerceIn(1, 50)}", callback) { parsePosts(it) }
+
+    fun createPost(bodyText: String, callback: ResultCallback<SocialPost?>) {
+        val user = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        val body = bodyText.trim()
+        if (body.isEmpty()) return callback.onComplete(SocialResult(error = IllegalArgumentException("Post cannot be empty")))
+        mutate(
+            "/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)",
+            "POST",
+            gson.toJson(mapOf("author_id" to user, "body" to body)),
+            callback
+        ) { parsePosts(it).firstOrNull() }
+    }
+
+    /** Direct authenticated upload; rejects files over 20 MiB before network transfer. */
+    fun uploadMedia(uri: Uri, kind: String, callback: ResultCallback<String>) {
+        val token = currentAccessToken() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        val uid = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Session user id missing")))
+        val size = appContext.contentResolver.openAssetFileDescriptor(uri, "r")?.use { it.length } ?: -1L
+        if (size < 0L) return callback.onComplete(SocialResult(error = IllegalArgumentException("Unable to determine media size")))
+        if (size > 20L * 1024L * 1024L) return callback.onComplete(SocialResult(error = IllegalArgumentException("Media exceeds 20 MB")))
+        val mime = appContext.contentResolver.getType(uri) ?: if (kind == "avatars") "image/jpeg" else "application/octet-stream"
+        val ext = mime.substringAfter('/', "bin").substringBefore(';').replace(Regex("[^A-Za-z0-9]"), "")
+        val filename = "${UUID.randomUUID()}.$ext"
+        val path = "$kind/$uid/$filename"
+        val requestBody = object : RequestBody() {
+            override fun contentType() = mime.toMediaTypeCompat()
+            override fun contentLength() = size
+            override fun writeTo(sink: BufferedSink) {
+                appContext.contentResolver.openInputStream(uri)?.use { input -> input.copyTo(sink.outputStream()) }
+                    ?: throw IOException("Cannot open selected media")
+            }
+        }
+        val request = Request.Builder()
+            .url(BuildConfig.SUPABASE_URL.trimEnd('/') + "/storage/v1/object/tv49-profile-media/$path")
+            .header("apikey", BuildConfig.SUPABASE_ANON_KEY)
+            .header("Authorization", "Bearer $token")
+            .header("x-upsert", "false")
+            .put(requestBody)
+            .build()
+        http.newCall(request).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = callback(SocialResult(error = e))
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    if (!it.isSuccessful) return callback(SocialResult(error = IOException("Storage ${it.code}: ${(it.body?.string().orEmpty()).take(300)}")))
+                    callback(SocialResult(value = publicMediaUrl(kind, uid, filename)))
+                }
+            }
+        })
+    }
+
+    fun attachMedia(postId: String, url: String, mediaType: String, mimeType: String?, size: Long, order: Int, callback: ResultCallback<Boolean>) {
+        val user = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        if (size < 0L || size > 20L * 1024L * 1024L || order !in 0..3) return callback.onComplete(SocialResult(error = IllegalArgumentException("Invalid media")))
+        rawMutation("/rest/v1/post_media", "POST", gson.toJson(mapOf("post_id" to postId, "owner_id" to user, "media_url" to url, "media_type" to mediaType, "mime_type" to mimeType, "byte_size" to size, "sort_order" to order)), callback)
+    }
+
+    fun likePost(postId: String, enabled: Boolean, callback: ResultCallback<Boolean>) = toggle("post_likes", "post_id", postId, "user_id", enabled, callback)
+    fun repostPost(postId: String, enabled: Boolean, callback: ResultCallback<Boolean>) = toggle("post_reposts", "post_id", postId, "user_id", enabled, callback)
+    fun bookmarkPost(postId: String, enabled: Boolean, callback: ResultCallback<Boolean>) = toggle("bookmarks", "post_id", postId, "user_id", enabled, callback)
+    fun followUser(userId: String, enabled: Boolean, callback: ResultCallback<Boolean>) = toggle("follows", "following_id", userId, "follower_id", enabled, callback)
+
+    fun replyToPost(postId: String, bodyText: String, callback: ResultCallback<Boolean>) {
+        val user = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        val body = bodyText.trim()
+        if (body.isEmpty()) return callback.onComplete(SocialResult(error = IllegalArgumentException("Reply cannot be empty")))
+        rawMutation("/rest/v1/post_replies", "POST", gson.toJson(mapOf("post_id" to postId, "author_id" to user, "body" to body)), callback)
+    }
+
+    fun loadNotifications(limit: Int = 50, callback: ResultCallback<String>) =
+        getText("/rest/v1/notifications?select=id,kind,post_id,read_at,created_at,data&order=created_at.desc&limit=${limit.coerceIn(1, 100)}", callback)
+
+    fun markNotificationRead(id: String, callback: ResultCallback<Boolean>) =
+        rawMutation("/rest/v1/notifications?id=eq.${encodePath(id)}", "PATCH", gson.toJson(mapOf("read_at" to "now()")), callback)
+
+    fun sendMessage(conversationId: String, bodyText: String, callback: ResultCallback<Boolean>) {
+        val user = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        val body = bodyText.trim()
+        if (body.isEmpty()) return callback.onComplete(SocialResult(error = IllegalArgumentException("Message cannot be empty")))
+        rawMutation("/rest/v1/messages", "POST", gson.toJson(mapOf("conversation_id" to conversationId, "sender_id" to user, "body" to body)), callback)
+    }
+
+    fun loadMessages(conversationId: String, limit: Int = 50, callback: ResultCallback<String>) =
+        getText("/rest/v1/messages?conversation_id=eq.${encodePath(conversationId)}&select=id,sender_id,body,media_url,media_type,created_at,edited_at&order=created_at.desc&limit=${limit.coerceIn(1, 100)}", callback)
+
+    fun publicMediaUrl(kind: String, userId: String, filename: String) =
+        BuildConfig.SUPABASE_URL.trimEnd('/') + "/storage/v1/object/public/tv49-profile-media/$kind/$userId/$filename"
+
+    private fun postsPath(limit: Int) =
+        "/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)&order=created_at.desc&limit=${limit.coerceIn(1, 50)}"
+
+    private fun parseAndSaveSession(text: String): SocialSession {
+        val objectValue = gson.fromJson(text, JsonObject::class.java)
+        val access = objectValue.get("access_token")?.asString ?: error("Missing access_token")
+        val refresh = objectValue.get("refresh_token")?.asString
+        val userId = objectValue.getAsJsonObject("user")?.get("id")?.asString
+        val session = SocialSession(access, refresh, userId)
+        saveSession(session)
+        return session
+    }
+
+    private fun parseProfiles(text: String): List<SocialUser> {
+        val type = object : TypeToken<List<RemoteProfile>>() {}.type
+        return (gson.fromJson<List<RemoteProfile>>(text, type) ?: emptyList()).map { it.toModel() }
+    }
+
+    private fun parsePosts(text: String): List<SocialPost> {
+        val type = object : TypeToken<List<RemotePost>>() {}.type
+        return (gson.fromJson<List<RemotePost>>(text, type) ?: emptyList()).map { it.toModel() }
+    }
+
+    private fun <T> get(path: String, callback: ResultCallback<T>, parser: (String) -> T) =
+        request(path, "GET", null, currentAccessToken(), null) { result ->
+            if (result.error != null) callback.onComplete(SocialResult(error = result.error))
+            else try { callback.onComplete(SocialResult(value = parser(result.value))) }
+            catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+
+    private fun getText(path: String, callback: ResultCallback<String>) =
+        request(path, "GET", null, currentAccessToken(), null) { result ->
+            callback.onComplete(if (result.error == null) SocialResult(value = result.value) else SocialResult(error = result.error))
+        }
+
+    private fun <T> mutate(path: String, method: String, body: String, callback: ResultCallback<T>, parser: (String) -> T) =
+        request(path, method, body, currentAccessToken(), "return=representation") { result ->
+            if (result.error != null) callback.onComplete(SocialResult(error = result.error))
+            else try { callback.onComplete(SocialResult(value = parser(result.value))) }
+            catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
+        }
+
+    private fun rawMutation(path: String, method: String, body: String, callback: ResultCallback<Boolean>) =
+        request(path, method, body, currentAccessToken(), "return=minimal") { result ->
+            callback.onComplete(if (result.error == null) SocialResult(value = true) else SocialResult(error = result.error))
+        }
+
+    private fun toggle(table: String, key: String, value: String, owner: String, enabled: Boolean, callback: ResultCallback<Boolean>) {
+        val user = currentUserId() ?: return callback.onComplete(SocialResult(error = IllegalStateException("Sign in required")))
+        if (enabled) rawMutation("/rest/v1/$table", "POST", gson.toJson(mapOf(key to value, owner to user)), callback)
+        else rawMutation("/rest/v1/$table?$key=eq.${encodePath(value)}&$owner=eq.${encodePath(user)}", "DELETE", "", callback)
+    }
+
+    private fun saveSession(session: SocialSession) = prefs.edit()
+        .putString("access_token", session.accessToken)
+        .putString("refresh_token", session.refreshToken)
+        .putString("user_id", session.userId)
+        .apply()
+
+    private fun request(path: String, method: String, body: String?, bearer: String?, prefer: String?, callback: (SocialResult<String>) -> Unit) {
+        if (!configured) return callback(SocialResult(error = IllegalStateException("Supabase is not configured")))
+        val builder = Request.Builder()
+            .url(BuildConfig.SUPABASE_URL.trimEnd('/') + path)
+            .header("apikey", BuildConfig.SUPABASE_ANON_KEY)
+            .header("Accept", "application/json")
+        bearer?.takeIf { it.isNotBlank() }?.let { builder.header("Authorization", "Bearer $it") }
+        prefer?.let { builder.header("Prefer", it) }
+        val requestBody = body?.toRequestBody(json)
+        builder.method(method, requestBody)
+        http.newCall(builder.build()).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = callback(SocialResult(error = e))
+            override fun onResponse(call: Call, response: Response) {
+                response.use {
+                    val text = it.body?.string().orEmpty()
+                    if (!it.isSuccessful) callback(SocialResult(error = IOException("Supabase ${it.code}: ${text.take(300)}")))
+                    else callback(SocialResult(value = text))
+                }
+            }
+        })
+    }
+
+    private fun encodePath(value: String): String = URLEncoder.encode(value, "UTF-8")
+
+    private fun String.toMediaTypeCompat() = okhttp3.MediaType.Companion.toMediaType(this)
+
+    private data class RemoteProfile(
+        val id: String = "",
+        val username: String = "",
+        val display_name: String = "",
+        val avatar_url: String? = null,
+        val bio: String? = null
+    ) { fun toModel() = SocialUser(id, username, display_name, avatar_url, bio) }
+
+    private data class RemotePost(
+        val id: String = "",
+        val body: String = "",
+        val media_url: String? = null,
+        val media_type: String? = null,
+        val created_at: String = "",
+        val like_count: Int = 0,
+        val reply_count: Int = 0,
+        val repost_count: Int = 0,
+        val author: RemoteProfile? = null
+    ) { fun toModel() = SocialPost(id, author?.toModel() ?: SocialUser("", "", ""), body, media_url, media_type, created_at, like_count, reply_count, repost_count) }
 }
