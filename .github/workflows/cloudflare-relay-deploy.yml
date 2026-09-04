@@ -12,7 +12,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tv49eastz-cloudflare-production
+  group: tv49eastz-cloudflare-production-v2
   cancel-in-progress: false
 
 jobs:
@@ -91,7 +91,8 @@ jobs:
           echo "$response"
           session="$(node -e 'const x=JSON.parse(process.argv[1]); if(!x.session||!x.ticket) process.exit(1); process.stdout.write(x.session)' "$response")"
           ticket="$(node -e 'const x=JSON.parse(process.argv[1]); if(!x.ticket) process.exit(1); process.stdout.write(x.ticket)' "$response")"
-          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/$session/index.m3u8?ticket=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1],safe=""))' "$ticket")")"
+          encoded_ticket="$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1],safe=""))' "$ticket")"
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/$session/index.m3u8?ticket=$encoded_ticket")"
           [[ "$code" != "500" ]] || { echo 'Stream route crashed with HTTP 500'; exit 1; }
           revoke="$(curl --silent --show-error --output /dev/null --write-out '%{http_code}' --max-time 15 -X DELETE "$CF_URL/v1/session/$session" -H "Authorization: Bearer $GATEWAY_API_KEY")"
           [[ "$revoke" == 204 ]] || { echo "Expected 204 on revoke, got $revoke"; exit 1; }
