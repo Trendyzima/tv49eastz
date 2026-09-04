@@ -96,6 +96,20 @@ jobs:
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags='-s -w' -o /tmp/stream-gateway ./
           file /tmp/stream-gateway
 
+      - name: Preflight Cloudflare Container permission
+        working-directory: cloudflare-relay
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo 'Checking Cloudflare Container account access before image push...'
+          if ! output="$(npx --yes wrangler@latest containers list 2>&1)"; then
+            printf '%s\n' "$output"
+            echo 'Cloudflare Container access is unavailable. The API token must include Account -> Containers -> Edit.'
+            exit 1
+          fi
+          printf '%s\n' "$output"
+          echo 'Cloudflare Container permission check passed.'
+
       - name: Build and push Cloudflare Container image
         id: image
         working-directory: cloudflare-relay
