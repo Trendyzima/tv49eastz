@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -39,9 +41,9 @@ type relayCommand struct {
 }
 
 type relayResponse struct {
-	Type   string            `json:"type"`
-	ID     int               `json:"id"`
-	Status int               `json:"status"`
+	Type    string            `json:"type"`
+	ID      int               `json:"id"`
+	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
 }
 
@@ -50,11 +52,11 @@ func runCloudflareProducer() {
 	streamID := strings.TrimSpace(os.Getenv("CLOUDFLARE_STREAM_ID"))
 	secret := strings.TrimSpace(os.Getenv("RELAY_DEVICE_SECRET"))
 	if relayBase == "" || streamID == "" || secret == "" {
-		logf("cloudflare producer disabled: CLOUDFLARE_RELAY_URL, CLOUDFLARE_STREAM_ID and RELAY_DEVICE_SECRET are required")
+		log.Printf("cloudflare producer disabled: CLOUDFLARE_RELAY_URL, CLOUDFLARE_STREAM_ID and RELAY_DEVICE_SECRET are required")
 		return
 	}
 	if !validProducerID(streamID) {
-		logf("cloudflare producer disabled: invalid stream id")
+		log.Printf("cloudflare producer disabled: invalid stream id")
 		return
 	}
 
@@ -62,7 +64,7 @@ func runCloudflareProducer() {
 	for {
 		err := cloudflareProducerOnce(relayBase, streamID, secret)
 		if err != nil {
-			logf("cloudflare producer disconnected: %v; retrying in %s", err, delay)
+			log.Printf("cloudflare producer disconnected: %v; retrying in %s", err, delay)
 		}
 		time.Sleep(delay)
 		if delay < 30*time.Second {
@@ -108,9 +110,6 @@ func cloudflareProducerOnce(relayBase, streamID, secret string) error {
 			continue
 		}
 		if command.Type != "request" {
-			if command.Type == "ping" {
-				_ = conn.WriteJSON(map[string]any{"type": "pong"})
-			}
 			continue
 		}
 		if command.ID < 0 || len(command.Path) > producerMaxPath || !allowedProducerPath(command.Path) {
@@ -131,9 +130,6 @@ func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
 	localPath := command.Path
 	if strings.HasPrefix(localPath, "/hls/") {
 		name := strings.TrimPrefix(localPath, "/hls/")
-		if !strings.HasPrefix(name, "seg-") || !strings.HasSuffix(name, "") {
-			return errors.New("invalid HLS resource")
-		}
 		if !validSegmentName(name) {
 			return errors.New("invalid HLS resource")
 		}
@@ -145,7 +141,7 @@ func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
 
 	upstream := strings.TrimRight(strings.TrimSpace(os.Getenv("TAP_UPSTREAM")), "/")
 	if upstream == "" {
-		u, err := discoverFadCamUpstream(contextBackground())
+		u, err := discoverFadCamUpstream(context.Background())
 		if err != nil {
 			return err
 		}
@@ -203,11 +199,11 @@ func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
 }
 
 func allowedProducerPath(p string) bool {
-	return p == "/live.m3u8" || p == "/init.mp4" || p == "/status" || p == "/audio/volume" || strings.HasPrefix(p, "/hls/") && validSegmentName(strings.TrimPrefix(p, "/hls/"))
+	return p == "/live.m3u8" || p == "/init.mp4" || p == "/status" || p == "/audio/volume" || (strings.HasPrefix(p, "/hls/") && validSegmentName(strings.TrimPrefix(p, "/hls/")))
 }
 
 func allowedLocalProducerPath(p string) bool {
-	return p == "/live.m3u8" || p == "/init.mp4" || p == "/status" || p == "/audio/volume" || strings.HasPrefix(p, "/seg-") && validSegmentPath(p)
+	return p == "/live.m3u8" || p == "/init.mp4" || p == "/status" || p == "/audio/volume" || (strings.HasPrefix(p, "/seg-") && validSegmentPath(p))
 }
 
 func validSegmentName(name string) bool {
@@ -268,10 +264,6 @@ func websocketURL(rawBase, stream, ticket string) (string, error) {
 	u.RawQuery = q.Encode()
 	return u.String(), nil
 }
-
-// Keep this tiny adapter local to the producer so the opt-in bridge does not
-// alter the existing discovery implementation or its test surface.
-func contextBackground() context.Context { return context.Background() }
 
 func safeProducerError(err error) string {
 	if err == nil {
