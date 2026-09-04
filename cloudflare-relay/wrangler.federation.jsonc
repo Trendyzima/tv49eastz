@@ -1,7 +1,7 @@
 {
   "$schema": "node_modules/wrangler/config-schema.json",
   "name": "tv49-east-federation",
-  "main": "src/federation.ts",
+  "main": "src/federation-actions.ts",
   "compatibility_date": "2026-08-04",
   "workers_dev": true,
   "vars": {
@@ -9,5 +9,6 @@
     "ACTOR_BASE_URL": "https://federation.testagram.site",
     "FEDERATION_USER_AGENT": "TV49-East-Federation/1.0"
   },
+  "triggers": { "crons": ["*/5 * * * *"] },
   "observability": { "enabled": true }
 }
