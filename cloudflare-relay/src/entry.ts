@@ -1,41 +1,46 @@
-import { Container, getContainer } from "@cloudflare/containers";
 import relayWorker, { RelayTunnel } from "./index";
 
 export interface Env {
   RELAY_TUNNEL: DurableObjectNamespace<RelayTunnel>;
-  STREAM_GATEWAY: DurableObjectNamespace<StreamGatewayContainer>;
   RELAY_SIGNING_SECRET: string;
   RELAY_DEVICE_SECRET: string;
-  GATEWAY_API_KEY: string;
-  GATEWAY_CAPABILITY_KEY: string;
-  TUNNEL_PROXY_BASE_URL: string;
+  GATEWAY_ORIGIN: string;
 }
 
 const DEVICE_PATH = /^(?:\/live\.m3u8|\/init\.mp4|\/status|\/audio\/volume|\/hls\/[A-Za-z0-9_-]+)$/;
 
-export class StreamGatewayContainer extends Container<Env> {
-  defaultPort = 8080;
-  sleepAfter = "15m";
-  pingEndpoint = "health";
-  envVars = {
-    GATEWAY_LISTEN: ":8787",
-    TAP_UPSTREAM: "http://127.0.0.1:8786",
-    GATEWAY_API_KEY: this.env.GATEWAY_API_KEY,
-    GATEWAY_CAPABILITY_KEY: this.env.GATEWAY_CAPABILITY_KEY,
-    TUNNEL_PROXY_BASE_URL: this.env.TUNNEL_PROXY_BASE_URL,
-    TUNNEL_PROXY_AUTH: this.env.RELAY_DEVICE_SECRET,
-  };
-
-  override onStart() {
-    console.log("stream-gateway container started", this.ctx.id.toString());
-  }
-
-  override onError(error: unknown) {
-    console.error("stream-gateway container error", error);
+function gatewayOrigin(env: Env): URL | null {
+  const raw = (env.GATEWAY_ORIGIN ?? "").trim().replace(/\/+$/, "");
+  if (!raw) return null;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) return null;
+    return url;
+  } catch {
+    return null;
   }
 }
 
-export { RelayTunnel };
+async function gatewayProxy(request: Request, env: Env): Promise<Response> {
+  const origin = gatewayOrigin(env);
+  if (!origin) return new Response("gateway not configured", { status: 503 });
+
+  const incoming = new URL(request.url);
+  origin.pathname = incoming.pathname;
+  origin.search = incoming.search;
+
+  const headers = new Headers(request.headers);
+  headers.delete("host");
+  headers.set("X-Forwarded-Proto", "https");
+  headers.set("X-Forwarded-Host", incoming.host);
+
+  return fetch(new Request(origin.toString(), {
+    method: request.method,
+    headers,
+    body: request.method === "GET" || request.method === "HEAD" ? undefined : request.body,
+    redirect: "manual",
+  }));
+}
 
 async function deviceProxy(request: Request, env: Env): Promise<Response> {
   if (request.method !== "GET") return new Response("method not allowed", { status: 405 });
@@ -70,9 +75,7 @@ export default {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
     const url = new URL(request.url);
 
-    if (url.pathname.startsWith("/device/")) {
-      return deviceProxy(request, env);
-    }
+    if (url.pathname.startsWith("/device/")) return deviceProxy(request, env);
 
     if (
       url.pathname === "/health" ||
@@ -80,8 +83,7 @@ export default {
       url.pathname.startsWith("/v1/session/") ||
       url.pathname.startsWith("/stream/")
     ) {
-      const container = getContainer(env.STREAM_GATEWAY, "production-gateway");
-      return container.fetch(request);
+      return gatewayProxy(request, env);
     }
 
     return relayWorker.fetch(request, env, ctx);
