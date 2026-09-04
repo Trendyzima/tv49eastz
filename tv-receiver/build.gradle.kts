@@ -16,16 +16,13 @@ android {
         versionCode = 5
         versionName = "2.3.0"
 
-        val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim()
-            ?.takeIf { it.isNotEmpty() }
+        val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
-
         val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim().orEmpty()
         val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim().orEmpty()
         val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim().orEmpty()
-        val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()
-            ?.takeIf { it.isNotEmpty() }
+        val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://site.api.espn.com/apis/site/v2/sports/soccer"
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
@@ -77,6 +74,7 @@ dependencies {
     implementation(libs.viewpager2)
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
+    testImplementation("org.mockito:mockito-core:5.2.0")
     androidTestImplementation(libs.ext.junit)
     androidTestImplementation(libs.espresso.core)
 }
