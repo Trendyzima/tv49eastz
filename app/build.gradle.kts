@@ -36,13 +36,26 @@ android {
         vectorDrawables.useSupportLibrary = true
         ndk { debugSymbolLevel = "FULL" }
 
-        // Public client configuration only. Secrets are intentionally never embedded.
-        buildConfigField("String", "POSTHOG_API_KEY", "\"${providers.gradleProperty(\"posthogApiKey\").orElse(System.getenv(\"POSTHOG_API_KEY\") ?: \"phc_vrg5rr7YaKd9qxiM2Y4mZy8nP37gVTHzcEE9r8UB7n7K\").get()}\"")
-        buildConfigField("String", "POSTHOG_HOST", "\"${providers.gradleProperty(\"posthogHost\").orElse(System.getenv(\"POSTHOG_HOST\") ?: \"https://us.i.posthog.com\").get()}\"")
-        buildConfigField("String", "SENTRY_DSN", "\"${providers.gradleProperty(\"sentryDsn\").orElse(System.getenv(\"SENTRY_DSN\") ?: \"\").get()}\"")
-        buildConfigField("String", "CLOUDINARY_CLOUD_NAME", "\"${providers.gradleProperty(\"cloudinaryCloudName\").orElse(System.getenv(\"CLOUDINARY_CLOUD_NAME\") ?: \"\").get()}\"")
-        buildConfigField("String", "CLOUDINARY_UPLOAD_PRESET", "\"${providers.gradleProperty(\"cloudinaryUploadPreset\").orElse(System.getenv(\"CLOUDINARY_UPLOAD_PRESET\") ?: \"\").get()}\"")
-        buildConfigField("String", "CLOUDINARY_FOLDER", "\"${providers.gradleProperty(\"cloudinaryFolder\").orElse(System.getenv(\"CLOUDINARY_FOLDER\") ?: \"tv49-east\").get()}\"")
+        val posthogKey = providers.gradleProperty("posthogApiKey").orElse(System.getenv("POSTHOG_API_KEY") ?: "phc_vrg5rr7YaKd9qxiM2Y4mZy8nP37gVTHzcEE9r8UB7n7K").get()
+        val posthogHost = providers.gradleProperty("posthogHost").orElse(System.getenv("POSTHOG_HOST") ?: "https://us.i.posthog.com").get()
+        val sentryDsn = providers.gradleProperty("sentryDsn").orElse(System.getenv("SENTRY_DSN") ?: "").get()
+        val cloudinaryCloud = providers.gradleProperty("cloudinaryCloudName").orElse(System.getenv("CLOUDINARY_CLOUD_NAME") ?: "").get()
+        val cloudinaryPreset = providers.gradleProperty("cloudinaryUploadPreset").orElse(System.getenv("CLOUDINARY_UPLOAD_PRESET") ?: "").get()
+        val cloudinaryFolder = providers.gradleProperty("cloudinaryFolder").orElse(System.getenv("CLOUDINARY_FOLDER") ?: "tv49-east").get()
+
+        buildConfigField("String", "POSTHOG_API_KEY", "\"$posthogKey\"")
+        buildConfigField("String", "POSTHOG_HOST", "\"$posthogHost\"")
+        buildConfigField("String", "SENTRY_DSN", "\"$sentryDsn\"")
+        buildConfigField("String", "CLOUDINARY_CLOUD_NAME", "\"$cloudinaryCloud\"")
+        buildConfigField("String", "CLOUDINARY_UPLOAD_PRESET", "\"$cloudinaryPreset\"")
+        buildConfigField("String", "CLOUDINARY_FOLDER", "\"$cloudinaryFolder\"")
+
+        manifestPlaceholders["tv49PosthogKey"] = posthogKey
+        manifestPlaceholders["tv49PosthogHost"] = posthogHost
+        manifestPlaceholders["tv49SentryDsn"] = sentryDsn
+        manifestPlaceholders["tv49CloudinaryCloudName"] = cloudinaryCloud
+        manifestPlaceholders["tv49CloudinaryUploadPreset"] = cloudinaryPreset
+        manifestPlaceholders["tv49CloudinaryFolder"] = cloudinaryFolder
     }
 
     signingConfigs {
@@ -162,6 +175,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":tv49-observability"))
     implementation(libs.activity)
     implementation(libs.appintro.v631)
     implementation(libs.appcompat)
@@ -214,8 +228,7 @@ dependencies {
     implementation(libs.smart.exception.java)
     implementation(fileTree(mapOf("dir" to "libs/aar", "include" to listOf("*.aar"))))
 
-    // Best-of-breed integrations: Cloudinary for media, PostHog for product analytics,
-    // Sentry for crash/performance observability. All versions are pinned in the catalog.
+    // Direct SDK dependencies keep the integration API available to app feature code.
     implementation(libs.cloudinary.android)
     implementation(libs.posthog.android)
     implementation(libs.sentry.android)
