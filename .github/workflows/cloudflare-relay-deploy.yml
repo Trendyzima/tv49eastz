@@ -40,6 +40,7 @@ jobs:
         run: npm run typecheck
 
       - name: Deploy Worker
+        id: deploy
         uses: cloudflare/wrangler-action@v4
         env:
           RELAY_SIGNING_SECRET: ${{ secrets.TV49_RELAY_SIGNING_SECRET }}
@@ -57,11 +58,20 @@ jobs:
             GATEWAY_API_KEY
             GATEWAY_CAPABILITY_KEY
 
-      - name: Verify public health endpoint
+      - name: Verify deployed Worker
         env:
-          CF_URL: https://tv49eastz-relay.${{ secrets.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev
+          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
+          [[ -n "$CF_URL" ]] || { echo 'Wrangler did not return a deployment URL'; exit 1; }
           body="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
           echo "$body"
           grep -q '"ok":true' <<<"$body"
+
+      - name: Verify unauthenticated session rejection
+        env:
+          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/session")"
+          [[ "$code" == 401 ]] || { echo "Expected 401, got $code"; exit 1; }
