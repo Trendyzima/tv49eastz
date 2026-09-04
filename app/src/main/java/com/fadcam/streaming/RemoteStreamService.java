@@ -235,6 +235,7 @@ public class RemoteStreamService extends Service {
             // Log comprehensive server startup info
             String ipAddress = getLocalIpAddress();
             String serverUrl = "http://" + ipAddress + ":" + port;
+            String hlsStreamUrl = serverUrl + "/live.m3u8";
             
             FLog.i(TAG, "════════════════════════════════════════════════════════");
             FLog.i(TAG, "🚀 HTTP SERVER STARTED");
@@ -245,10 +246,19 @@ public class RemoteStreamService extends Service {
             FLog.i(TAG, "   📡 Endpoints:");
             FLog.i(TAG, "      • Dashboard: " + serverUrl + "/");
             FLog.i(TAG, "      • Status API: " + serverUrl + "/status");
-            FLog.i(TAG, "      • HLS Stream: " + serverUrl + "/live.m3u8");
+            FLog.i(TAG, "      • HLS Stream: " + hlsStreamUrl);
             FLog.i(TAG, "════════════════════════════════════════════════════════");
             FLog.i(TAG, "   ⚠️  Open the URL above on a device on the SAME network");
             FLog.i(TAG, "════════════════════════════════════════════════════════");
+
+            // Secure publisher-side handoff: the TV receiver validates the
+            // short-lived ECDSA signature, nonce and publisher signing cert.
+            // A missing TV receiver never prevents FadCam local streaming.
+            if (Tv49EastHandoffPublisher.publish(this, hlsStreamUrl)) {
+                FLog.i(TAG, "📺 TV 49 East handoff accepted for local HLS stream");
+            } else {
+                FLog.d(TAG, "📺 TV 49 East handoff not delivered (receiver unavailable or not ready)");
+            }
             
             return true;
         } catch (IOException e) {
