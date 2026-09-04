@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <permission android:name="com.tv49.com.permission.PUBLISH_FADCAM" android:protectionLevel="signature" />
     <application android:name="com.fadcam.tv.Tv49ExperienceApplication" android:allowBackup="false" android:label="TV 49 East" android:supportsRtl="true" android:theme="@style/Theme.TV49East.Platform" android:banner="@drawable/tv49east_banner" android:usesCleartextTraffic="true">
