@@ -259,7 +259,7 @@ class SupabaseSocialRepository(context: Context) {
             .header("apikey", BuildConfig.SUPABASE_ANON_KEY)
         if (!token.isNullOrBlank()) builder.header("Authorization", "Bearer $token")
         if (!prefer.isNullOrBlank()) builder.header("Prefer", prefer)
-        val requestBody = payload?.toRequestBody(jsonType)
+        val requestBody = payload?.let { RequestBody.create(jsonType, it) }
         builder.method(method, requestBody)
         http.newCall(builder.build()).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) { callback(RawResult("", e)) }
@@ -274,44 +274,24 @@ class SupabaseSocialRepository(context: Context) {
 
     private fun completeSession(raw: RawResult, callback: ResultCallback<SocialSession>) {
         if (raw.error != null) return callback.onComplete(SocialResult(error = raw.error))
-        try { callback.onComplete(SocialResult(value = parseAndSaveSession(raw.value))) }
-        catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
-    }
-
-    private fun parseAndSaveSession(text: String): SocialSession {
-        val o = gson.fromJson(text, JsonObject::class.java)
-        val access = o.get("access_token")?.asString ?: error("Missing access_token")
-        val refresh = o.get("refresh_token")?.takeUnless { it.isJsonNull }?.asString
-        val uid = o.getAsJsonObject("user")?.get("id")?.asString
-        val session = SocialSession(access, refresh, uid)
-        val editor = prefs.edit().putString("access_token", access)
-        if (refresh != null) editor.putString("refresh_token", refresh)
-        if (uid != null) editor.putString("user_id", uid)
-        editor.apply()
-        return session
-    }
-
-    private fun parseProfiles(text: String): List<SocialUser> {
-        val type = object : TypeToken<List<RemoteProfile>>() {}.type
-        val rows: List<RemoteProfile> = gson.fromJson(text, type) ?: emptyList()
-        return rows.map { SocialUser(it.id, it.username.orEmpty(), it.displayName.orEmpty(), it.avatarUrl, it.bio) }
-    }
-
-    private fun parsePosts(text: String): List<SocialPost> {
-        val type = object : TypeToken<List<RemotePost>>() {}.type
-        val rows: List<RemotePost> = gson.fromJson(text, type) ?: emptyList()
-        return rows.map { p ->
-            val author = p.author?.let { SocialUser(it.id, it.username.orEmpty(), it.displayName.orEmpty(), it.avatarUrl, it.bio) }
-                ?: SocialUser("", "", "TV 49 East user")
-            SocialPost(p.id, author, p.body.orEmpty(), p.mediaUrl, p.mediaType, p.createdAt.orEmpty(), p.likeCount, p.replyCount, p.repostCount)
-        }
+        try {
+            val o = gson.fromJson(raw.value, JsonObject::class.java)
+            val session = SocialSession(
+                o.get("access_token")?.asString.orEmpty(),
+                o.get("refresh_token")?.asString.orEmpty(),
+                o.getAsJsonObject("user")?.get("id")?.asString.orEmpty()
+            )
+            prefs.edit().putString("access_token", session.accessToken).putString("refresh_token", session.refreshToken).putString("user_id", session.userId).apply()
+            callback.onComplete(SocialResult(value = session))
+        } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
     }
 
     private fun json(value: Any): String = gson.toJson(value)
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
-    private fun <T> fail(callback: ResultCallback<T>, message: String) { callback.onComplete(SocialResult(error = IllegalStateException(message))) }
-
     private data class RawResult(val value: String, val error: Throwable?)
-    private data class RemoteProfile(val id: String, val username: String?, val displayName: String?, val avatarUrl: String?, val bio: String?)
-    private data class RemotePost(val id: String, val body: String?, val mediaUrl: String?, val mediaType: String?, val createdAt: String?, val likeCount: Int, val replyCount: Int, val repostCount: Int, val author: RemoteProfile?)
+
+    private fun parsePosts(s: String): List<SocialPost> = gson.fromJson(s, object : TypeToken<List<SocialPost>>() {}.type) ?: emptyList()
+    private fun parseProfiles(s: String): List<SocialUser> = gson.fromJson(s, object : TypeToken<List<SocialUser>>() {}.type) ?: emptyList()
+
+    private fun <T> fail(callback: ResultCallback<T>, message: String) = callback.onComplete(SocialResult(error = IllegalStateException(message)))
 }
