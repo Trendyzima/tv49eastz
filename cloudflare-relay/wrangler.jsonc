@@ -4,7 +4,13 @@
   "main": "src/entry.ts",
   "compatibility_date": "2026-09-04",
   "workers_dev": true,
-  "vars": {},
+  "vars": {
+    "SUPABASE_URL": "https://vfhehknmxxedvesdvpew.supabase.co",
+    "SUPABASE_PUBLISHABLE_KEY": "sb_publishable_PwOotJZQHwS9xnCFwUjHsQ_uXLNqkk9"
+  },
+  "r2_buckets": [
+    { "binding": "SOCIAL_MEDIA", "bucket_name": "tv49-east-social-media" }
+  ],
   "durable_objects": {
     "bindings": [
       { "name": "RELAY_TUNNEL", "class_name": "RelayTunnel" },

@@ -8,6 +8,7 @@
     "types": "wrangler types",
     "deploy": "wrangler deploy",
     "typecheck": "npm run types && tsc --noEmit",
+    "typecheck:federation": "npm run types -- --config wrangler.federation.jsonc && tsc --noEmit",
     "loadtest": "node load-test.mjs"
   },
   "dependencies": {},

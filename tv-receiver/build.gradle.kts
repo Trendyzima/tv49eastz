@@ -21,19 +21,22 @@ android {
             ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
 
-        // Public Supabase project configuration only. Never put a service_role key in the APK.
         val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim().orEmpty()
         val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim().orEmpty()
+        val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim().orEmpty()
+        val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "https://site.api.espn.com/apis/site/v2/sports/soccer"
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SOCIAL_MEDIA_URL", "\"${socialMediaUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "FOOTBALL_API_URL", "\"${footballApiUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     signingConfigs {
         create("release") {
             val props = Properties()
-            rootProject.file("local.properties").takeIf { it.exists() }?.inputStream().use { stream ->
-                stream?.let { props.load(it) }
-            }
+            rootProject.file("local.properties").takeIf { it.exists() }?.inputStream().use { stream -> stream?.let { props.load(it) } }
             val keystoreFile = props.getProperty("KEYSTORE_FILE", "")
             if (keystoreFile.isNotEmpty() && file(keystoreFile).exists()) {
                 storeFile = file(keystoreFile)
@@ -43,35 +46,19 @@ android {
             }
         }
     }
-
     val releaseSigningConfigValid = signingConfigs.getByName("release").storeFile != null
-
     buildTypes {
-        debug {
-            applicationIdSuffix = ".beta"
-            versionNameSuffix = "-beta"
-        }
+        debug { applicationIdSuffix = ".beta"; versionNameSuffix = "-beta" }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             if (releaseSigningConfigValid) signingConfig = signingConfigs.getByName("release")
         }
     }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+    compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
     kotlinOptions { jvmTarget = "17" }
-
-    testOptions {
-        unitTests { isIncludeAndroidResources = true }
-    }
-
+    testOptions { unitTests { isIncludeAndroidResources = true } }
     packaging { jniLibs.useLegacyPackaging = false }
     buildFeatures { buildConfig = true }
 }
@@ -88,7 +75,6 @@ dependencies {
     implementation(libs.okhttp)
     implementation(libs.gson)
     implementation(libs.viewpager2)
-
     testImplementation(libs.junit)
     testImplementation(libs.robolectric)
     androidTestImplementation(libs.ext.junit)
