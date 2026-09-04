@@ -9,20 +9,10 @@ import androidx.lifecycle.Lifecycle;
 import android.content.Intent;
 import android.content.ComponentName;
 
-import com.fadcam.integrations.CloudinaryMediaService;
-import com.fadcam.integrations.TV49Observability;
-
 public class FadCamApplication extends Application implements LifecycleObserver {
     @Override
     public void onCreate() {
         super.onCreate();
-
-        // Initialize third-party services once, at process startup.
-        // PostHog owns product analytics/feature flags; Sentry owns crashes/performance;
-        // Cloudinary owns social image/video media delivery and transformations.
-        TV49Observability.initialize(this);
-        CloudinaryMediaService.initialize(this);
-
         ProcessLifecycleOwner.get().getLifecycle().addObserver(this);
         // Room DB open + invalidation observer registration is deferred off the
         // main thread: cold start must not block on SQLite open. The observer
@@ -74,6 +64,8 @@ public class FadCamApplication extends Application implements LifecycleObserver 
     public void onAppForegrounded() {
         // Don't send it for TextEditorActivity, TransparentPermissionActivity, etc.
         // which are transparent/standalone and shouldn't wake up the main app
+        
+        // Get the currently focused activity
         ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
         if (am != null) {
             java.util.List<ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(1);
@@ -81,10 +73,13 @@ public class FadCamApplication extends Application implements LifecycleObserver 
                 ComponentName topActivity = tasks.get(0).topActivity;
                 if (topActivity != null) {
                     String activityClassName = topActivity.getClassName();
-                    boolean isRecordingRelated = activityClassName.contains("MainActivity") ||
+                    
+                    // Only send ACTION_APP_FOREGROUND for MainActivity (camera) or FadRecHomeFragment
+                    // Skip for transparent activities like TextEditorActivity, TransparentPermissionActivity
+                    boolean isRecordingRelated = activityClassName.contains("MainActivity") || 
                                                activityClassName.contains("FadRecHomeActivity") ||
                                                activityClassName.contains("RecordingActivity");
-
+                    
                     if (isRecordingRelated) {
                         Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
                         intent.setAction("ACTION_APP_FOREGROUND");
@@ -94,7 +89,7 @@ public class FadCamApplication extends Application implements LifecycleObserver 
                 }
             }
         }
-
+        
         // Fallback: send the broadcast anyway (error case)
         Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
         intent.setAction("ACTION_APP_FOREGROUND");
