@@ -1,0 +1,67 @@
+name: Deploy TV49 East Cloudflare Edge
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - 'cloudflare-relay/**'
+      - '.github/workflows/cloudflare-relay-deploy.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tv49eastz-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: cloudflare-relay
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: cloudflare-relay/package.json
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Deploy Worker
+        uses: cloudflare/wrangler-action@v4
+        env:
+          RELAY_SIGNING_SECRET: ${{ secrets.TV49_RELAY_SIGNING_SECRET }}
+          RELAY_DEVICE_SECRET: ${{ secrets.TV49_RELAY_DEVICE_SECRET }}
+          GATEWAY_API_KEY: ${{ secrets.TV49_GATEWAY_API_KEY }}
+          GATEWAY_CAPABILITY_KEY: ${{ secrets.TV49_GATEWAY_CAPABILITY_KEY }}
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-relay
+          command: deploy
+          secrets: |
+            RELAY_SIGNING_SECRET
+            RELAY_DEVICE_SECRET
+            GATEWAY_API_KEY
+            GATEWAY_CAPABILITY_KEY
+
+      - name: Verify public health endpoint
+        env:
+          CF_URL: https://tv49eastz-relay.${{ secrets.CLOUDFLARE_WORKERS_SUBDOMAIN }}.workers.dev
+        run: |
+          set -euo pipefail
+          body="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
+          echo "$body"
+          grep -q '"ok":true' <<<"$body"
