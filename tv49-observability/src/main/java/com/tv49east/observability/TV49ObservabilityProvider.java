@@ -12,16 +12,13 @@ import com.cloudinary.android.MediaManager;
 import com.posthog.PostHog;
 import com.posthog.android.PostHogAndroid;
 import com.posthog.android.PostHogAndroidConfig;
+import com.tv49east.integrations.CloudinaryMediaService;
 
 import io.sentry.Sentry;
 
 import java.util.HashMap;
 import java.util.Map;
 
-/**
- * Process-start bootstrapper. A dependency manifest can register this provider,
- * so the protected FadCam application source and manifest remain untouched.
- */
 public final class TV49ObservabilityProvider extends ContentProvider {
     static final String POSTHOG_KEY = "tv49east.posthog.key";
     static final String POSTHOG_HOST = "tv49east.posthog.host";
@@ -39,17 +36,16 @@ public final class TV49ObservabilityProvider extends ContentProvider {
         try {
             ProviderInfo info = context.getPackageManager().getProviderInfo(
                     new android.content.ComponentName(context, TV49ObservabilityProvider.class),
-                    android.content.pm.PackageManager.GET_META_DATA
-            );
+                    android.content.pm.PackageManager.GET_META_DATA);
             metadata = info.metaData;
-        } catch (Exception ignored) {
-            // Optional integrations must never block application startup.
-        }
+        } catch (Exception ignored) {}
 
         String posthogKey = value(metadata, POSTHOG_KEY);
         String posthogHost = value(metadata, POSTHOG_HOST, "https://us.i.posthog.com");
         String sentryDsn = value(metadata, SENTRY_DSN);
         String cloudName = value(metadata, CLOUDINARY_CLOUD);
+        String uploadPreset = value(metadata, CLOUDINARY_PRESET);
+        String folder = value(metadata, CLOUDINARY_FOLDER, "tv49-east");
 
         try {
             if (!posthogKey.isEmpty()) {
@@ -62,9 +58,7 @@ public final class TV49ObservabilityProvider extends ContentProvider {
                 PostHogAndroid.setup(context.getApplicationContext(), config);
                 PostHog.capture("tv49_observability_initialized");
             }
-        } catch (Throwable ignored) {
-            // Analytics failure must never crash the camera/streaming application.
-        }
+        } catch (Throwable ignored) {}
 
         try {
             if (!sentryDsn.isEmpty()) {
@@ -78,9 +72,7 @@ public final class TV49ObservabilityProvider extends ContentProvider {
                     options.setAttachViewHierarchy(false);
                 });
             }
-        } catch (Throwable ignored) {
-            // Diagnostics must remain non-fatal.
-        }
+        } catch (Throwable ignored) {}
 
         try {
             if (!cloudName.isEmpty()) {
@@ -89,18 +81,14 @@ public final class TV49ObservabilityProvider extends ContentProvider {
                 config.put("secure", true);
                 config.put("urlAnalytics", false);
                 MediaManager.init(context.getApplicationContext(), config);
+                CloudinaryMediaService.configure(uploadPreset, folder);
             }
-        } catch (Throwable ignored) {
-            // Media acceleration is optional; R2/Supabase remains the fallback.
-        }
+        } catch (Throwable ignored) {}
 
         return true;
     }
 
-    private static String value(Bundle metadata, String key) {
-        return value(metadata, key, "");
-    }
-
+    private static String value(Bundle metadata, String key) { return value(metadata, key, ""); }
     private static String value(Bundle metadata, String key, String fallback) {
         if (metadata == null) return fallback;
         String value = metadata.getString(key);
