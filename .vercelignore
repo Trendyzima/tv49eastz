@@ -1,0 +1,11 @@
+tv-receiver/
+cloudflare-relay/
+supabase/
+.github/
+.ci/
+*.apk
+*.aab
+*.keystore
+*.jks
+.gradle/
+build/
