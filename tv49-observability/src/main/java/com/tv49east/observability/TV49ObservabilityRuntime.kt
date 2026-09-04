@@ -8,7 +8,16 @@ import com.posthog.android.PostHogAndroidConfig
 import com.tv49east.integrations.CloudinaryMediaService
 import io.sentry.Sentry
 
-internal object TV49ObservabilityRuntime {
+/**
+ * Kotlin-owned SDK boundary. Java application code calls this facade instead of
+ * directly referencing Kotlin-heavy PostHog/Sentry APIs.
+ */
+object TV49ObservabilityRuntime {
+    @Volatile
+    private var initialized = false
+
+    @JvmStatic
+    @Synchronized
     fun initialize(
         context: Context,
         posthogKey: String,
@@ -17,7 +26,10 @@ internal object TV49ObservabilityRuntime {
         cloudName: String,
         uploadPreset: String,
         folder: String,
+        debug: Boolean,
     ) {
+        if (initialized) return
+
         val applicationContext = context.applicationContext
 
         if (posthogKey.isNotEmpty()) {
@@ -26,7 +38,7 @@ internal object TV49ObservabilityRuntime {
                     apiKey = posthogKey,
                     host = posthogHost,
                 ).apply {
-                    debug = false
+                    this.debug = debug
                     captureApplicationLifecycleEvents = true
                     captureScreenViews = true
                     flushAt = 20
@@ -41,8 +53,8 @@ internal object TV49ObservabilityRuntime {
             runCatching {
                 Sentry.init { options ->
                     options.dsn = sentryDsn
-                    options.environment = "production"
-                    options.tracesSampleRate = 0.20
+                    options.environment = if (debug) "development" else "production"
+                    options.tracesSampleRate = if (debug) 0.10 else 0.20
                     options.isSendDefaultPii = false
                     options.isEnableAutoSessionTracking = true
                 }
@@ -60,5 +72,52 @@ internal object TV49ObservabilityRuntime {
                 CloudinaryMediaService.configure(uploadPreset, folder)
             }
         }
+
+        initialized = true
+    }
+
+    @JvmStatic
+    fun capture(event: String, properties: Map<String, Any?>?) {
+        if (event.isBlank()) return
+        runCatching {
+            PostHog.capture(
+                event = event,
+                properties = properties ?: emptyMap(),
+            )
+        }
+    }
+
+    @JvmStatic
+    fun capture(event: String) {
+        capture(event, emptyMap())
+    }
+
+    @JvmStatic
+    fun exception(throwable: Throwable?) {
+        if (throwable == null) return
+        runCatching { Sentry.captureException(throwable) }
+    }
+
+    @JvmStatic
+    fun breadcrumb(message: String?) {
+        if (message.isNullOrBlank()) return
+        runCatching { Sentry.addBreadcrumb(message) }
+    }
+
+    @JvmStatic
+    fun identify(distinctId: String?, properties: Map<String, Any?>?) {
+        if (distinctId.isNullOrBlank()) return
+        runCatching {
+            PostHog.identify(
+                distinctId = distinctId,
+                userProperties = properties ?: emptyMap(),
+            )
+        }
+    }
+
+    @JvmStatic
+    fun resetIdentity() {
+        runCatching { PostHog.reset() }
+        runCatching { Sentry.setUser(null) }
     }
 }
