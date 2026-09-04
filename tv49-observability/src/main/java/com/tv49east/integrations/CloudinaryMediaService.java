@@ -15,7 +15,7 @@ public final class CloudinaryMediaService {
 
     private CloudinaryMediaService() {}
 
-    static void configure(String preset, String targetFolder) {
+    public static void configure(String preset, String targetFolder) {
         uploadPreset = preset == null ? "" : preset.trim();
         if (targetFolder != null && !targetFolder.trim().isEmpty()) folder = targetFolder.trim();
     }
