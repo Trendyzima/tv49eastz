@@ -15,6 +15,12 @@ concurrency:
   group: tv49eastz-cloudflare-production-v2
   cancel-in-progress: false
 
+env:
+  # Production deploys must use the canonical master Wrangler configuration,
+  # including the complete Durable Object migration history. Do not deploy
+  # historical container-era configs from older commits.
+  CLOUDFLARE_DEPLOY_ARCHITECTURE: native-relay
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
@@ -39,6 +45,19 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # Guard against accidentally deploying a historical Wrangler config that
+      # omits already-applied Durable Object migrations.
+      - name: Validate canonical Durable Object migration history
+        run: |
+          set -euo pipefail
+          grep -q '"tag": "v1"' wrangler.jsonc
+          grep -q '"tag": "v2"' wrangler.jsonc
+          grep -q '"tag": "v3-cloud-run"' wrangler.jsonc
+          grep -q '"tag": "v4-native-gateway"' wrangler.jsonc
+          grep -q '"name": "SESSION_STORE"' wrangler.jsonc
+          grep -q '"name": "RELAY_TUNNEL"' wrangler.jsonc
+          echo 'Canonical Durable Object configuration validated.'
+
       # Runtime secrets are managed in Cloudflare. Do not mirror them through
       # GitHub Actions: an absent/renamed GitHub secret would otherwise abort
       # deployment or overwrite a valid Cloudflare secret with an empty value.
@@ -49,7 +68,7 @@ jobs:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
-          command: deploy
+          command: deploy --containers-rollout=immediate
 
       - name: Verify deployed Worker
         env:
