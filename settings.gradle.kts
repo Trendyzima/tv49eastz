@@ -24,6 +24,7 @@ dependencyResolutionManagement {
 rootProject.name = "FadCam"
 include(":app")
 include(":tv-receiver")
+include(":tv49-observability")
 
 // Include the pinned patched Media3 composite build. The streaming path relies
 // on the patched muxer/common/container artifacts, so silently falling back to
