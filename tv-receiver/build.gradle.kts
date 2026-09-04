@@ -2,6 +2,7 @@ import java.util.Properties
 
 plugins {
     alias(libs.plugins.androidApplication)
+    alias(libs.plugins.kotlinAndroid)
 }
 
 android {
@@ -12,14 +13,19 @@ android {
         applicationId = "com.tv49.com"
         minSdk = 24
         targetSdk = 36
-        versionCode = 4
-        versionName = "2.2.0"
-        // Production default: the receiver discovers worldwide FadCam channels through
-        // the TV 49 East Edge control plane. A Gradle property can override this for tests.
+        versionCode = 5
+        versionName = "2.3.0"
+
         val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim()
             ?.takeIf { it.isNotEmpty() }
             ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+
+        // Public Supabase project configuration only. Never put a service_role key in the APK.
+        val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim().orEmpty()
+        val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim().orEmpty()
+        buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     signingConfigs {
@@ -60,17 +66,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
+    kotlinOptions { jvmTarget = "17" }
 
     testOptions {
-        unitTests {
-            isIncludeAndroidResources = true
-        }
+        unitTests { isIncludeAndroidResources = true }
     }
 
-    packaging {
-        jniLibs.useLegacyPackaging = false
-    }
-
+    packaging { jniLibs.useLegacyPackaging = false }
     buildFeatures { buildConfig = true }
 }
 
@@ -84,6 +86,7 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.media3.session)
     implementation(libs.okhttp)
+    implementation(libs.gson)
     implementation(libs.viewpager2)
 
     testImplementation(libs.junit)
