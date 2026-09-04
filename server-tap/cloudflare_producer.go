@@ -15,13 +15,14 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
 
-// The producer bridge is opt-in so the existing read-only server-tap behavior
-// remains unchanged unless explicitly configured for the Cloudflare edge path.
+// Opt-in bridge: the existing read-only tap remains unchanged unless the
+// Cloudflare producer variables are explicitly configured.
 func init() {
 	if strings.EqualFold(strings.TrimSpace(os.Getenv("CLOUDFLARE_PRODUCER_ENABLED")), "true") {
 		go runCloudflareProducer()
@@ -45,6 +46,23 @@ type relayResponse struct {
 	ID      int               `json:"id"`
 	Status  int               `json:"status"`
 	Headers map[string]string `json:"headers"`
+}
+
+type producerSocket struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
+func (s *producerSocket) writeJSON(value any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteJSON(value)
+}
+
+func (s *producerSocket) writeBinary(value []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.conn.WriteMessage(websocket.BinaryMessage, value)
 }
 
 func runCloudflareProducer() {
@@ -90,8 +108,9 @@ func cloudflareProducerOnce(relayBase, streamID, secret string) error {
 	}
 	defer conn.Close()
 
+	socket := &producerSocket{conn: conn}
 	_ = conn.SetReadDeadline(time.Now().Add(45 * time.Second))
-	if err := conn.WriteJSON(map[string]any{"type": "hello", "protocol": 2}); err != nil {
+	if err := socket.writeJSON(map[string]any{"type": "hello", "protocol": 2}); err != nil {
 		return err
 	}
 
@@ -106,27 +125,29 @@ func cloudflareProducerOnce(relayBase, streamID, secret string) error {
 		}
 		var command relayCommand
 		if err := json.Unmarshal(data, &command); err != nil {
-			_ = conn.WriteJSON(map[string]any{"type": "error", "error": "invalid_json"})
+			_ = socket.writeJSON(map[string]any{"type": "error", "error": "invalid_json"})
 			continue
 		}
 		if command.Type != "request" {
 			continue
 		}
 		if command.ID < 0 || len(command.Path) > producerMaxPath || !allowedProducerPath(command.Path) {
-			_ = conn.WriteJSON(map[string]any{"type": "error", "id": command.ID, "error": "path_not_allowed"})
+			_ = socket.writeJSON(map[string]any{"type": "error", "id": command.ID, "error": "path_not_allowed"})
 			continue
 		}
 		if command.Method != "" && command.Method != http.MethodGet {
-			_ = conn.WriteJSON(map[string]any{"type": "error", "id": command.ID, "error": "method_not_allowed"})
+			_ = socket.writeJSON(map[string]any{"type": "error", "id": command.ID, "error": "method_not_allowed"})
 			continue
 		}
-		if err := serveCloudflareRequest(conn, command); err != nil {
-			_ = conn.WriteJSON(map[string]any{"type": "error", "id": command.ID, "error": safeProducerError(err)})
-		}
+		go func(c relayCommand) {
+			if err := serveCloudflareRequest(socket, c); err != nil {
+				_ = socket.writeJSON(map[string]any{"type": "error", "id": c.ID, "error": safeProducerError(err)})
+			}
+		}(command)
 	}
 }
 
-func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
+func serveCloudflareRequest(socket *producerSocket, command relayCommand) error {
 	localPath := command.Path
 	if strings.HasPrefix(localPath, "/hls/") {
 		name := strings.TrimPrefix(localPath, "/hls/")
@@ -173,7 +194,7 @@ func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
 			headers[name] = value
 		}
 	}
-	if err := conn.WriteJSON(relayResponse{Type: "response", ID: command.ID, Status: response.StatusCode, Headers: headers}); err != nil {
+	if err := socket.writeJSON(relayResponse{Type: "response", ID: command.ID, Status: response.StatusCode, Headers: headers}); err != nil {
 		return err
 	}
 
@@ -184,7 +205,7 @@ func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
 			frame := make([]byte, 4+n)
 			binary.BigEndian.PutUint32(frame[:4], uint32(command.ID))
 			copy(frame[4:], buffer[:n])
-			if err := conn.WriteMessage(websocket.BinaryMessage, frame); err != nil {
+			if err := socket.writeBinary(frame); err != nil {
 				return err
 			}
 		}
@@ -195,7 +216,7 @@ func serveCloudflareRequest(conn *websocket.Conn, command relayCommand) error {
 			return readErr
 		}
 	}
-	return conn.WriteJSON(map[string]any{"type": "end", "id": command.ID})
+	return socket.writeJSON(map[string]any{"type": "end", "id": command.ID})
 }
 
 func allowedProducerPath(p string) bool {
