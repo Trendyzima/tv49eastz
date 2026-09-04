@@ -80,9 +80,13 @@ object TV49ObservabilityRuntime {
     fun capture(event: String, properties: Map<String, Any?>?) {
         if (event.isBlank()) return
         runCatching {
+            val safeProperties: Map<String, Any> = properties
+                ?.mapNotNull { (key, value) -> value?.let { key to it } }
+                ?.toMap()
+                ?: emptyMap()
             PostHog.capture(
                 event = event,
-                properties = properties ?: emptyMap(),
+                properties = safeProperties,
             )
         }
     }
@@ -108,9 +112,13 @@ object TV49ObservabilityRuntime {
     fun identify(distinctId: String?, properties: Map<String, Any?>?) {
         if (distinctId.isNullOrBlank()) return
         runCatching {
+            val safeProperties: Map<String, Any> = properties
+                ?.mapNotNull { (key, value) -> value?.let { key to it } }
+                ?.toMap()
+                ?: emptyMap()
             PostHog.identify(
                 distinctId = distinctId,
-                userProperties = properties ?: emptyMap(),
+                userProperties = safeProperties,
             )
         }
     }
