@@ -176,6 +176,7 @@ android {
 
 dependencies {
     implementation(project(":tv49-observability"))
+    implementation(project(":tv49-handoff"))
     implementation(libs.activity)
     implementation(libs.appintro.v631)
     implementation(libs.appcompat)
