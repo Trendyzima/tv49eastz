@@ -11,7 +11,7 @@ import android.service.quicksettings.Tile;
 import android.service.quicksettings.TileService;
 
 import com.fadcam.FLog;
-import com.fadcam.LiveProducerActivity;
+import com.fadcam.MainActivity;
 import com.fadcam.R;
 import com.fadcam.SharedPreferencesManager;
 import com.fadcam.dualcam.service.DualCameraRecordingService;
@@ -48,7 +48,7 @@ public final class LiveInterviewTileService extends TileService {
             if (active) {
                 stopProducerSession();
             } else {
-                Intent intent = new Intent(this, LiveProducerActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
+                Intent intent = new Intent(this, MainActivity.class).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
                     PendingIntent pi = PendingIntent.getActivity(this, 4901, intent,
                             PendingIntent.FLAG_UPDATE_CURRENT | PendingIntent.FLAG_IMMUTABLE);
