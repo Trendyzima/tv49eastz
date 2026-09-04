@@ -95,4 +95,4 @@ public class FadCamApplication extends Application implements LifecycleObserver 
         intent.setAction("ACTION_APP_FOREGROUND");
         startService(intent);
     }
-}
+} 
