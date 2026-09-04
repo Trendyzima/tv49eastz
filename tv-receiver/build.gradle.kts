@@ -86,6 +86,7 @@ dependencies {
     implementation(libs.media3.ui)
     implementation(libs.media3.session)
     implementation(libs.okhttp)
+    implementation(libs.gson)
     implementation(libs.viewpager2)
 
     testImplementation(libs.junit)
