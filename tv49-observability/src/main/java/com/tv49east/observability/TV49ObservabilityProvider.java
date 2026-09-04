@@ -8,17 +8,6 @@ import android.database.Cursor;
 import android.net.Uri;
 import android.os.Bundle;
 
-import com.cloudinary.android.MediaManager;
-import com.posthog.PostHog;
-import com.posthog.android.PostHogAndroid;
-import com.posthog.android.PostHogAndroidConfig;
-import com.tv49east.integrations.CloudinaryMediaService;
-
-import io.sentry.Sentry;
-
-import java.util.HashMap;
-import java.util.Map;
-
 public final class TV49ObservabilityProvider extends ContentProvider {
     static final String POSTHOG_KEY = "tv49east.posthog.key";
     static final String POSTHOG_HOST = "tv49east.posthog.host";
@@ -40,50 +29,14 @@ public final class TV49ObservabilityProvider extends ContentProvider {
             metadata = info.metaData;
         } catch (Exception ignored) {}
 
-        String posthogKey = value(metadata, POSTHOG_KEY);
-        String posthogHost = value(metadata, POSTHOG_HOST, "https://us.i.posthog.com");
-        String sentryDsn = value(metadata, SENTRY_DSN);
-        String cloudName = value(metadata, CLOUDINARY_CLOUD);
-        String uploadPreset = value(metadata, CLOUDINARY_PRESET);
-        String folder = value(metadata, CLOUDINARY_FOLDER, "tv49-east");
-
-        try {
-            if (!posthogKey.isEmpty()) {
-                PostHogAndroidConfig config = new PostHogAndroidConfig(posthogKey, posthogHost);
-                config.setDebug(false);
-                config.setCaptureApplicationLifecycleEvents(true);
-                config.setCaptureScreenViews(true);
-                config.setFlushAt(20);
-                config.setFlushIntervalSeconds(30);
-                PostHogAndroid.setup(context.getApplicationContext(), config);
-                PostHog.capture("tv49_observability_initialized");
-            }
-        } catch (Throwable ignored) {}
-
-        try {
-            if (!sentryDsn.isEmpty()) {
-                Sentry.init(options -> {
-                    options.setDsn(sentryDsn);
-                    options.setEnvironment("production");
-                    options.setTracesSampleRate(0.20);
-                    options.setSendDefaultPii(false);
-                    options.setEnableAutoSessionTracking(true);
-                    options.setAttachScreenshot(false);
-                    options.setAttachViewHierarchy(false);
-                });
-            }
-        } catch (Throwable ignored) {}
-
-        try {
-            if (!cloudName.isEmpty()) {
-                Map<String, Object> config = new HashMap<>();
-                config.put("cloud_name", cloudName);
-                config.put("secure", true);
-                config.put("urlAnalytics", false);
-                MediaManager.init(context.getApplicationContext(), config);
-                CloudinaryMediaService.configure(uploadPreset, folder);
-            }
-        } catch (Throwable ignored) {}
+        TV49ObservabilityRuntime.INSTANCE.initialize(
+                context,
+                value(metadata, POSTHOG_KEY),
+                value(metadata, POSTHOG_HOST, "https://us.i.posthog.com"),
+                value(metadata, SENTRY_DSN),
+                value(metadata, CLOUDINARY_CLOUD),
+                value(metadata, CLOUDINARY_PRESET),
+                value(metadata, CLOUDINARY_FOLDER, "tv49-east"));
 
         return true;
     }
