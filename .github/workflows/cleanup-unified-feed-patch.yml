@@ -1,0 +1,32 @@
+name: Cleanup unified feed integration
+on:
+  push:
+    branches: [feature/native-tv49-social]
+permissions:
+  contents: write
+jobs:
+  cleanup:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Remove duplicate generated declarations and events
+        shell: python
+        run: |
+          from pathlib import Path
+          p=Path('tv-receiver/src/main/java/com/fadcam/tv/SocialActivity.java')
+          s=p.read_text()
+          s=s.replace('import com.fadcam.tv.social.UnifiedFeedRepository;\nimport com.fadcam.tv.social.UnifiedFeedRepository;','import com.fadcam.tv.social.UnifiedFeedRepository;')
+          s=s.replace('private UnifiedFeedRepository unifiedRepo;\n    private String feedMode = "for_you";\n    private UnifiedFeedRepository unifiedRepo;\n    private String feedMode = "for_you";','private UnifiedFeedRepository unifiedRepo;\n    private String feedMode = "for_you";')
+          s=s.replace('unifiedRepo.recordEvent(p,"impression",0,feedback(""));unifiedRepo.recordEvent(p,"impression",0,feedback(""));','unifiedRepo.recordEvent(p,"impression",0,feedback(""));')
+          s=s.replace('statusLine("Home • For you"); content.removeAllViews();','statusLine("Home • "+("following".equals(feedMode)?"Following":"For you")); content.removeAllViews();')
+          p.write_text(s)
+      - name: Commit and remove cleanup workflow
+        run: |
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add tv-receiver/src/main/java/com/fadcam/tv/SocialActivity.java
+          rm .github/workflows/cleanup-unified-feed-patch.yml
+          git add -u .github/workflows/cleanup-unified-feed-patch.yml
+          git commit -m 'fix(android): clean unified feed integration' || exit 1
+          git push
