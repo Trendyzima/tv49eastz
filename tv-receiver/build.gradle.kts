@@ -24,9 +24,13 @@ android {
         val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim().orEmpty()
         val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim().orEmpty()
         val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim().orEmpty()
+        val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?: "https://site.api.espn.com/apis/site/v2/sports/soccer"
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "SUPABASE_ANON_KEY", "\"${supabaseAnonKey.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
         buildConfigField("String", "SOCIAL_MEDIA_URL", "\"${socialMediaUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
+        buildConfigField("String", "FOOTBALL_API_URL", "\"${footballApiUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
     }
 
     signingConfigs {
