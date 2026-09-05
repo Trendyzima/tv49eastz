@@ -42,7 +42,9 @@ public final class FadCamHandoffVerifierTest {
 
     @Test
     public void rejectsFutureTimestamp() throws Exception {
-        TestFixture fixture = fixtureWithTimes(fixture("future"), NOW + 31_000L, NOW + 60_000L);
+        // Keep this well outside the 30s clock-skew allowance so the test is not
+        // sensitive to scheduler/JVM timing between fixture creation and verify().
+        TestFixture fixture = fixtureWithTimes(fixture("future"), NOW + 120_000L, NOW + 165_000L);
         assertFalse(FadCamHandoffVerifier.verify(fixture.context, fixture.uri).accepted);
     }
 
@@ -65,8 +67,7 @@ public final class FadCamHandoffVerifierTest {
         TestFixture fixture = fixture("wrong-signature");
         String raw = fixture.uri.getQueryParameter("sig");
         String mutated = raw.substring(0, raw.length() - 1) + (raw.endsWith("A") ? "B" : "A");
-        Uri uri = fixture.uri.buildUpon().clearQuery().build();
-        uri = signedUriWithSignature(fixture, mutated);
+        Uri uri = signedUriWithSignature(fixture, mutated);
         assertFalse(FadCamHandoffVerifier.verify(fixture.context, uri).accepted);
     }
 
@@ -88,14 +89,14 @@ public final class FadCamHandoffVerifierTest {
     @Test
     public void rejectsModifiedUrl() throws Exception {
         TestFixture fixture = fixture("modified-url");
-        Uri modified = fixture.uri.buildUpon().appendQueryParameter("url", "http://192.168.1.99:8080/live.m3u8").build();
+        Uri modified = replaceQueryParameter(fixture.uri, "url", "http://192.168.1.99:8080/live.m3u8");
         assertFalse(FadCamHandoffVerifier.verify(fixture.context, modified).accepted);
     }
 
     @Test
     public void rejectsModifiedMetadata() throws Exception {
         TestFixture fixture = fixture("modified-metadata");
-        Uri modified = fixture.uri.buildUpon().appendQueryParameter("name", "Attacker").build();
+        Uri modified = replaceQueryParameter(fixture.uri, "name", "Attacker");
         assertFalse(FadCamHandoffVerifier.verify(fixture.context, modified).accepted);
     }
 
@@ -167,17 +168,22 @@ public final class FadCamHandoffVerifierTest {
     }
 
     private static Uri signedUriWithSignature(TestFixture fixture, String signature) {
-        return new Uri.Builder().scheme("fadcam").authority("stream")
-                .appendQueryParameter("v", fixture.uri.getQueryParameter("v"))
-                .appendQueryParameter("nonce", fixture.uri.getQueryParameter("nonce"))
-                .appendQueryParameter("iat", fixture.uri.getQueryParameter("iat"))
-                .appendQueryParameter("exp", fixture.uri.getQueryParameter("exp"))
-                .appendQueryParameter("package", fixture.uri.getQueryParameter("package"))
-                .appendQueryParameter("url", fixture.uri.getQueryParameter("url"))
-                .appendQueryParameter("name", fixture.uri.getQueryParameter("name"))
-                .appendQueryParameter("owner", fixture.uri.getQueryParameter("owner"))
-                .appendQueryParameter("pub", fixture.uri.getQueryParameter("pub"))
-                .appendQueryParameter("sig", signature).build();
+        return replaceQueryParameter(fixture.uri, "sig", signature);
+    }
+
+    /** Replace, rather than append, a query parameter so tamper tests exercise the actual value. */
+    private static Uri replaceQueryParameter(Uri original, String key, String replacement) {
+        Uri.Builder builder = original.buildUpon().clearQuery();
+        for (String name : original.getQueryParameterNames()) {
+            if (key.equals(name)) {
+                builder.appendQueryParameter(name, replacement);
+            } else {
+                for (String value : original.getQueryParameters(name)) {
+                    builder.appendQueryParameter(name, value);
+                }
+            }
+        }
+        return builder.build();
     }
 
     private static final class TestFixture {
