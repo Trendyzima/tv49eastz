@@ -20,21 +20,23 @@ android {
             ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
 
-        // Supabase is the social database/auth plane. The publishable key is
-        // intentionally client-side; RLS/Auth remain responsible for access.
         val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://aepbqfrmheihfsauzcby.supabase.co"
         val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "sb_publishable_f331BL1gsNy-otXRmQPtrw_SG8tCWLn"
 
         // Social media binaries are Cloudflare R2 objects exposed by the
-        // authenticated Cloudflare media Worker. The endpoint is populated by
-        // deployment automation after the Worker is deployed; local builds can
-        // override it with -PsocialMediaUrl=... or local.properties.
+        // authenticated Cloudflare media Worker. Deployment automation writes
+        // the current Worker URL to config/social_media_endpoint.txt; local or
+        // CI builds can override it with a Gradle property, local.properties,
+        // or the SOCIAL_MEDIA_URL environment variable.
         val endpointFile = rootProject.file("config/social_media_endpoint.txt")
         val endpointFromFile = if (endpointFile.isFile) endpointFile.readText().trim() else ""
+        val localProperties = Properties()
+        rootProject.file("local.properties").takeIf { it.isFile }?.inputStream().use { stream -> stream?.let { localProperties.load(it) } }
         val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: System.getenv("SOCIAL_MEDIA_URL")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: localProperties.getProperty("socialMediaUrl")?.trim()?.takeIf { it.isNotEmpty() }
             ?: endpointFromFile
 
         val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
