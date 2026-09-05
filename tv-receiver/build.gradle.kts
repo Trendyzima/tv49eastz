@@ -20,14 +20,23 @@ android {
             ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
 
-        // The publishable key is intentionally a client-side value. Supabase
-        // documents publishable keys as safe to ship in mobile applications;
-        // RLS/Auth remain responsible for protecting application data.
+        // Supabase is the social database/auth plane. The publishable key is
+        // intentionally client-side; RLS/Auth remain responsible for access.
         val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://aepbqfrmheihfsauzcby.supabase.co"
         val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "sb_publishable_f331BL1gsNy-otXRmQPtrw_SG8tCWLn"
-        val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim().orEmpty()
+
+        // Social media binaries are Cloudflare R2 objects exposed by the
+        // authenticated Cloudflare media Worker. The endpoint is populated by
+        // deployment automation after the Worker is deployed; local builds can
+        // override it with -PsocialMediaUrl=... or local.properties.
+        val endpointFile = rootProject.file("config/social_media_endpoint.txt")
+        val endpointFromFile = if (endpointFile.isFile) endpointFile.readText().trim() else ""
+        val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: System.getenv("SOCIAL_MEDIA_URL")?.trim()?.takeIf { it.isNotEmpty() }
+            ?: endpointFromFile
+
         val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://site.api.espn.com/apis/site/v2/sports/soccer"
         buildConfigField("String", "SUPABASE_URL", "\"${supabaseUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
