@@ -19,8 +19,14 @@ android {
         val catalogUrl = project.findProperty("tvEastCatalogUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://tv49east-edge-criss-projects-7c0f74aa.vercel.app"
         buildConfigField("String", "TV_EAST_CATALOG_URL", "\"${catalogUrl.replace("\\", "\\\\").replace("\"", "\\\"")}\"")
-        val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim().orEmpty()
-        val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim().orEmpty()
+
+        // The publishable key is intentionally a client-side value. Supabase
+        // documents publishable keys as safe to ship in mobile applications;
+        // RLS/Auth remain responsible for protecting application data.
+        val supabaseUrl = project.findProperty("supabaseUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "https://aepbqfrmheihfsauzcby.supabase.co"
+        val supabaseAnonKey = project.findProperty("supabaseAnonKey")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
+            ?: "sb_publishable_f331BL1gsNy-otXRmQPtrw_SG8tCWLn"
         val socialMediaUrl = project.findProperty("socialMediaUrl")?.toString()?.trim().orEmpty()
         val footballApiUrl = project.findProperty("footballApiUrl")?.toString()?.trim()?.takeIf { it.isNotEmpty() }
             ?: "https://site.api.espn.com/apis/site/v2/sports/soccer"
