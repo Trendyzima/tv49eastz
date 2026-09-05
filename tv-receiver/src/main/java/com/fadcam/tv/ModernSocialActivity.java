@@ -101,7 +101,57 @@ public final class ModernSocialActivity extends AppCompatActivity {
     private boolean requireAuth(){if(repo.isSignedIn())return true;showAuth(false);return false;}
     private void accountAction(){if(repo.isSignedIn())accountMenu();else showAuth(false);}
     private void showAuth(boolean startSignup){if(authDialog!=null&&authDialog.isShowing())authDialog.dismiss();final Dialog d=new Dialog(this);authDialog=d;d.requestWindowFeature(Window.FEATURE_NO_TITLE);LinearLayout root=sheet();TextView titleView=text(startSignup?"Create your account":"Welcome back",25,TEXT,true);root.addView(titleView);root.addView(text(startSignup?"Join TV 49 East in under a minute.":"Sign in to keep posting and following people.",13,MUTED,false));LinearLayout tabs=row();Button signTab=softButton("Sign in",startSignup?MUTED:Color.WHITE,startSignup?SOFT:PRIMARY);Button upTab=softButton("Create account",startSignup?Color.WHITE:MUTED,startSignup?PRIMARY:SOFT);tabs.addView(signTab,new LinearLayout.LayoutParams(0,dp(44),1));LinearLayout.LayoutParams up=new LinearLayout.LayoutParams(0,dp(44),1);up.leftMargin=dp(8);tabs.addView(upTab,up);LinearLayout.LayoutParams tp=new LinearLayout.LayoutParams(-1,dp(50));tp.topMargin=dp(16);root.addView(tabs,tp);LinearLayout fields=col();root.addView(fields,new LinearLayout.LayoutParams(-1,-2));renderAuthFields(fields,d,startSignup);signTab.setOnClickListener(v->{d.dismiss();showAuth(false);});upTab.setOnClickListener(v->{d.dismiss();showAuth(true);});d.setContentView(root);showBottomSheet(d);}
-    private void renderAuthFields(LinearLayout fields,Dialog d,boolean signup){fields.removeAllViews();EditText name=null,user=null;if(signup){name=new EditText(this);styleInput(name,"Display name",false);fields.addView(name,new LinearLayout.LayoutParams(-1,dp(48)));user=new EditText(this);styleInput(user,"Username",false);LinearLayout.LayoutParams up=new LinearLayout.LayoutParams(-1,dp(48));up.topMargin=dp(8);fields.addView(user,up);}EditText email=new EditText(this);styleInput(email,"Email",false);LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,dp(48));ep.topMargin=dp(8);fields.addView(email,ep);EditText pass=new EditText(this);styleInput(pass,"Password",true);LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(-1,dp(48));pp.topMargin=dp(8);fields.addView(pass,pp);TextView forgot=text("Forgot password?",13,PRIMARY,true);forgot.setPadding(0,dp(12),0,dp(4));forgot.setOnClickListener(v->resetPassword(email.getText().toString()));fields.addView(forgot);Button action=softButton(signup?"Create account":"Sign in",Color.WHITE,PRIMARY);action.setOnClickListener(v->{if(signup){repo.signUp(email.getText().toString(),pass.getText().toString(),user.getText().toString(),name.getText().toString(),r->{if(r.getError()!=null){toast(r.getError().getMessage());return;}if(r.getValue()!=null&&r.getValue().getAccessToken().isBlank()){d.dismiss();toast("Account created. Check your email to verify it, then sign in.");}else{d.dismiss();toast("Welcome to TV 49 East");loadFeed();}});}else{repo.signIn(email.getText().toString(),pass.getText().toString(),r->{if(r.getError()!=null){toast(r.getError().getMessage());return;}d.dismiss();toast("Welcome back");loadFeed();refreshAccountState();});}});LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,dp(50));ap.topMargin=dp(12);fields.addView(action,ap);TextView note=text("By continuing you agree to use TV 49 East responsibly and respect other people.",11,MUTED,false);note.setPadding(0,dp(12),0,0);fields.addView(note);}
+    private void renderAuthFields(LinearLayout fields,Dialog d,boolean signup){
+        fields.removeAllViews();
+        final EditText name=signup?new EditText(this):null;
+        final EditText user=signup?new EditText(this):null;
+        if(signup){
+            styleInput(name,"Display name",false);
+            fields.addView(name,new LinearLayout.LayoutParams(-1,dp(48)));
+            styleInput(user,"Username",false);
+            LinearLayout.LayoutParams up=new LinearLayout.LayoutParams(-1,dp(48));
+            up.topMargin=dp(8);
+            fields.addView(user,up);
+        }
+        final EditText email=new EditText(this);
+        styleInput(email,"Email",false);
+        LinearLayout.LayoutParams ep=new LinearLayout.LayoutParams(-1,dp(48));
+        ep.topMargin=dp(8);
+        fields.addView(email,ep);
+        final EditText pass=new EditText(this);
+        styleInput(pass,"Password",true);
+        LinearLayout.LayoutParams pp=new LinearLayout.LayoutParams(-1,dp(48));
+        pp.topMargin=dp(8);
+        fields.addView(pass,pp);
+        TextView forgot=text("Forgot password?",13,PRIMARY,true);
+        forgot.setPadding(0,dp(12),0,dp(4));
+        forgot.setOnClickListener(v->resetPassword(email.getText().toString()));
+        fields.addView(forgot);
+        Button action=softButton(signup?"Create account":"Sign in",Color.WHITE,PRIMARY);
+        action.setOnClickListener(v->{
+            if(signup){
+                repo.signUp(email.getText().toString(),pass.getText().toString(),user.getText().toString(),name.getText().toString(),r->{
+                    if(r.getError()!=null){toast(r.getError().getMessage());return;}
+                    if(r.getValue()!=null&&r.getValue().getAccessToken()!=null&&r.getValue().getAccessToken().isBlank()){
+                        d.dismiss();toast("Account created. Check your email to verify it, then sign in.");
+                    }else{
+                        d.dismiss();toast("Welcome to TV 49 East");loadFeed();
+                    }
+                });
+            }else{
+                repo.signIn(email.getText().toString(),pass.getText().toString(),r->{
+                    if(r.getError()!=null){toast(r.getError().getMessage());return;}
+                    d.dismiss();toast("Welcome back");loadFeed();refreshAccountState();
+                });
+            }
+        });
+        LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,dp(50));
+        ap.topMargin=dp(12);
+        fields.addView(action,ap);
+        TextView note=text("By continuing you agree to use TV 49 East responsibly and respect other people.",11,MUTED,false);
+        note.setPadding(0,dp(12),0,0);
+        fields.addView(note);
+    }
     private void resetPassword(String email){if(email.trim().isEmpty()){toast("Enter your email first");return;}repo.resetPassword(email,r->{if(r.getError()!=null)toast(r.getError().getMessage());else toast("Password reset instructions sent");});}
     private void accountMenu(){final Dialog d=new Dialog(this);d.requestWindowFeature(Window.FEATURE_NO_TITLE);LinearLayout b=sheet();b.addView(text("Your account",22,TEXT,true));Button profile=softButton("♙  Open profile",TEXT,SOFT);profile.setOnClickListener(v->{d.dismiss();profile();});b.addView(profile,new LinearLayout.LayoutParams(-1,dp(50)));Button signout=softButton("Sign out",Color.rgb(196,71,103),Color.rgb(253,237,242));signout.setOnClickListener(v->{repo.signOut();d.dismiss();refreshAccountState();loadFeed();toast("Signed out");});LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(50));sp.topMargin=dp(8);b.addView(signout,sp);d.setContentView(b);showBottomSheet(d);}
 
