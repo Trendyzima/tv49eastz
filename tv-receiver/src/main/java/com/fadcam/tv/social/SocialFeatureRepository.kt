@@ -45,8 +45,13 @@ class SocialFeatureRepository(context: Context) {
 
     fun viewPost(postId: String, callback: Callback<Boolean>) {
         val uid = userId() ?: return fail(callback, "Sign in required")
-        val path = "/rest/v1/post_views?post_id=eq.${enc(postId)}&viewer_id=eq.${enc(uid)}"
-        val request = requestBuilder(path).method("POST", json(mapOf("post_id" to postId, "viewer_id" to uid, "last_viewed_at" to "now()", "view_count" to 1))).build()
+        if (postId.isBlank()) return fail(callback, "Post id required")
+        val path = "/rest/v1/post_views?on_conflict=post_id,viewer_id"
+        val body = json(mapOf("post_id" to postId, "viewer_id" to uid, "last_viewed_at" to "now()", "view_count" to 1))
+        val request = requestBuilder(path)
+            .header("Prefer", "resolution=merge-duplicates")
+            .post(body.toRequestBody(jsonType))
+            .build()
         execute(request, callback)
     }
 
@@ -62,17 +67,16 @@ class SocialFeatureRepository(context: Context) {
         val clean = name.trim()
         if (clean.isEmpty() || clean.length > 80) return fail(callback, "List name must be 1-80 characters")
         val path = "/rest/v1/lists?select=id"
-        writeReturning(path, mapOf("owner_id" to uid, "name" to clean, "description" to description.trim().take(500), "is_private" to privateList), callback)
+        postReturning(path, mapOf("owner_id" to uid, "name" to clean, "description" to description.trim().take(500), "is_private" to privateList), callback) { raw ->
+            parseId(raw)
+        }
     }
 
     fun addListMember(listId: String, memberId: String, enabled: Boolean, callback: Callback<Boolean>) {
-        val uid = userId() ?: return fail(callback, "Sign in required")
-        if (enabled) {
-            // Membership writes are authorized by the list-owner RLS policy.
-            write("/rest/v1/list_members", mapOf("list_id" to listId, "user_id" to memberId), callback)
-        } else {
-            delete("/rest/v1/list_members?list_id=eq.${enc(listId)}&user_id=eq.${enc(memberId)}", callback)
-        }
+        if (userId() == null) return fail(callback, "Sign in required")
+        if (listId.isBlank() || memberId.isBlank()) return fail(callback, "List and member are required")
+        if (enabled) write("/rest/v1/list_members", mapOf("list_id" to listId, "user_id" to memberId), callback)
+        else delete("/rest/v1/list_members?list_id=eq.${enc(listId)}&user_id=eq.${enc(memberId)}", callback)
     }
 
     fun createConversation(memberIds: List<String>, callback: Callback<String?>) {
@@ -80,18 +84,23 @@ class SocialFeatureRepository(context: Context) {
         val members = (memberIds + uid).filter { it.isNotBlank() }.distinct()
         if (members.size < 2) return fail(callback, "At least two conversation members are required")
         postReturning("/rest/v1/conversations?select=id", emptyMap(), callback) { raw ->
-            val id = try { gson.fromJson(raw, Array<JsonObject>::class.java).firstOrNull()?.get("id")?.asString } catch (_: Throwable) { null }
-            if (id.isNullOrBlank()) return@postReturning SocialResult(error = IOException("Conversation id missing"))
+            val idResult = parseId(raw)
+            val id = idResult.value ?: return@postReturning idResult
             var remaining = members.size
             var firstError: Throwable? = null
+            val lock = Any()
             for (member in members) {
                 postRaw("/rest/v1/conversation_members", mapOf("conversation_id" to id, "user_id" to member)) { result ->
-                    if (result.error != null) firstError = result.error
-                    remaining--
-                    if (remaining == 0) callback.onComplete(if (firstError == null) SocialResult(value = id) else SocialResult(error = firstError))
+                    synchronized(lock) {
+                        if (result.error != null && firstError == null) firstError = result.error
+                        remaining--
+                        if (remaining == 0) {
+                            callback.onComplete(if (firstError == null) SocialResult(value = id) else SocialResult(error = firstError))
+                        }
+                    }
                 }
             }
-            null
+            SocialResult(value = null)
         }
     }
 
@@ -105,15 +114,13 @@ class SocialFeatureRepository(context: Context) {
     ) {
         val uid = userId() ?: return fail(callback, "Sign in required")
         val clean = body.trim()
+        if (conversationId.isBlank()) return fail(callback, "Conversation id required")
         if (clean.isEmpty() && sharedPostId.isNullOrBlank()) return fail(callback, "Message cannot be empty")
         if (clean.length > 10000) return fail(callback, "Message is too long")
         val fields = mutableMapOf<String, Any?>("conversation_id" to conversationId, "sender_id" to uid, "body" to clean, "client_message_id" to clientMessageId)
         if (!replyToMessageId.isNullOrBlank()) fields["reply_to_message_id"] = replyToMessageId
         if (!sharedPostId.isNullOrBlank()) fields["shared_post_id"] = sharedPostId
-        postReturning("/rest/v1/messages?select=id", fields, callback) { raw ->
-            try { SocialResult(value = gson.fromJson(raw, Array<JsonObject>::class.java).firstOrNull()?.get("id")?.asString) }
-            catch (t: Throwable) { SocialResult(error = t) }
-        }
+        postReturning("/rest/v1/messages?select=id", fields, callback) { raw -> parseId(raw) }
     }
 
     fun reactToMessage(messageId: String, reaction: String, enabled: Boolean, callback: Callback<Boolean>) {
@@ -127,7 +134,7 @@ class SocialFeatureRepository(context: Context) {
 
     fun editMessage(messageId: String, body: String, callback: Callback<Boolean>) {
         val clean = body.trim()
-        if (clean.isEmpty() || clean.length > 10000) return fail(callback, "Invalid message")
+        if (messageId.isBlank() || clean.isEmpty() || clean.length > 10000) return fail(callback, "Invalid message")
         patch("/rest/v1/messages?id=eq.${enc(messageId)}", mapOf("body" to clean, "edited_at" to "now()"), callback)
     }
 
@@ -143,13 +150,14 @@ class SocialFeatureRepository(context: Context) {
     fun saveDraft(draftId: String?, body: String, metadata: String = "{}", callback: Callback<String?>) {
         val uid = userId() ?: return fail(callback, "Sign in required")
         val clean = body.take(25000)
+        val meta = try { gson.fromJson(metadata, JsonObject::class.java) } catch (_: Throwable) { return fail(callback, "Invalid draft metadata") }
         if (draftId.isNullOrBlank()) {
-            postReturning("/rest/v1/post_drafts?select=id", mapOf("author_id" to uid, "body" to clean, "metadata" to gson.fromJson(metadata, JsonObject::class.java)), callback) { raw ->
-                try { SocialResult(value = gson.fromJson(raw, Array<JsonObject>::class.java).firstOrNull()?.get("id")?.asString) }
-                catch (t: Throwable) { SocialResult(error = t) }
-            }
+            postReturning("/rest/v1/post_drafts?select=id", mapOf("author_id" to uid, "body" to clean, "metadata" to meta), callback) { raw -> parseId(raw) }
         } else {
-            patch("/rest/v1/post_drafts?id=eq.${enc(draftId)}", mapOf("body" to clean, "metadata" to gson.fromJson(metadata, JsonObject::class.java), "updated_at" to "now()"), callback)
+            patch("/rest/v1/post_drafts?id=eq.${enc(draftId)}&author_id=eq.${enc(uid)}&select=id", mapOf("body" to clean, "metadata" to meta, "updated_at" to "now()")) { result ->
+                if (result.error != null) callback.onComplete(SocialResult(error = result.error))
+                else callback.onComplete(SocialResult(value = draftId))
+            }
         }
     }
 
@@ -158,7 +166,7 @@ class SocialFeatureRepository(context: Context) {
 
     fun editPost(postId: String, body: String, callback: Callback<Boolean>) {
         val clean = body.trim()
-        if (clean.isEmpty() || clean.length > 25000) return fail(callback, "Invalid post")
+        if (postId.isBlank() || clean.isEmpty() || clean.length > 25000) return fail(callback, "Invalid post")
         patch("/rest/v1/posts?id=eq.${enc(postId)}", mapOf("body" to clean, "edited_at" to "now()"), callback)
     }
 
@@ -172,6 +180,7 @@ class SocialFeatureRepository(context: Context) {
 
     private fun toggleRelation(table: String, actorColumn: String, targetColumn: String, target: String, enabled: Boolean, callback: Callback<Boolean>) {
         val uid = userId() ?: return fail(callback, "Sign in required")
+        if (target.isBlank() || target == uid) return fail(callback, "Invalid target")
         val filter = "$actorColumn=eq.${enc(uid)}&$targetColumn=eq.${enc(target)}"
         if (enabled) write("/rest/v1/$table", mapOf(actorColumn to uid, targetColumn to target), callback)
         else delete("/rest/v1/$table?$filter", callback)
@@ -180,9 +189,6 @@ class SocialFeatureRepository(context: Context) {
     private fun write(path: String, fields: Map<String, Any?>, callback: Callback<Boolean>) {
         postRaw(path, fields) { result -> callback.onComplete(if (result.error == null) SocialResult(value = true) else SocialResult(error = result.error)) }
     }
-
-    private fun writeReturning(path: String, fields: Map<String, Any?>, callback: Callback<String?>) =
-        postReturning(path, fields, callback) { raw -> SocialResult(value = raw) }
 
     private fun postReturning(path: String, fields: Map<String, Any?>, callback: Callback<String?>, parser: (String) -> SocialResult<String?>) {
         postRaw(path, fields) { result ->
@@ -232,6 +238,11 @@ class SocialFeatureRepository(context: Context) {
             }
         })
     }
+
+    private fun parseId(raw: String): SocialResult<String?> = try {
+        val id = gson.fromJson(raw, Array<JsonObject>::class.java).firstOrNull()?.get("id")?.takeUnless { it.isJsonNull }?.asString
+        if (id.isNullOrBlank()) SocialResult(error = IOException("API response did not contain an id")) else SocialResult(value = id)
+    } catch (t: Throwable) { SocialResult(error = t) }
 
     private fun enc(value: String): String = URLEncoder.encode(value, "UTF-8")
 
