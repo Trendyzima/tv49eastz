@@ -40,7 +40,9 @@ public final class XSocialApi {
     }
     private void request(String path,String method,String payload,CallbackResult cb){
         if(!configured()){cb.done("",new IOException("Social backend is not configured"));return;}
-        Request.Builder b=new Request.Builder().url(BuildConfig.SUPABASE_URL.trimEnd('/')+path).header("apikey",BuildConfig.SUPABASE_ANON_KEY);String t=token();if(t!=null&&!t.isBlank())b.header("Authorization","Bearer "+t);RequestBody body=payload==null?null:RequestBody.create(JSON,payload);b.method(method,body);
+        String base=BuildConfig.SUPABASE_URL;
+        while(base.endsWith("/")){base=base.substring(0,base.length()-1);}
+        Request.Builder b=new Request.Builder().url(base+path).header("apikey",BuildConfig.SUPABASE_ANON_KEY);String t=token();if(t!=null&&!t.isBlank())b.header("Authorization","Bearer "+t);RequestBody body=payload==null?null:RequestBody.create(JSON,payload);b.method(method,body);
         http.newCall(b.build()).enqueue(new Callback(){public void onFailure(Call c,IOException e){cb.done("",e);}public void onResponse(Call c,Response r){try(r){String s=r.body()==null?"":r.body().string();cb.done(s,r.isSuccessful()?null:new IOException("Supabase "+r.code()+": "+s));}}});
     }
     private String enc(String v){try{return java.net.URLEncoder.encode(v,"UTF-8");}catch(Exception e){return v;}}
