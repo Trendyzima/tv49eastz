@@ -2,7 +2,10 @@ export interface R2ObjectLike { body: ReadableStream; httpEtag: string; writeHtt
 export interface R2BucketLike { put(key: string, value: ReadableStream, options?: { httpMetadata?: { contentType?: string; cacheControl?: string }; customMetadata?: Record<string,string> }): Promise<unknown>; get(key: string): Promise<R2ObjectLike | null> }
 export interface MediaEnv { SOCIAL_MEDIA: R2BucketLike; SUPABASE_URL: string; SUPABASE_PUBLISHABLE_KEY: string }
 
-const MAX_BYTES = 20 * 1024 * 1024
+// Keep the Worker upload ceiling below Cloudflare's 100 MB request-body limit
+// on Free/Pro plans. Larger videos should use the future multipart/presigned
+// upload path rather than being buffered through a single Worker request.
+const MAX_BYTES = 95 * 1024 * 1024
 const ALLOWED = new Set(["image/jpeg", "image/png", "image/webp", "image/gif", "video/mp4", "video/webm"])
 const KINDS = new Set(["posts", "avatars", "covers"])
 
