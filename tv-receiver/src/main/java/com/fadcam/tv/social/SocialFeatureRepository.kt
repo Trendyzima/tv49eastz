@@ -17,14 +17,11 @@ import java.util.concurrent.TimeUnit
 /** Focused actor-scoped REST surface for advanced social interactions. */
 class SocialFeatureRepository(context: Context) {
     interface Callback<T> { fun onComplete(result: SocialResult<T>) }
-
     private val app = context.applicationContext
     private val prefs = app.getSharedPreferences("tv49_social_session", Context.MODE_PRIVATE)
     private val gson = Gson()
-    private val http = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
+    private val http = OkHttpClient.Builder().connectTimeout(12, TimeUnit.SECONDS).readTimeout(30, TimeUnit.SECONDS).writeTimeout(30, TimeUnit.SECONDS).build()
     private val jsonType = "application/json; charset=utf-8".toMediaType()
-
     private fun token(): String? = prefs.getString("access_token", null)
     private fun userId(): String? = prefs.getString("user_id", null)
     private fun base(): String = BuildConfig.SUPABASE_URL.trimEnd('/')
@@ -48,8 +45,7 @@ class SocialFeatureRepository(context: Context) {
     fun toggleListFollow(listId: String, enabled: Boolean, callback: Callback<Boolean>) {
         val uid = userId() ?: return fail(callback, "Sign in required")
         val filter = "list_id=eq.${enc(listId)}&user_id=eq.${enc(uid)}"
-        if (enabled) write("/rest/v1/list_followers", mapOf("list_id" to listId, "user_id" to uid), callback)
-        else delete("/rest/v1/list_followers?$filter", callback)
+        if (enabled) write("/rest/v1/list_followers", mapOf("list_id" to listId, "user_id" to uid), callback) else delete("/rest/v1/list_followers?$filter", callback)
     }
 
     fun createList(name: String, description: String, privateList: Boolean, callback: Callback<String?>) {
@@ -61,27 +57,26 @@ class SocialFeatureRepository(context: Context) {
 
     fun addListMember(listId: String, memberId: String, enabled: Boolean, callback: Callback<Boolean>) {
         if (userId() == null) return fail(callback, "Sign in required")
-        if (enabled) write("/rest/v1/list_members", mapOf("list_id" to listId, "user_id" to memberId), callback)
-        else delete("/rest/v1/list_members?list_id=eq.${enc(listId)}&user_id=eq.${enc(memberId)}", callback)
+        if (enabled) write("/rest/v1/list_members", mapOf("list_id" to listId, "user_id" to memberId), callback) else delete("/rest/v1/list_members?list_id=eq.${enc(listId)}&user_id=eq.${enc(memberId)}", callback)
     }
 
     fun createConversation(memberIds: List<String>, callback: Callback<String?>) {
         val uid = userId() ?: return fail(callback, "Sign in required")
         val members = (memberIds + uid).filter { it.isNotBlank() }.distinct()
         if (members.size < 2) return fail(callback, "At least two conversation members are required")
-        postReturning("/rest/v1/conversations?select=id", emptyMap(), callback) { raw ->
-            val id = parseId(raw)
-            if (id.isNullOrBlank()) return@postReturning SocialResult<String?>(error = IOException("Conversation id missing"))
+        postRaw("/rest/v1/conversations?select=id", emptyMap()) { result ->
+            if (result.error != null) return@postRaw callback.onComplete(SocialResult(error = result.error))
+            val id = parseId(result.value.orEmpty())
+            if (id.isNullOrBlank()) return@postRaw callback.onComplete(SocialResult(error = IOException("Conversation id missing")))
             var remaining = members.size
             var firstError: Throwable? = null
             for (member in members) {
-                postRaw("/rest/v1/conversation_members", mapOf("conversation_id" to id, "user_id" to member)) { result ->
-                    if (result.error != null) firstError = result.error
+                postRaw("/rest/v1/conversation_members", mapOf("conversation_id" to id, "user_id" to member)) { memberResult ->
+                    if (memberResult.error != null && firstError == null) firstError = memberResult.error
                     remaining--
                     if (remaining == 0) callback.onComplete(if (firstError == null) SocialResult(value = id) else SocialResult(error = firstError))
                 }
             }
-            null
         }
     }
 
@@ -101,8 +96,7 @@ class SocialFeatureRepository(context: Context) {
         val clean = reaction.trim().take(32)
         if (clean.isEmpty()) return fail(callback, "Reaction required")
         val filter = "message_id=eq.${enc(messageId)}&user_id=eq.${enc(uid)}&reaction=eq.${enc(clean)}"
-        if (enabled) write("/rest/v1/message_reactions", mapOf("message_id" to messageId, "user_id" to uid, "reaction" to clean), callback)
-        else delete("/rest/v1/message_reactions?$filter", callback)
+        if (enabled) write("/rest/v1/message_reactions", mapOf("message_id" to messageId, "user_id" to uid, "reaction" to clean), callback) else delete("/rest/v1/message_reactions?$filter", callback)
     }
 
     fun editMessage(messageId: String, body: String, callback: Callback<Boolean>) {
@@ -110,7 +104,6 @@ class SocialFeatureRepository(context: Context) {
         if (clean.isEmpty() || clean.length > 10000) return fail(callback, "Invalid message")
         patch("/rest/v1/messages?id=eq.${enc(messageId)}", mapOf("body" to clean, "edited_at" to "now()"), callback)
     }
-
     fun deleteMessage(messageId: String, callback: Callback<Boolean>) = patch("/rest/v1/messages?id=eq.${enc(messageId)}", mapOf("deleted_at" to "now()"), callback)
     fun toggleMute(targetUserId: String, enabled: Boolean, callback: Callback<Boolean>) = toggleRelation("mutes", "muter_id", "muted_id", targetUserId, enabled, callback)
     fun toggleBlock(targetUserId: String, enabled: Boolean, callback: Callback<Boolean>) = toggleRelation("user_blocks", "blocker_id", "blocked_id", targetUserId, enabled, callback)
@@ -119,28 +112,19 @@ class SocialFeatureRepository(context: Context) {
         val uid = userId() ?: return fail(callback, "Sign in required")
         val clean = body.take(25000)
         val parsedMetadata = try { gson.fromJson(metadata, JsonObject::class.java) } catch (_: Throwable) { return fail(callback, "Invalid draft metadata") }
-        if (draftId.isNullOrBlank()) {
-            postReturning("/rest/v1/post_drafts?select=id", mapOf("author_id" to uid, "body" to clean, "metadata" to parsedMetadata), callback) { raw -> SocialResult(value = parseId(raw)) }
-        } else {
-            patch("/rest/v1/post_drafts?id=eq.${enc(draftId)}", mapOf("body" to clean, "metadata" to parsedMetadata, "updated_at" to "now()")) { result ->
-                callback.onComplete(if (result.error == null) SocialResult<String?>(value = draftId) else SocialResult(error = result.error))
-            }
-        }
+        if (draftId.isNullOrBlank()) postReturning("/rest/v1/post_drafts?select=id", mapOf("author_id" to uid, "body" to clean, "metadata" to parsedMetadata), callback) { raw -> SocialResult(value = parseId(raw)) }
+        else patch("/rest/v1/post_drafts?id=eq.${enc(draftId)}", mapOf("body" to clean, "metadata" to parsedMetadata, "updated_at" to "now()")) { result -> callback.onComplete(if (result.error == null) SocialResult<String?>(value = draftId) else SocialResult(error = result.error)) }
     }
-
     fun deleteDraft(draftId: String, callback: Callback<Boolean>) = delete("/rest/v1/post_drafts?id=eq.${enc(draftId)}", callback)
-
     fun editPost(postId: String, body: String, callback: Callback<Boolean>) {
         val clean = body.trim()
         if (clean.isEmpty() || clean.length > 25000) return fail(callback, "Invalid post")
         patch("/rest/v1/posts?id=eq.${enc(postId)}", mapOf("body" to clean, "edited_at" to "now()"), callback)
     }
-
     fun loadConversations(limit: Int = 50, callback: Callback<String>) {
         val uid = userId() ?: return fail(callback, "Sign in required")
         get("/rest/v1/conversation_members?user_id=eq.${enc(uid)}&select=conversation_id,joined_at,last_read_at,conversations(id,updated_at)&order=joined_at.desc&limit=${limit.coerceIn(1,100)}", callback)
     }
-
     fun loadListTimeline(listId: String, limit: Int = 30, callback: Callback<String>) = get("/rest/v1/list_members?list_id=eq.${enc(listId)}&select=user_id&limit=${limit.coerceIn(1,100)}", callback)
 
     private fun toggleRelation(table: String, actorColumn: String, targetColumn: String, target: String, enabled: Boolean, callback: Callback<Boolean>) {
@@ -148,7 +132,6 @@ class SocialFeatureRepository(context: Context) {
         val filter = "$actorColumn=eq.${enc(uid)}&$targetColumn=eq.${enc(target)}"
         if (enabled) write("/rest/v1/$table", mapOf(actorColumn to uid, targetColumn to target), callback) else delete("/rest/v1/$table?$filter", callback)
     }
-
     private fun write(path: String, fields: Map<String, Any?>, callback: Callback<Boolean>) = postRaw(path, fields) { result -> callback.onComplete(if (result.error == null) SocialResult(value = true) else SocialResult(error = result.error)) }
     private fun writeReturning(path: String, fields: Map<String, Any?>, callback: Callback<String?>) = postReturning(path, fields, callback) { raw -> SocialResult(value = raw) }
     private fun postReturning(path: String, fields: Map<String, Any?>, callback: Callback<String?>, parser: (String) -> SocialResult<String?>) = postRaw(path, fields) { result -> if (result.error != null) callback.onComplete(SocialResult(error = result.error)) else callback.onComplete(parser(result.value.orEmpty())) }
