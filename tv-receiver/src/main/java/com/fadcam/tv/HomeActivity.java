@@ -29,7 +29,7 @@ public final class HomeActivity extends Activity {
         Button live=action("OPEN LIVE TV / FADCAM",v->open(MainActivity.class));live.setBackgroundColor(ACCENT);live.setTextColor(Color.BLACK);card.addView(live,new LinearLayout.LayoutParams(-1,dp(52)));
         Button fadcam=action("OPEN FADCAM LOCAL BROADCAST",v->open(FadCamLocalReceiverActivity.class));LinearLayout.LayoutParams fbp=new LinearLayout.LayoutParams(-1,dp(52));fbp.topMargin=dp(10);card.addView(fadcam,fbp);
         Button football=action("OPEN LIVE SCORES / FIXTURES",v->open(FootballActivity.class));LinearLayout.LayoutParams fp=new LinearLayout.LayoutParams(-1,dp(52));fp.topMargin=dp(10);card.addView(football,fp);
-        Button social=action("OPEN SOCIAL",v->open(SocialActivity.class));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(52));sp.topMargin=dp(10);card.addView(social,sp);
+        Button social=action("OPEN SOCIAL",v->open(ModernSocialActivity.class));LinearLayout.LayoutParams sp=new LinearLayout.LayoutParams(-1,dp(52));sp.topMargin=dp(10);card.addView(social,sp);
         Button wallet=action("OPEN WALLET / PAYPAL",v->open(WalletActivity.class));LinearLayout.LayoutParams wp=new LinearLayout.LayoutParams(-1,dp(52));wp.topMargin=dp(10);card.addView(wallet,wp);
         Button ai=action("OPEN TV 49 EAST AI",v->open(AiAssistantActivity.class));LinearLayout.LayoutParams ap=new LinearLayout.LayoutParams(-1,dp(52));ap.topMargin=dp(10);card.addView(ai,ap);
         TextView footer=label("Touch + D-pad ready • FadCam HLS bridge • streaming boundary preserved",11,MUTED,false);footer.setGravity(Gravity.CENTER);LinearLayout.LayoutParams lp=new LinearLayout.LayoutParams(-1,-2);lp.topMargin=dp(28);content.addView(footer,lp);
