@@ -1,0 +1,5 @@
+# Local development only. Never commit real credentials.
+RELAY_SIGNING_SECRET=replace-with-local-secret
+RELAY_DEVICE_SECRET=replace-with-local-secret
+GATEWAY_API_KEY=replace-with-local-secret
+GATEWAY_CAPABILITY_KEY=replace-with-local-secret
