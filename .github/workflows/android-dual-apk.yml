@@ -10,8 +10,6 @@ on:
 permissions:
   contents: write
 
-# PR builds may be superseded safely. Master builds must finish so a good APK
-# build cannot be killed merely because another commit arrived on master.
 concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -35,6 +33,29 @@ jobs:
         uses: actions/checkout@v6
         with:
           persist-credentials: false
+
+      - name: Resolve Cloudflare media endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          endpoint=""
+          source_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/master/config/social_media_endpoint.txt"
+          for attempt in $(seq 1 36); do
+            endpoint="$(curl --silent --show-error --fail --max-time 10 "$source_url" 2>/dev/null | tr -d '\r\n' || true)"
+            if [[ "$endpoint" =~ ^https://[^[:space:]]+$ ]]; then
+              echo "Cloudflare media endpoint resolved."
+              echo "SOCIAL_MEDIA_URL=$endpoint" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            echo "Cloudflare media endpoint not published yet (attempt $attempt/36); waiting 10s..."
+            sleep 10
+          done
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            echo "No production Cloudflare endpoint is required for PR compilation; continuing without one."
+            exit 0
+          fi
+          echo "Cloudflare media endpoint was not published by deployment automation."
+          exit 1
 
       - name: Fetch pinned patched Media3
         shell: bash
@@ -130,7 +151,8 @@ jobs:
             "KEYSTORE_PASSWORD=$CI_KEYSTORE_PASSWORD" \
             "KEY_ALIAS=$CI_KEY_ALIAS" \
             "KEY_PASSWORD=$CI_KEY_PASSWORD" \
-            "media3.patched.path=$MEDIA3_PATCHED_PATH" > local.properties
+            "media3.patched.path=$MEDIA3_PATCHED_PATH" \
+            "socialMediaUrl=${SOCIAL_MEDIA_URL:-}" > local.properties
           chmod 600 local.properties
 
       - name: Verify patched Media3 substitution
@@ -150,11 +172,6 @@ jobs:
       - name: Run Android tests
         run: ./gradlew clean :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
-      # Do not package both Android applications in one Gradle invocation.
-      # The FadCam APK contains a large native dependency set and its release
-      # R8/ZipFlinger path is memory-heavy. Separate invocations give each
-      # application a clean Gradle JVM and prevent cross-module packaging
-      # pressure from turning into heap exhaustion or orphaned JVMs.
       - name: Build FadCam APKs
         shell: bash
         run: |
@@ -196,6 +213,7 @@ jobs:
           printf '%s\n' \
             "Build commit: $GITHUB_SHA" \
             "Media3 patch: $MEDIA3_PATCHED_SHA" \
+            "Cloudflare media endpoint: ${SOCIAL_MEDIA_URL:-not configured for PR}" \
             "CI APKs use an ephemeral CI signing key and are for testing." \
             "Production releases are published separately by production-release.yml." \
             > dist/BUILD-INFO.txt
