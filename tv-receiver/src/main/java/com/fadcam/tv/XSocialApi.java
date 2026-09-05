@@ -35,15 +35,26 @@ public final class XSocialApi {
     public void createConversation(String[] memberIds,CallbackResult cb){
         java.util.List<String> ids=new java.util.ArrayList<>();for(String id:memberIds)if(id!=null&&!id.isBlank())ids.add(id);post("/rest/v1/rpc/create_conversation_atomic",java.util.Collections.singletonMap("p_member_ids",ids),cb);
     }
-    public void sendMessage(String conversationId,String body,CallbackResult cb){
-        java.util.Map<String,Object> m=new java.util.HashMap<>();m.put("conversation_id",conversationId);m.put("body",body.trim());m.put("sender_id",uid());post("/rest/v1/messages",m,cb);
+    public void sendMessage(String conversationId,String body,String idempotencyKey,CallbackResult cb){
+        java.util.Map<String,Object> m=new java.util.HashMap<>();m.put("conversation_id",conversationId);m.put("body",body.trim());m.put("sender_id",uid());if(idempotencyKey!=null&&!idempotencyKey.isBlank())m.put("idempotency_key",idempotencyKey);post("/rest/v1/messages",m,cb);
     }
+    public void sendMessage(String conversationId,String body,CallbackResult cb){ sendMessage(conversationId,body,null,cb); }
     private void request(String path,String method,String payload,CallbackResult cb){
         if(!configured()){cb.done("",new IOException("Social backend is not configured"));return;}
         String base=BuildConfig.SUPABASE_URL;
         while(base.endsWith("/")){base=base.substring(0,base.length()-1);}
         Request.Builder b=new Request.Builder().url(base+path).header("apikey",BuildConfig.SUPABASE_ANON_KEY);String t=token();if(t!=null&&!t.isBlank())b.header("Authorization","Bearer "+t);RequestBody body=payload==null?null:RequestBody.create(JSON,payload);b.method(method,body);
-        http.newCall(b.build()).enqueue(new Callback(){public void onFailure(Call c,IOException e){cb.done("",e);}public void onResponse(Call c,Response r){try(r){String s=r.body()==null?"":r.body().string();cb.done(s,r.isSuccessful()?null:new IOException("Supabase "+r.code()+": "+s));}}});
+        http.newCall(b.build()).enqueue(new Callback(){
+            public void onFailure(Call c,IOException e){cb.done("",e);}
+            public void onResponse(Call c,Response r){
+                try(r){
+                    String s=r.body()==null?"":r.body().string();
+                    cb.done(s,r.isSuccessful()?null:new IOException("Supabase "+r.code()+": "+s));
+                }catch(IOException e){
+                    cb.done("",e);
+                }
+            }
+        });
     }
     private String enc(String v){try{return java.net.URLEncoder.encode(v,"UTF-8");}catch(Exception e){return v;}}
 }
