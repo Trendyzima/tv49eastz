@@ -30,20 +30,70 @@ import java.util.List;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
-/** Modern native TV 49 East social surface. */
+/** Modern native TV 49 East social surface and application navigation shell. */
 public final class ModernSocialActivity extends AppCompatActivity {
     private static final int BG=Color.rgb(39,9,70), BG2=Color.rgb(79,18,116), CARD=Color.rgb(55,15,84);
     private static final int TEXT=Color.WHITE, MUTED=Color.rgb(211,194,224), PINK=Color.rgb(255,76,155), ORANGE=Color.rgb(255,148,73), LILAC=Color.rgb(218,183,255);
     private final ExecutorService images=Executors.newFixedThreadPool(3);
     private SupabaseSocialRepository repo; private LinearLayout feed; private TextView title; private float downX,downY;
+    private FrameLayout shell; private View drawerScrim; private LinearLayout drawer;
 
     @Override protected void onCreate(@Nullable Bundle state){super.onCreate(state);try{getWindow().setStatusBarColor(Color.rgb(27,5,48));getWindow().setNavigationBarColor(Color.rgb(17,3,30));repo=new SupabaseSocialRepository(this);build();loadFeed();}catch(Throwable t){fatal(t);}}
-    @Override public boolean dispatchTouchEvent(MotionEvent e){if(e.getActionMasked()==MotionEvent.ACTION_DOWN){downX=e.getRawX();downY=e.getRawY();}if(e.getActionMasked()==MotionEvent.ACTION_UP){float dx=e.getRawX()-downX,dy=e.getRawY()-downY;if(Math.abs(dx)>Math.abs(dy)*1.25f&&dx>dp(80)){openTv();return true;}}return super.dispatchTouchEvent(e);}
+    @Override protected void onDestroy(){images.shutdownNow();super.onDestroy();}
 
-    private void build(){FrameLayout root=new FrameLayout(this);root.setBackgroundColor(BG);LinearLayout main=col();main.setPadding(dp(12),dp(4),dp(12),0);
-        LinearLayout head=row();head.setGravity(Gravity.CENTER_VERTICAL);TextView logo=text("49",27,TEXT,true);logo.setGravity(Gravity.CENTER);logo.setBackground(gradient(PINK,ORANGE,22));head.addView(logo,new LinearLayout.LayoutParams(dp(52),dp(42)));title=text("MeetUp",21,TEXT,true);title.setPadding(dp(10),0,0,0);head.addView(title,new LinearLayout.LayoutParams(0,dp(42),1));head.addView(icon("♧",v->alerts()),new LinearLayout.LayoutParams(dp(42),dp(42)));Button post=button("＋ Post",TEXT,Color.TRANSPARENT);post.setOnClickListener(v->compose());head.addView(post,new LinearLayout.LayoutParams(dp(104),dp(42)));Button account=button("T",TEXT,PINK);account.setOnClickListener(v->profile());head.addView(account,new LinearLayout.LayoutParams(dp(44),dp(42)));main.addView(head);
+    /** Horizontal navigation is intentionally part of the social shell: left opens Live TV, right opens AI. */
+    @Override public boolean dispatchTouchEvent(MotionEvent e){
+        if(e.getActionMasked()==MotionEvent.ACTION_DOWN){downX=e.getRawX();downY=e.getRawY();}
+        if(e.getActionMasked()==MotionEvent.ACTION_UP){
+            float dx=e.getRawX()-downX,dy=e.getRawY()-downY;
+            if(Math.abs(dx)>Math.abs(dy)*1.25f&&Math.abs(dx)>dp(80)){
+                if(drawer!=null&&drawer.getVisibility()==View.VISIBLE){closeDrawer();return true;}
+                if(dx<0){openTv();}else{openAi();}
+                return true;
+            }
+        }
+        return super.dispatchTouchEvent(e);
+    }
+
+    private void build(){
+        shell=new FrameLayout(this);shell.setBackgroundColor(BG);
+        LinearLayout main=col();main.setPadding(dp(12),dp(4),dp(12),0);
+        LinearLayout head=row();head.setGravity(Gravity.CENTER_VERTICAL);
+        TextView menu=icon("☰",v->toggleDrawer());menu.setContentDescription("Open TV 49 East navigation");head.addView(menu,new LinearLayout.LayoutParams(dp(46),dp(42)));
+        TextView logo=text("49",25,TEXT,true);logo.setGravity(Gravity.CENTER);logo.setBackground(gradient(PINK,ORANGE,22));head.addView(logo,new LinearLayout.LayoutParams(dp(50),dp(42)));
+        title=text("MeetUp",21,TEXT,true);title.setPadding(dp(10),0,0,0);head.addView(title,new LinearLayout.LayoutParams(0,dp(42),1));
+        head.addView(icon("♧",v->alerts()),new LinearLayout.LayoutParams(dp(42),dp(42)));
+        Button post=button("＋ Post",TEXT,Color.TRANSPARENT);post.setOnClickListener(v->compose());head.addView(post,new LinearLayout.LayoutParams(dp(104),dp(42)));
+        Button account=button("T",TEXT,PINK);account.setOnClickListener(v->profile());head.addView(account,new LinearLayout.LayoutParams(dp(44),dp(42)));main.addView(head);
+
         EditText search=new EditText(this);search.setSingleLine(true);search.setTextColor(TEXT);search.setHintTextColor(MUTED);search.setHint("⌕  Search creators, posts, football…");search.setTextSize(14);search.setPadding(dp(18),0,dp(18),0);search.setBackground(round(Color.argb(55,255,255,255),26));search.setOnEditorActionListener((v,a,e)->{search(v.getText().toString());return true;});main.addView(search,new LinearLayout.LayoutParams(-1,dp(44)));
-        main.addView(chips());ScrollView body=new ScrollView(this);body.setFillViewport(true);feed=col();feed.setPadding(0,dp(6),0,dp(86));body.addView(feed,new ScrollView.LayoutParams(-1,-2));main.addView(body,new LinearLayout.LayoutParams(-1,0,1));main.addView(bottom());root.addView(main,new FrameLayout.LayoutParams(-1,-1));Button fab=button("＋",TEXT,PINK);fab.setTextSize(24);fab.setOnClickListener(v->compose());FrameLayout.LayoutParams fp=new FrameLayout.LayoutParams(dp(58),dp(58),Gravity.RIGHT|Gravity.BOTTOM);fp.setMargins(0,0,dp(18),dp(76));root.addView(fab,fp);setContentView(root);}
+        main.addView(chips());ScrollView body=new ScrollView(this);body.setFillViewport(true);feed=col();feed.setPadding(0,dp(6),0,dp(86));body.addView(feed,new ScrollView.LayoutParams(-1,-2));main.addView(body,new LinearLayout.LayoutParams(-1,0,1));main.addView(bottom());shell.addView(main,new FrameLayout.LayoutParams(-1,-1));
+        Button fab=button("＋",TEXT,PINK);fab.setTextSize(24);fab.setOnClickListener(v->compose());FrameLayout.LayoutParams fp=new FrameLayout.LayoutParams(dp(58),dp(58),Gravity.RIGHT|Gravity.BOTTOM);fp.setMargins(0,0,dp(18),dp(76));shell.addView(fab,fp);
+        buildDrawer();setContentView(shell);
+    }
+
+    private void buildDrawer(){
+        drawerScrim=new View(this);drawerScrim.setBackgroundColor(Color.argb(150,0,0,0));drawerScrim.setVisibility(View.GONE);drawerScrim.setOnClickListener(v->closeDrawer());shell.addView(drawerScrim,new FrameLayout.LayoutParams(-1,-1));
+        drawer=col();drawer.setPadding(dp(18),dp(28),dp(18),dp(18));drawer.setBackground(gradient(Color.rgb(43,8,76),Color.rgb(74,13,104),28));
+        FrameLayout.LayoutParams dp=new FrameLayout.LayoutParams(dp(306),-1,Gravity.LEFT);dp.setMargins(0,0,dp(8),0);shell.addView(drawer,dp);drawer.setVisibility(View.GONE);
+        TextView brand=text("TV 49 EAST",14,LILAC,true);drawer.addView(brand,new LinearLayout.LayoutParams(-1,dp(30)));
+        TextView navTitle=text("Navigation",25,TEXT,true);drawer.addView(navTitle,new LinearLayout.LayoutParams(-1,dp(48)));
+        TextView hint=text("Swipe left/right on the social screen for quick navigation.",12,MUTED,false);hint.setPadding(0,0,0,dp(12));drawer.addView(hint);
+        addDrawerItem(drawer,"⌂","Social / For You",()->{closeDrawer();title.setText("MeetUp");loadFeed();});
+        addDrawerItem(drawer,"▣","Live TV",()->{closeDrawer();openTv();});
+        addDrawerItem(drawer,"◉","FadCam Local Broadcast",()->{closeDrawer();open(FadCamLocalReceiverActivity.class);});
+        addDrawerItem(drawer,"⚽","Live Scores / Fixtures",()->{closeDrawer();open(FootballActivity.class);});
+        addDrawerItem(drawer,"▣","Wallet / PayPal",()->{closeDrawer();open(WalletActivity.class);});
+        addDrawerItem(drawer,"✦","TV 49 East AI",()->{closeDrawer();openAi();});
+        TextView foot=text("Social is the default home. All destinations remain native Android.",12,MUTED,false);foot.setPadding(0,dp(22),0,0);drawer.addView(foot);
+    }
+
+    private void addDrawerItem(LinearLayout parent,String icon,String label,Runnable action){
+        Button b=button(icon+"   "+label,TEXT,Color.argb(42,255,255,255));b.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);b.setTextSize(14);b.setOnClickListener(v->action.run());LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-1,dp(52));p.setMargins(0,dp(5),0,dp(5));parent.addView(b,p);
+    }
+    private void toggleDrawer(){if(drawer.getVisibility()==View.VISIBLE)closeDrawer();else openDrawer();}
+    private void openDrawer(){drawerScrim.setVisibility(View.VISIBLE);drawer.setVisibility(View.VISIBLE);drawer.bringToFront();drawerScrim.bringToFront();drawer.bringToFront();}
+    private void closeDrawer(){drawer.setVisibility(View.GONE);drawerScrim.setVisibility(View.GONE);}
 
     private View chips(){HorizontalScrollView hs=new HorizontalScrollView(this);hs.setHorizontalScrollBarEnabled(false);LinearLayout r=row();String[] names={"For You","Following","On TV","Clips","People","Football","Music","Live"};for(String n:names){TextView c=text(n,14,"For You".equals(n)?TEXT:MUTED,"For You".equals(n));c.setGravity(Gravity.CENTER);c.setPadding(dp(18),0,dp(18),0);c.setBackground("For You".equals(n)?gradient(PINK,ORANGE,24):round(Color.argb(35,255,255,255),24));final String x=n;c.setOnClickListener(v->{title.setText(x);if("On TV".equals(x)||"Live".equals(x))openTv();else if("Clips".equals(x))reels();else loadFeed();});LinearLayout.LayoutParams p=new LinearLayout.LayoutParams(-2,dp(42));p.setMargins(0,dp(5),dp(7),dp(5));r.addView(c,p);}hs.addView(r,new HorizontalScrollView.LayoutParams(-2,dp(52)));return hs;}
 
@@ -61,6 +111,8 @@ public final class ModernSocialActivity extends AppCompatActivity {
     private void search(String q){if(q==null||q.trim().isEmpty())return;repo.searchPosts(q.trim(),30,r->runOnUiThread(()->{feed.removeAllViews();title.setText("Search");if(r.getValue()!=null)for(SocialPost p:r.getValue())addPost(p);else empty("No matching posts.");}));}
     private void navigate(String d){if("Live TV".equals(d)){openTv();return;}if("Profile".equals(d)){profile();return;}if("Meet Up".equals(d)){title.setText("Meet Up");repo.loadTrending(20,r->runOnUiThread(()->{feed.removeAllViews();if(r.getValue()!=null)for(SocialPost p:r.getValue())addPost(p);else empty("No recommendations yet.");}));return;}if("Chats".equals(d)){if(!repo.isSignedIn())auth();else new AlertDialog.Builder(this).setTitle("Chats").setMessage("Messaging is wired to the Supabase conversation RPC layer. Open Messages from the next navigation build to view the full conversation list.").setPositiveButton("OK",null).show();return;}title.setText("MeetUp");loadFeed();}
     private void openTv(){startActivity(new Intent(this,MainActivity.class));overridePendingTransition(android.R.anim.slide_in_left,android.R.anim.slide_out_right);finish();}
+    private void openAi(){open(AiAssistantActivity.class);}
+    private void open(Class<?> c){startActivity(new Intent(this,c));overridePendingTransition(android.R.anim.slide_in_left,android.R.anim.slide_out_right);}
     private void reels(){startActivity(new Intent(this,ReelsActivity.class));}
     private void profile(){startActivity(new Intent(this,ProfessionalProfileActivity.class));}
     private void share(SocialPost p){Intent s=new Intent(Intent.ACTION_SEND);s.setType("text/plain");s.putExtra(Intent.EXTRA_TEXT,clean(p.getBody(),"TV 49 East post"));startActivity(Intent.createChooser(s,"Share post"));}
