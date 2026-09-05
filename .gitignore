@@ -49,3 +49,6 @@ extras/*
 TASKS.md
 feedback.md
 tasks/*
+
+# Cloudflare local development secrets
+**/.dev.vars
