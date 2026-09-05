@@ -10,6 +10,8 @@ on:
 permissions:
   contents: write
 
+# PR builds may be superseded safely. Master builds must finish so a good APK
+# build cannot be killed merely because another commit arrived on master.
 concurrency:
   group: android-apk-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -34,28 +36,35 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Resolve Cloudflare media endpoint
+      - name: Deploy Cloudflare media Worker and resolve endpoint
+        if: github.event_name != 'pull_request'
+        id: cloudflare_media
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: cloudflare-relay
+          command: deploy --containers-rollout=immediate
+
+      - name: Set Cloudflare media endpoint for Gradle
         shell: bash
         run: |
           set -euo pipefail
-          endpoint=""
-          source_url="https://raw.githubusercontent.com/${GITHUB_REPOSITORY}/master/config/social_media_endpoint.txt"
-          for attempt in $(seq 1 36); do
-            endpoint="$(curl --silent --show-error --fail --max-time 10 "$source_url" 2>/dev/null | tr -d '\r\n' || true)"
-            if [[ "$endpoint" =~ ^https://[^[:space:]]+$ ]]; then
-              echo "Cloudflare media endpoint resolved."
-              echo "SOCIAL_MEDIA_URL=$endpoint" >> "$GITHUB_ENV"
-              exit 0
-            fi
-            echo "Cloudflare media endpoint not published yet (attempt $attempt/36); waiting 10s..."
-            sleep 10
-          done
-          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
-            echo "No production Cloudflare endpoint is required for PR compilation; continuing without one."
-            exit 0
+          endpoint="${{ steps.cloudflare_media.outputs.deployment-url }}"
+          if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
+            endpoint=""
           fi
-          echo "Cloudflare media endpoint was not published by deployment automation."
-          exit 1
+          if [[ "${GITHUB_EVENT_NAME}" != "pull_request" && ! "$endpoint" =~ ^https://[^[:space:]]+$ ]]; then
+            echo "Cloudflare Wrangler did not return a valid deployment URL."
+            exit 1
+          fi
+          if [[ -n "$endpoint" ]]; then
+            echo "SOCIAL_MEDIA_URL=$endpoint" >> "$GITHUB_ENV"
+            echo "Cloudflare media endpoint resolved."
+          else
+            echo "SOCIAL_MEDIA_URL=" >> "$GITHUB_ENV"
+            echo "PR build: Cloudflare media endpoint deployment skipped."
+          fi
 
       - name: Fetch pinned patched Media3
         shell: bash
@@ -172,6 +181,11 @@ jobs:
       - name: Run Android tests
         run: ./gradlew clean :app:test :tv-receiver:test --no-daemon --no-watch-fs --stacktrace
 
+      # Do not package both Android applications in one Gradle invocation.
+      # The FadCam APK contains a large native dependency set and its release
+      # R8/ZipFlinger path is memory-heavy. Separate invocations give each
+      # application a clean Gradle JVM and prevent cross-module packaging
+      # pressure from turning into heap exhaustion or orphaned JVMs.
       - name: Build FadCam APKs
         shell: bash
         run: |
