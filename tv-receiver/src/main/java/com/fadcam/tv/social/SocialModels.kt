@@ -1,7 +1,7 @@
 package com.fadcam.tv.social
 
 /** Native social models shared by the Android UI and REST data layer. */
-data class SocialUser @JvmOverloads constructor(
+data class SocialUser(
     val id: String,
     val username: String,
     val displayName: String,
@@ -13,9 +13,14 @@ data class SocialUser @JvmOverloads constructor(
     val followerCount: Long = 0,
     val followingCount: Long = 0,
     val verifiedTier: String = "none"
-)
+) {
+    /** Legacy Java constructor used by the existing unified/federated feed. */
+    constructor(id: String, username: String, displayName: String, avatarUrl: String?, bio: String?) : this(
+        id, username, displayName, avatarUrl, bio, null, null, null, 0, 0, "none"
+    )
+}
 
-data class SocialPost @JvmOverloads constructor(
+data class SocialPost(
     val id: String,
     val author: SocialUser,
     val body: String,
@@ -34,7 +39,7 @@ data class SocialPost @JvmOverloads constructor(
     val replyToPostId: String? = null,
     val editedAt: String? = null
 ) {
-    /** Source-compatible constructor retained for the existing Java unified/federated feed. */
+    /** Legacy Java constructor retained for the existing unified/federated feed. */
     constructor(
         id: String,
         author: SocialUser,
@@ -47,7 +52,11 @@ data class SocialPost @JvmOverloads constructor(
         repostCount: Int,
         likedByViewer: Boolean,
         repostedByViewer: Boolean
-    ) : this(id, author, body, mediaUrl, mediaType, createdAt, likeCount, replyCount, repostCount, 0, 0, likedByViewer, repostedByViewer, false, null, null, null)
+    ) : this(
+        id, author, body, mediaUrl, mediaType, createdAt,
+        likeCount, replyCount, repostCount, 0, 0,
+        likedByViewer, repostedByViewer, false, null, null, null
+    )
 }
 
 data class SocialSession(
