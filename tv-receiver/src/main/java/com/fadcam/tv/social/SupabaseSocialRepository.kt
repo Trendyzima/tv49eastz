@@ -32,33 +32,44 @@ class SupabaseSocialRepository(context: Context) {
         .build()
     private val jsonType = "application/json; charset=utf-8".toMediaType()
 
-    fun isConfigured(): Boolean = BuildConfig.SUPABASE_URL.isNotBlank() && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
+    fun isConfigured(): Boolean = BuildConfig.SUPABASE_URL.trim().startsWith("https://") && BuildConfig.SUPABASE_ANON_KEY.isNotBlank()
     fun currentAccessToken(): String? = prefs.getString("access_token", null)
     fun currentRefreshToken(): String? = prefs.getString("refresh_token", null)
     fun currentUserId(): String? = prefs.getString("user_id", null)
-    fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank()
+    fun isSignedIn(): Boolean = !currentAccessToken().isNullOrBlank() && !currentUserId().isNullOrBlank()
     fun signOut() { prefs.edit().clear().apply() }
 
     fun signIn(email: String, password: String, callback: ResultCallback<SocialSession>) {
-        if (!isConfigured()) return fail(callback, "Supabase is not configured")
-        if (email.trim().isEmpty() || password.isEmpty()) return fail(callback, "Email and password are required")
-        request("/auth/v1/token?grant_type=password", "POST", json(mapOf("email" to email.trim(), "password" to password)), null, null) { completeSession(it, callback) }
+        if (!isConfigured()) return fail(callback, "TV 49 East is not connected to the social backend")
+        val e = email.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(e).matches()) return fail(callback, "Enter a valid email address")
+        if (password.length < 6) return fail(callback, "Password must be at least 6 characters")
+        request("/auth/v1/token?grant_type=password", "POST", json(mapOf("email" to e, "password" to password)), null, null) { completeSession(it, callback) }
     }
 
     fun signUp(email: String, password: String, username: String, displayName: String, callback: ResultCallback<SocialSession>) {
-        if (!isConfigured()) return fail(callback, "Supabase is not configured")
+        if (!isConfigured()) return fail(callback, "TV 49 East is not connected to the social backend")
+        val e = email.trim()
         val u = username.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(e).matches()) return fail(callback, "Enter a valid email address")
         if (!u.matches(Regex("[A-Za-z0-9_]{3,32}"))) return fail(callback, "Username must be 3-32 letters, numbers or underscores")
         if (password.length < 6) return fail(callback, "Password must be at least 6 characters")
-        val payload = mapOf("email" to email.trim(), "password" to password, "data" to mapOf("username" to u, "display_name" to displayName.trim()))
+        val name = displayName.trim().ifEmpty { u }
+        val payload = mapOf("email" to e, "password" to password, "data" to mapOf("username" to u, "display_name" to name))
         request("/auth/v1/signup", "POST", json(payload), null, null) { raw ->
             if (raw.error != null) return@request callback.onComplete(SocialResult(error = raw.error))
             try {
                 val o = gson.fromJson(raw.value, JsonObject::class.java)
-                val token = o.get("access_token")
-                if (token == null || token.isJsonNull || token.asString.isBlank()) {
-                    callback.onComplete(SocialResult(error = IllegalStateException("Account created. Confirm the email before signing in.")))
-                } else completeSession(raw, callback)
+                val userId = o.getAsJsonObject("user")?.get("id")?.asString.orEmpty()
+                val token = o.get("access_token")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                val refresh = o.get("refresh_token")?.takeUnless { it.isJsonNull }?.asString.orEmpty()
+                if (token.isBlank()) {
+                    callback.onComplete(SocialResult(value = SocialSession("", "", userId)))
+                } else {
+                    val session = SocialSession(token, refresh, userId)
+                    saveSession(session)
+                    callback.onComplete(SocialResult(value = session))
+                }
             } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
         }
     }
@@ -66,9 +77,28 @@ class SupabaseSocialRepository(context: Context) {
     fun signUp(email: String, password: String, callback: ResultCallback<SocialSession>) =
         signUp(email, password, "user_${UUID.randomUUID().toString().replace("-", "").take(10)}", "", callback)
 
+    fun resetPassword(email: String, callback: ResultCallback<Boolean>) {
+        if (!isConfigured()) return fail(callback, "TV 49 East is not connected to the social backend")
+        val e = email.trim()
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(e).matches()) return fail(callback, "Enter a valid email address")
+        request("/auth/v1/recover", "POST", json(mapOf("email" to e)), null, null) { r ->
+            callback.onComplete(if (r.error == null) SocialResult(value = true) else SocialResult(error = r.error))
+        }
+    }
+
     fun refreshSession(callback: ResultCallback<SocialSession>) {
         val refresh = currentRefreshToken() ?: return fail(callback, "No refresh token")
         request("/auth/v1/token?grant_type=refresh_token", "POST", json(mapOf("refresh_token" to refresh)), null, null) { completeSession(it, callback) }
+    }
+
+    fun restoreSession(callback: ResultCallback<SocialSession>) {
+        val access = currentAccessToken()
+        val refresh = currentRefreshToken()
+        val uid = currentUserId()
+        if (access.isNullOrBlank() || refresh.isNullOrBlank() || uid.isNullOrBlank()) {
+            return callback.onComplete(SocialResult(value = SocialSession("", "", "")))
+        }
+        refreshSession(callback)
     }
 
     fun loadProfile(callback: ResultCallback<SocialUser?>) {
@@ -96,12 +126,19 @@ class SupabaseSocialRepository(context: Context) {
         get("${postsPath(limit)}&body=ilike.*$q*", callback) { parsePosts(it) }
     }
 
-    fun createPost(bodyText: String, callback: ResultCallback<SocialPost?>) {
+    fun createPost(bodyText: String, callback: ResultCallback<SocialPost?>) = createPost(bodyText, null, null, callback)
+
+    fun createPost(bodyText: String, mediaUrl: String?, mediaType: String?, callback: ResultCallback<SocialPost?>) {
         val uid = currentUserId() ?: return fail(callback, "Sign in required")
         val text = bodyText.trim()
-        if (text.isEmpty()) return fail(callback, "Post cannot be empty")
+        val media = mediaUrl?.trim().takeUnless { it.isNullOrEmpty() }
+        if (text.isEmpty() && media == null) return fail(callback, "Add some text or attach a photo/video")
+        if (mediaType != null && mediaType !in setOf("image", "video")) return fail(callback, "Unsupported post media type")
         val path = "/rest/v1/posts?select=id,body,media_url,media_type,created_at,like_count,reply_count,repost_count,author:profiles!posts_author_id_fkey(id,username,display_name,avatar_url,bio)"
-        mutate(path, "POST", json(mapOf("author_id" to uid, "body" to text)), callback) { parsePosts(it).firstOrNull() }
+        val payload = mutableMapOf<String, Any>("author_id" to uid, "body" to text)
+        if (media != null) payload["media_url"] = media
+        if (mediaType != null) payload["media_type"] = mediaType
+        mutate(path, "POST", json(payload), callback) { parsePosts(it).firstOrNull() }
     }
 
     fun likePost(postId: String, enabled: Boolean, callback: ResultCallback<Boolean>) = toggle("post_likes", "post_id", postId, "user_id", enabled, callback)
@@ -132,7 +169,6 @@ class SupabaseSocialRepository(context: Context) {
     fun loadMessages(conversationId: String, limit: Int = 50, callback: ResultCallback<String>) = getText(
         "/rest/v1/messages?conversation_id=eq.${enc(conversationId)}&select=id,sender_id,body,media_url,media_type,created_at,edited_at&order=created_at.desc&limit=${limit.coerceIn(1, 100)}", callback)
 
-    /** Uploads through the Cloudflare Worker when SOCIAL_MEDIA_URL is configured. */
     fun uploadMedia(uri: Uri, kind: String, callback: ResultCallback<String>) {
         val token = currentAccessToken() ?: return fail(callback, "Sign in required")
         val uid = currentUserId() ?: return fail(callback, "Session user id missing")
@@ -165,13 +201,11 @@ class SupabaseSocialRepository(context: Context) {
                     response.use {
                         val text = it.body?.string().orEmpty()
                         if (!it.isSuccessful) callback.onComplete(SocialResult(error = IOException("Media Worker ${it.code}: ${text.take(300)}")))
-                        else {
-                            try {
-                                val o = gson.fromJson(text, JsonObject::class.java)
-                                val url = o.get("url")?.takeUnless { x -> x.isJsonNull }?.asString
-                                callback.onComplete(if (!url.isNullOrBlank()) SocialResult(value = url) else SocialResult(error = IOException("Media Worker returned no URL")))
-                            } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
-                        }
+                        else try {
+                            val o = gson.fromJson(text, JsonObject::class.java)
+                            val url = o.get("url")?.takeUnless { x -> x.isJsonNull }?.asString
+                            callback.onComplete(if (!url.isNullOrBlank()) SocialResult(value = url) else SocialResult(error = IOException("Media Worker returned no URL")))
+                        } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
                     }
                 }
             })
@@ -254,6 +288,7 @@ class SupabaseSocialRepository(context: Context) {
     }
 
     private fun request(path: String, method: String, payload: String?, token: String?, prefer: String?, callback: (RawResult) -> Unit) {
+        if (!isConfigured()) return callback(RawResult("", IOException("Supabase is not configured")))
         val builder = Request.Builder()
             .url(BuildConfig.SUPABASE_URL.trimEnd('/') + path)
             .header("apikey", BuildConfig.SUPABASE_ANON_KEY)
@@ -261,15 +296,31 @@ class SupabaseSocialRepository(context: Context) {
         if (!prefer.isNullOrBlank()) builder.header("Prefer", prefer)
         val requestBody = payload?.let { RequestBody.create(jsonType, it) }
         builder.method(method, requestBody)
-        http.newCall(builder.build()).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: IOException) { callback(RawResult("", e)) }
-            override fun onResponse(call: Call, response: Response) {
-                response.use {
-                    val text = it.body?.string().orEmpty()
-                    callback(if (it.isSuccessful) RawResult(text, null) else RawResult(text, IOException("Supabase ${it.code}: ${text.take(300)}")))
+        try {
+            http.newCall(builder.build()).enqueue(object : Callback {
+                override fun onFailure(call: Call, e: IOException) { callback(RawResult("", e)) }
+                override fun onResponse(call: Call, response: Response) {
+                    response.use {
+                        val text = it.body?.string().orEmpty()
+                        callback(if (it.isSuccessful) RawResult(text, null) else RawResult(text, IOException("Supabase ${it.code}: ${friendlyAuthError(text)}")))
+                    }
                 }
-            }
-        })
+            })
+        } catch (t: Throwable) { callback(RawResult("", t)) }
+    }
+
+    private fun friendlyAuthError(body: String): String {
+        return try {
+            val o = gson.fromJson(body, JsonObject::class.java)
+            o.get("msg")?.takeUnless { it.isJsonNull }?.asString
+                ?: o.get("message")?.takeUnless { it.isJsonNull }?.asString
+                ?: o.get("error_description")?.takeUnless { it.isJsonNull }?.asString
+                ?: body.take(300)
+        } catch (_: Throwable) { body.take(300) }
+    }
+
+    private fun saveSession(session: SocialSession) {
+        prefs.edit().putString("access_token", session.accessToken).putString("refresh_token", session.refreshToken).putString("user_id", session.userId).apply()
     }
 
     private fun completeSession(raw: RawResult, callback: ResultCallback<SocialSession>) {
@@ -281,7 +332,8 @@ class SupabaseSocialRepository(context: Context) {
                 o.get("refresh_token")?.asString.orEmpty(),
                 o.getAsJsonObject("user")?.get("id")?.asString.orEmpty()
             )
-            prefs.edit().putString("access_token", session.accessToken).putString("refresh_token", session.refreshToken).putString("user_id", session.userId).apply()
+            if (session.accessToken.isBlank() || session.userId.isBlank()) return callback.onComplete(SocialResult(error = IllegalStateException("Authentication did not return a valid session")))
+            saveSession(session)
             callback.onComplete(SocialResult(value = session))
         } catch (t: Throwable) { callback.onComplete(SocialResult(error = t)) }
     }
