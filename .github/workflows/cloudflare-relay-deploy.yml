@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: tv49eastz-cloudflare-production-v2
@@ -86,9 +86,6 @@ jobs:
           code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/not-a-session/index.m3u8")"
           [[ "$code" == 401 ]] || { echo "Expected protected stream=401, got $code"; exit 1; }
 
-          # Send a complete HTTP/1.1 WebSocket handshake so Cloudflare forwards
-          # the request to the Worker. The invalid device ticket must then hit
-          # ticket validation and return 401 rather than the pre-upgrade 426.
           code="$(python3 - "$CF_URL" <<'PY'
           import base64
           import os
@@ -122,3 +119,22 @@ jobs:
           [[ "$code" == "HTTP/1.1 401 "* ]] || { echo "Expected invalid tunnel ticket with complete websocket handshake=401, got $code"; exit 1; }
 
           echo 'Production security/routing smoke tests passed.'
+
+      - name: Publish Cloudflare media endpoint for Android builds
+        env:
+          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          endpoint="${CF_URL%/}"
+          cd "$GITHUB_WORKSPACE"
+          mkdir -p config
+          printf '%s\n' "$endpoint" > config/social_media_endpoint.txt
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add config/social_media_endpoint.txt
+          if git diff --cached --quiet; then
+            echo 'Cloudflare media endpoint is already current.'
+            exit 0
+          fi
+          git commit -m 'chore: publish Cloudflare media endpoint'
+          git push
