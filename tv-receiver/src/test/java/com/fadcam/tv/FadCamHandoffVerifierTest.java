@@ -66,7 +66,9 @@ public final class FadCamHandoffVerifierTest {
     public void rejectsWrongSignature() throws Exception {
         TestFixture fixture = fixture("wrong-signature");
         String raw = fixture.uri.getQueryParameter("sig");
-        String mutated = raw.substring(0, raw.length() - 1) + (raw.endsWith("A") ? "B" : "A");
+        // Mutating the first encoded byte is deterministic. Mutating the final
+        // Base64URL character can change only unused padding bits for some lengths.
+        String mutated = (raw.charAt(0) == 'A' ? "B" : "A") + raw.substring(1);
         Uri uri = signedUriWithSignature(fixture, mutated);
         assertFalse(FadCamHandoffVerifier.verify(fixture.context, uri).accepted);
     }
