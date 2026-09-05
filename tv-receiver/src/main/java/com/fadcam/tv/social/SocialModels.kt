@@ -13,7 +13,16 @@ data class SocialUser(
     val followerCount: Long = 0,
     val followingCount: Long = 0,
     val verifiedTier: String = "none"
-)
+) {
+    /** Legacy Java constructor used by the unified/federated feed parser. */
+    constructor(id: String, username: String, displayName: String, avatarUrl: String?, bio: String?) : this(
+        id = id,
+        username = username,
+        displayName = displayName,
+        avatarUrl = avatarUrl,
+        bio = bio
+    )
+}
 
 data class SocialPost(
     val id: String,
@@ -33,7 +42,34 @@ data class SocialPost(
     val quotedPostId: String? = null,
     val replyToPostId: String? = null,
     val editedAt: String? = null
-)
+) {
+    /** Legacy Java constructor used by the unified/federated feed parser. */
+    constructor(
+        id: String,
+        author: SocialUser,
+        body: String,
+        mediaUrl: String?,
+        mediaType: String?,
+        createdAt: String,
+        likeCount: Int,
+        replyCount: Int,
+        repostCount: Int,
+        likedByViewer: Boolean,
+        repostedByViewer: Boolean
+    ) : this(
+        id = id,
+        author = author,
+        body = body,
+        mediaUrl = mediaUrl,
+        mediaType = mediaType,
+        createdAt = createdAt,
+        likeCount = likeCount,
+        replyCount = replyCount,
+        repostCount = repostCount,
+        likedByViewer = likedByViewer,
+        repostedByViewer = repostedByViewer
+    )
+}
 
 data class SocialSession(
     val accessToken: String,
