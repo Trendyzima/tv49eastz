@@ -33,7 +33,22 @@ data class SocialPost @JvmOverloads constructor(
     val quotedPostId: String? = null,
     val replyToPostId: String? = null,
     val editedAt: String? = null
-)
+) {
+    /** Source-compatible constructor retained for the existing Java unified/federated feed. */
+    constructor(
+        id: String,
+        author: SocialUser,
+        body: String,
+        mediaUrl: String?,
+        mediaType: String?,
+        createdAt: String,
+        likeCount: Int,
+        replyCount: Int,
+        repostCount: Int,
+        likedByViewer: Boolean,
+        repostedByViewer: Boolean
+    ) : this(id, author, body, mediaUrl, mediaType, createdAt, likeCount, replyCount, repostCount, 0, 0, likedByViewer, repostedByViewer, false, null, null, null)
+}
 
 data class SocialSession(
     val accessToken: String,
