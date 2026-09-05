@@ -4,18 +4,12 @@ import android.app.Activity;
 import android.content.Intent;
 import android.os.Bundle;
 
-/**
- * TV 49 East entry point.
- *
- * Social is now the default experience. The old mode picker is intentionally
- * removed from the launch surface; its destinations live in the Social drawer
- * and are reachable from the horizontal navigation gestures.
- */
+/** TV 49 East entry point; the native X-style social experience is the default surface. */
 public final class HomeActivity extends Activity {
     @Override protected void onCreate(Bundle state) {
         super.onCreate(state);
         try {
-            Intent intent = new Intent(this, ModernSocialActivity.class);
+            Intent intent = new Intent(this, XSocialActivity.class);
             intent.setData(getIntent().getData());
             if (getIntent().getExtras() != null) intent.putExtras(getIntent());
             startActivity(intent);
