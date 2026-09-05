@@ -9,10 +9,12 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
+# A Cloudflare deployment is a shared production operation. Keep only one
+# deployment running at a time so two pushes cannot race the same Worker.
 concurrency:
-  group: tv49eastz-cloudflare-production-v2
+  group: tv49eastz-cloudflare-production-v3
   cancel-in-progress: false
 
 env:
@@ -120,21 +122,19 @@ jobs:
 
           echo 'Production security/routing smoke tests passed.'
 
-      - name: Publish Cloudflare media endpoint for Android builds
+      # Android master builds deploy the same Worker themselves and consume
+      # this step's deployment URL directly. Do not commit that URL back to
+      # master: doing so creates a second writer to master and two concurrent
+      # deploy runs can reject each other's non-fast-forward push.
+      - name: Publish deployment URL to job summary
         env:
           CF_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
-          endpoint="${CF_URL%/}"
-          cd "$GITHUB_WORKSPACE"
-          mkdir -p config
-          printf '%s\n' "$endpoint" > config/social_media_endpoint.txt
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add config/social_media_endpoint.txt
-          if git diff --cached --quiet; then
-            echo 'Cloudflare media endpoint is already current.'
-            exit 0
-          fi
-          git commit -m 'chore: publish Cloudflare media endpoint'
-          git push
+          [[ -n "$CF_URL" ]] || { echo 'Missing Cloudflare deployment URL'; exit 1; }
+          {
+            echo '## Cloudflare deployment'
+            echo
+            echo "Production Worker endpoint: $CF_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo 'Cloudflare deployment completed without modifying the repository.'
