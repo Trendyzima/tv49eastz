@@ -57,6 +57,9 @@ data class SocialPost(
         likeCount, replyCount, repostCount, 0, 0,
         likedByViewer, repostedByViewer, false, null, null, null
     )
+
+    /** Explicit Java-facing accessor for the nullable media URL. */
+    fun mediaUrlForJava(): String? = mediaUrl
 }
 
 data class SocialSession(
