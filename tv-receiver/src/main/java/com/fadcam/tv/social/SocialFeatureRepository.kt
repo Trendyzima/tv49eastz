@@ -113,7 +113,7 @@ class SocialFeatureRepository(context: Context) {
         val clean = body.take(25000)
         val parsedMetadata = try { gson.fromJson(metadata, JsonObject::class.java) } catch (_: Throwable) { return fail(callback, "Invalid draft metadata") }
         if (draftId.isNullOrBlank()) postReturning("/rest/v1/post_drafts?select=id", mapOf("author_id" to uid, "body" to clean, "metadata" to parsedMetadata), callback) { raw -> SocialResult(value = parseId(raw)) }
-        else patch("/rest/v1/post_drafts?id=eq.${enc(draftId)}", mapOf("body" to clean, "metadata" to parsedMetadata, "updated_at" to "now()")) { result -> callback.onComplete(if (result.error == null) SocialResult<String?>(value = draftId) else SocialResult(error = result.error)) }
+        else patchRaw("/rest/v1/post_drafts?id=eq.${enc(draftId)}", mapOf("body" to clean, "metadata" to parsedMetadata, "updated_at" to "now()")) { result -> callback.onComplete(if (result.error == null) SocialResult<String?>(value = draftId) else SocialResult(error = result.error)) }
     }
     fun deleteDraft(draftId: String, callback: Callback<Boolean>) = delete("/rest/v1/post_drafts?id=eq.${enc(draftId)}", callback)
     fun editPost(postId: String, body: String, callback: Callback<Boolean>) {
@@ -136,8 +136,8 @@ class SocialFeatureRepository(context: Context) {
     private fun writeReturning(path: String, fields: Map<String, Any?>, callback: Callback<String?>) = postReturning(path, fields, callback) { raw -> SocialResult(value = raw) }
     private fun postReturning(path: String, fields: Map<String, Any?>, callback: Callback<String?>, parser: (String) -> SocialResult<String?>) = postRaw(path, fields) { result -> if (result.error != null) callback.onComplete(SocialResult(error = result.error)) else callback.onComplete(parser(result.value.orEmpty())) }
     private fun postRaw(path: String, fields: Map<String, Any?>, callback: (SocialResult<String>) -> Unit) = executeText(requestBuilder(path).post(gson.toJson(fields).toRequestBody(jsonType)).build(), callback)
-    private fun patch(path: String, fields: Map<String, Any?>, callback: Callback<Boolean>) = patch(path, fields) { result -> callback.onComplete(if (result.error == null) SocialResult(value = true) else SocialResult(error = result.error)) }
-    private fun patch(path: String, fields: Map<String, Any?>, callback: (SocialResult<String>) -> Unit) = executeText(requestBuilder(path).patch(gson.toJson(fields).toRequestBody(jsonType)).build(), callback)
+    private fun patch(path: String, fields: Map<String, Any?>, callback: Callback<Boolean>) = patchRaw(path, fields) { result -> callback.onComplete(if (result.error == null) SocialResult(value = true) else SocialResult(error = result.error)) }
+    private fun patchRaw(path: String, fields: Map<String, Any?>, callback: (SocialResult<String>) -> Unit) = executeText(requestBuilder(path).patch(gson.toJson(fields).toRequestBody(jsonType)).build(), callback)
     private fun delete(path: String, callback: Callback<Boolean>) = executeText(requestBuilder(path).delete().build()) { result -> callback.onComplete(if (result.error == null) SocialResult(value = true) else SocialResult(error = result.error)) }
     private fun get(path: String, callback: Callback<String>) = executeText(requestBuilder(path).get().build()) { result -> callback.onComplete(if (result.error == null) SocialResult(value = result.value) else SocialResult(error = result.error)) }
     private fun requestBuilder(path: String): Request.Builder { val b = Request.Builder().url(base() + path).header("apikey", BuildConfig.SUPABASE_ANON_KEY).header("Accept", "application/json"); token()?.takeIf { it.isNotBlank() }?.let { b.header("Authorization", "Bearer $it") }; return b }
