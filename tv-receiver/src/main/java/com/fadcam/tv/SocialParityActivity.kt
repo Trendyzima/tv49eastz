@@ -5,6 +5,8 @@ import android.graphics.Color
 import android.graphics.Typeface
 import android.os.Bundle
 import android.view.Gravity
+import android.view.KeyEvent
+import android.view.MotionEvent
 import android.widget.Button
 import android.widget.LinearLayout
 import android.widget.ScrollView
@@ -15,7 +17,7 @@ import com.fadcam.tv.social.SocialFeatureRepository
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
-/** Native Testagram parity hub for TV 49 East. */
+/** Native Testagram parity hub and the persistent Social side of the TV 49 East two-mode experience. */
 class SocialParityActivity : AppCompatActivity() {
     private lateinit var root: LinearLayout
     private lateinit var content: LinearLayout
@@ -25,16 +27,66 @@ class SocialParityActivity : AppCompatActivity() {
     private val bg = Color.rgb(248, 245, 251)
     private val text = Color.rgb(38, 29, 48)
     private val muted = Color.rgb(117, 104, 126)
+    private var downX = 0f
+    private var downY = 0f
+    private var horizontalNavigation = false
+    private val swipeDistanceDp = 90
+    private val swipeDominance = 1.35f
 
-    override fun onCreate(state: Bundle?) { super.onCreate(state); features = SocialFeatureRepository(this); renderHome() }
+    override fun onCreate(state: Bundle?) {
+        super.onCreate(state)
+        features = SocialFeatureRepository(this)
+        renderHome()
+    }
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                downX = event.rawX
+                downY = event.rawY
+                horizontalNavigation = false
+            }
+            MotionEvent.ACTION_UP -> {
+                if (!horizontalNavigation) {
+                    val dx = event.rawX - downX
+                    val dy = event.rawY - downY
+                    if (absHorizontal(dx, dy) && dx > dp(swipeDistanceDp)) {
+                        horizontalNavigation = true
+                        openTv()
+                        return true
+                    }
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> horizontalNavigation = false
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
+    override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (keyCode == KeyEvent.KEYCODE_DPAD_RIGHT) {
+            openTv()
+            return true
+        }
+        return super.onKeyDown(keyCode, event)
+    }
+
+    private fun absHorizontal(dx: Float, dy: Float): Boolean =
+        kotlin.math.abs(dx) >= dp(swipeDistanceDp) && kotlin.math.abs(dx) > kotlin.math.abs(dy) * swipeDominance
+
+    private fun openTv() {
+        if (isFinishing || isDestroyed) return
+        val intent = Intent(this, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT)
+        startActivity(intent)
+        overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right)
+    }
 
     private fun renderHome() {
         root = column(bg)
         val header = row(); header.gravity = Gravity.CENTER_VERTICAL; header.setPadding(dp(14), dp(10), dp(14), dp(8))
         header.addView(label("49", 20f, Color.WHITE, true).apply { gravity = Gravity.CENTER; setBackgroundColor(purple) }, lp(48, 44))
         header.addView(label("Social", 22f, text, true).apply { setPadding(dp(12), 0, 0, 0) }, lp(0, 48, 1f))
-        header.addView(button("TV", Color.WHITE, purple) { open(MainActivity::class.java, true) }, lp(62, 42)); root.addView(header)
-        root.addView(label("Testagram-style social, built into TV 49 East", 14f, muted, false).apply { setPadding(dp(16), 0, dp(16), dp(8)) })
+        header.addView(button("TV", Color.WHITE, purple) { openTv() }, lp(62, 42)); root.addView(header)
+        root.addView(label("Testagram-style social, built into TV 49 East • swipe right for TV", 14f, muted, false).apply { setPadding(dp(16), 0, dp(16), dp(8)) })
         val scroll = ScrollView(this); content = column(bg); content.setPadding(dp(14), 0, dp(14), dp(92)); scroll.addView(content); root.addView(scroll, lp(0, 0, 1f)); setContentView(root); showOverview()
     }
 
@@ -82,7 +134,7 @@ class SocialParityActivity : AppCompatActivity() {
 
     private fun showNotifications() = loadSurface("NOTIFICATIONS", "Your notification activity is loaded from Supabase.", { cb -> features.loadNotifications(50, cb) })
     private fun showBookmarks() = loadSurface("BOOKMARKS", "Saved posts are read from the authenticated bookmarks table.", { cb -> features.loadBookmarks(50, cb) })
-    private fun showHistory() = loadSurface("HISTORY", "Recently viewed posts are read from post_views for the signed-in user.", { cb -> features.loadHistory(50, cb) })
+    private fun showHistory() = loadSurface("HISTORY", "Recently viewed social content is read from post_views for the signed-in user.", { cb -> features.loadHistory(50, cb) })
     private fun showStories() = loadSurface("STORIES", "Story records are requested directly from Supabase; unavailable schemas are surfaced as backend errors.", { cb -> features.loadStories(50, cb) })
     private fun showCommunities() = loadSurface("COMMUNITIES", "Community records are requested directly from Supabase.", { cb -> features.loadCommunities(50, cb) })
     private fun showPolls() = loadSurface("POLLS", "Poll records are requested directly from Supabase.", { cb -> features.loadPolls(50, cb) })
@@ -110,7 +162,7 @@ class SocialParityActivity : AppCompatActivity() {
     private fun textBlock(s: String) { content.addView(label(s, 12f, muted, false).apply { setPadding(dp(10), dp(8), dp(10), dp(8)) }, lp(-1, -2)) }
     private fun showComing(title: String, detail: String) = Toast.makeText(this, "$title: $detail", Toast.LENGTH_LONG).show()
     private fun hasSession(): Boolean = getSharedPreferences("tv49_social_session", MODE_PRIVATE).getString("access_token", null).orEmpty().isNotBlank()
-    private fun open(clazz: Class<*>, finish: Boolean = false) { startActivity(Intent(this, clazz)); overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right); if (finish) finish() }
+    private fun open(clazz: Class<*>, finish: Boolean = false) { val intent = Intent(this, clazz); if (clazz == MainActivity::class.java || clazz == SocialActivity::class.java || clazz == SocialParityActivity::class.java) intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT); startActivity(intent); overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right); if (finish && clazz != MainActivity::class.java && clazz != SocialActivity::class.java && clazz != SocialParityActivity::class.java) finish() }
     private fun <T : Any> open(clazz: Class<T>) = open(clazz, false)
     private fun label(s: String, size: Float, fg: Int, bold: Boolean) = TextView(this).apply { text = s; textSize = size; setTextColor(fg); if (bold) setTypeface(Typeface.DEFAULT, Typeface.BOLD) }
     private fun button(s: String, fg: Int, bg: Int, action: () -> Unit) = Button(this).apply { text = s; setTextColor(fg); textSize = 13f; isAllCaps = false; minHeight = 0; minWidth = 0; setBackgroundColor(bg); setOnClickListener { action() } }
