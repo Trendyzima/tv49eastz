@@ -3,14 +3,21 @@ package com.fadcam.tv;
 import android.app.Activity;
 import android.content.Intent;
 
-/** Small navigation helper that keeps activity transitions consistent and fail-safe. */
+/** Navigation helper with state-preserving TV/social handoff. */
 final class IntentLauncher {
     private IntentLauncher() { }
 
     static void open(Activity activity, Class<?> destination, boolean finishCurrent) {
         if (activity == null || destination == null || activity.isFinishing()) return;
-        activity.startActivity(new Intent(activity, destination));
+        Intent intent = new Intent(activity, destination);
+        if (destination == SocialActivity.class || destination == SocialParityActivity.class || destination == MainActivity.class) {
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
+        }
+        activity.startActivity(intent);
         activity.overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right);
-        if (finishCurrent) activity.finish();
+        // TV and Social are two persistent sibling surfaces. Do not destroy either one when switching modes.
+        if (finishCurrent && destination != SocialActivity.class && destination != SocialParityActivity.class && destination != MainActivity.class) {
+            activity.finish();
+        }
     }
 }
