@@ -5,14 +5,25 @@ import android.os.Bundle;
 import androidx.annotation.Nullable;
 import androidx.appcompat.app.AppCompatActivity;
 
-/** Compatibility entrypoint retained for TV/FadCam navigation and older deep links. */
+/** Compatibility entrypoint retained for older TV/FadCam links; routes into the native social shell. */
 public final class SocialActivity extends AppCompatActivity {
     @Override protected void onCreate(@Nullable Bundle state) {
         super.onCreate(state);
+        openSocialShell();
+    }
+
+    @Override protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        openSocialShell();
+    }
+
+    private void openSocialShell() {
         try {
-            Intent intent = new Intent(this, ModernSocialActivity.class);
+            Intent intent = new Intent(this, SocialParityActivity.class);
             intent.setData(getIntent().getData());
-            intent.putExtras(getIntent());
+            if (getIntent().getExtras() != null) intent.putExtras(getIntent());
+            intent.addFlags(Intent.FLAG_ACTIVITY_REORDER_TO_FRONT);
             startActivity(intent);
             overridePendingTransition(android.R.anim.slide_in_left, android.R.anim.slide_out_right);
         } catch (Throwable t) {
