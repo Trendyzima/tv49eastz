@@ -17,7 +17,7 @@ class SocialSettingsActivity : AppCompatActivity() {
     private lateinit var content: LinearLayout
     private lateinit var repo: SocialFeatureRepository
     private val bg = Color.rgb(248, 245, 251)
-    private val text = Color.rgb(38, 29, 48)
+    private val textColor = Color.rgb(38, 29, 48)
     private val muted = Color.rgb(117, 104, 126)
     private val purple = Color.rgb(112, 82, 226)
 
@@ -30,7 +30,7 @@ class SocialSettingsActivity : AppCompatActivity() {
     private fun render() {
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg) }
         val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(14), dp(10), dp(14), dp(10)) }
-        val title = TextView(this).apply { text = "Settings & Privacy"; textSize = 22f; setTextColor(text); setTypeface(null, Typeface.BOLD) }
+        val title = TextView(this).apply { text = "Settings & Privacy"; textSize = 22f; setTextColor(textColor); setTypeface(null, Typeface.BOLD) }
         header.addView(title, LinearLayout.LayoutParams(0, dp(48), 1f))
         header.addView(button("Social") { startActivity(Intent(this, SocialParityActivity::class.java)) }, LinearLayout.LayoutParams(dp(90), dp(44)))
         root.addView(header)
@@ -55,7 +55,7 @@ class SocialSettingsActivity : AppCompatActivity() {
     private fun addCard(title: String, body: String) {
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(Color.WHITE); setPadding(dp(18), dp(15), dp(18), dp(15)) }
         box.addView(TextView(this).apply { text = title; textSize = 11f; setTextColor(purple); setTypeface(null, Typeface.BOLD) })
-        box.addView(TextView(this).apply { text = body; textSize = 14f; setTextColor(text); setPadding(0, dp(5), 0, 0) })
+        box.addView(TextView(this).apply { text = body; textSize = 14f; setTextColor(textColor); setPadding(0, dp(5), 0, 0) })
         val p = LinearLayout.LayoutParams(-1, -2); p.setMargins(0, dp(6), 0, dp(6)); content.addView(box, p)
     }
 
