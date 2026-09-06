@@ -12,7 +12,6 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.fadcam.tv.social.SocialFeatureRepository
-import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 
@@ -77,7 +76,7 @@ class SocialParityActivity : AppCompatActivity() {
         content.removeAllViews(); content.addView(back()); card("CONVERSATION", "Conversation $id")
         val loading = label("Loading messages…", 14f, muted, false); content.addView(loading, lp(-1,54))
         features.loadMessages(id, 80, object : SocialFeatureRepository.Callback<String> {
-            override fun onComplete(result: com.fadcam.tv.social.SocialResult<String>) { runOnUiThread { content.removeView(loading); if(!result.isSuccess){actionCard("Messages unavailable",result.error?.message?:"Try again."){showConversation(id)};return@runOnUiThread}; val rows=jsonRows(result.value.orEmpty()); if(rows.isEmpty()) textBlock("No messages yet.") else rows.reversed().forEach { row -> val body=firstString(row,"body") ?: if(firstString(row,"deleted_at")!=null) "Message deleted" else compact(row); val edited=if(firstString(row,"edited_at")!=null) " · edited" else ""; val cardText=body+edited; actionCard(if(firstString(row,"sender_id")==featuresUserId()) "You" else "Member",cardText){ val mid=firstString(row,"id"); if(!mid.isNullOrBlank())features.markMessageRead(mid,object:SocialFeatureRepository.Callback<Boolean>{override fun onComplete(_:com.fadcam.tv.social.SocialResult<Boolean>){}}) } }; actionCard("Send message","Use the full native composer in Social for reply, shared-post and media message options."){open(ModernSocialActivity::class.java)} } }
+            override fun onComplete(result: com.fadcam.tv.social.SocialResult<String>) { runOnUiThread { content.removeView(loading); if(!result.isSuccess){actionCard("Messages unavailable",result.error?.message?:"Try again."){showConversation(id)};return@runOnUiThread}; val rows=jsonRows(result.value.orEmpty()); if(rows.isEmpty()) textBlock("No messages yet.") else rows.reversed().forEach { row -> val body=firstString(row,"body") ?: if(firstString(row,"deleted_at")!=null) "Message deleted" else compact(row); val edited=if(firstString(row,"edited_at")!=null) " · edited" else ""; val cardText=body+edited; actionCard(if(firstString(row,"sender_id")==featuresUserId()) "You" else "Member",cardText){ val mid=firstString(row,"id"); if(!mid.isNullOrBlank())features.markMessageRead(mid,object:SocialFeatureRepository.Callback<Boolean>{override fun onComplete(result:com.fadcam.tv.social.SocialResult<Boolean>){}}) } }; actionCard("Send message","Use the full native composer in Social for reply, shared-post and media message options."){open(ModernSocialActivity::class.java)} } }
         })
     }
 
