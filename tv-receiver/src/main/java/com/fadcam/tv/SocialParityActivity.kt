@@ -12,6 +12,9 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import com.fadcam.tv.social.SocialFeatureRepository
+import com.google.gson.JsonArray
+import com.google.gson.JsonObject
+import com.google.gson.JsonParser
 
 /** Native Testagram parity hub for TV 49 East. */
 class SocialParityActivity : AppCompatActivity() {
@@ -37,17 +40,19 @@ class SocialParityActivity : AppCompatActivity() {
     }
 
     private fun showOverview() {
-        content.removeAllViews(); card("YOUR SOCIAL HOME", "Everything Testagram-style is grouped here: feed, discovery, messages, communities, creator tools, saved content and account controls.")
+        content.removeAllViews(); card("YOUR SOCIAL HOME", "Native social surfaces now read from the authenticated backend; no fake local feed state is used.")
         content.addView(sectionTitle("Main"))
         actionCard("For You", "Personal feed, posts, photos, video, likes, reposts, replies and bookmarks.") { open(ModernSocialActivity::class.java) }
         actionCard("Explore & Search", "Trending topics, hashtags, people and content discovery.") { open(ModernSocialActivity::class.java) }
-        actionCard("Notifications", "Mentions, likes, follows, replies and account activity.") { showNotifications() }
-        actionCard("Messages", "Direct conversations with delivery/read state, reactions and shared posts.") { showMessages() }
-        actionCard("Communities", "Community discovery, membership, discussion and moderation surfaces.") { showComing("Communities", "Community read/write endpoints will be connected against the verified shared schema in the next backend pass.") }
+        actionCard("Notifications", "Load your authenticated notification rows and activity.") { showNotifications() }
+        actionCard("Messages", "Conversation inbox, message history, read/delivery state and replies.") { showMessages() }
+        actionCard("Stories", "Read active story records from the shared Supabase social backend.") { showStories() }
+        actionCard("Communities", "Read community records from the shared backend; membership actions follow the verified schema.") { showCommunities() }
+        actionCard("Polls", "Read poll records from the backend for the native poll surface.") { showPolls() }
         content.addView(sectionTitle("Your library"))
-        actionCard("Bookmarks", "Saved posts available across devices.") { showComing("Bookmarks", "Bookmark writes are already wired; the native read surface is next.") }
+        actionCard("Bookmarks", "Saved posts persisted to the authenticated bookmarks table.") { showBookmarks() }
         actionCard("Lists", "Curated people lists with private/public membership and timelines.") { showLists() }
-        actionCard("History", "Recently viewed social content and activity.") { showComing("History", "Post-view recording is wired; the native history read surface is next.") }
+        actionCard("History", "Recently viewed social content recorded by the backend.") { showHistory() }
         content.addView(sectionTitle("Creator & community"))
         actionCard("Creator Studio", "Profile, analytics, publishing and monetization tools.") { open(CreatorStudioActivity::class.java) }
         actionCard("Profile", "Posts, media, likes, reposts, bio, avatar and cover identity.") { open(ProfessionalProfileActivity::class.java) }
@@ -64,13 +69,41 @@ class SocialParityActivity : AppCompatActivity() {
         if (!hasSession()) { actionCard("Sign in required", "Open Social to sign in, then return here to load conversations.") { open(ModernSocialActivity::class.java) }; return }
         val loading = label("Loading conversations…", 14f, muted, false); content.addView(loading, lp(-1, 54))
         features.loadConversations(50, object : SocialFeatureRepository.Callback<String> {
-            override fun onComplete(result: com.fadcam.tv.social.SocialResult<String>) { runOnUiThread { content.removeView(loading); if (!result.isSuccess) { actionCard("Inbox unavailable", result.error?.message ?: "Try again later.") { showMessages() }; return@runOnUiThread }; textBlock(result.value.orEmpty().ifBlank { "No conversations yet." }.take(9000)); actionCard("New conversation", "Create a direct conversation from a profile or people picker.") { showComing("New conversation", "The atomic create_conversation RPC is already wired in the repository.") } } }
+            override fun onComplete(result: com.fadcam.tv.social.SocialResult<String>) { runOnUiThread { content.removeView(loading); if (!result.isSuccess) { actionCard("Inbox unavailable", result.error?.message ?: "Try again later.") { showMessages() }; return@runOnUiThread }; val rows = jsonRows(result.value.orEmpty()); if(rows.isEmpty()) textBlock("No conversations yet.") else rows.forEachIndexed { i, row -> val id = firstString(row,"conversation_id","id"); actionCard("Conversation ${i+1}", compact(row)) { if(id.isNullOrBlank()) textBlock("Conversation id was not returned by the backend.") else showConversation(id) } }; actionCard("New conversation", "Create a direct conversation from a profile or people picker.") { showComing("New conversation", "The atomic create_conversation RPC is wired in the repository.") } } }
         })
     }
 
-    private fun showNotifications() { content.removeAllViews(); content.addView(back()); card("NOTIFICATIONS", "Authenticated social activity remains available from the native social feed."); if (!hasSession()) { actionCard("Sign in required", "Open Social and sign in first.") { open(ModernSocialActivity::class.java) }; return }; textBlock("Notification read rendering will be connected to the verified notifications schema rather than fabricating local data."); actionCard("Open Social", "Return to the authenticated feed.") { open(ModernSocialActivity::class.java) } }
+    private fun showConversation(id: String) {
+        content.removeAllViews(); content.addView(back()); card("CONVERSATION", "Conversation $id")
+        val loading = label("Loading messages…", 14f, muted, false); content.addView(loading, lp(-1,54))
+        features.loadMessages(id, 80, object : SocialFeatureRepository.Callback<String> {
+            override fun onComplete(result: com.fadcam.tv.social.SocialResult<String>) { runOnUiThread { content.removeView(loading); if(!result.isSuccess){actionCard("Messages unavailable",result.error?.message?:"Try again."){showConversation(id)};return@runOnUiThread}; val rows=jsonRows(result.value.orEmpty()); if(rows.isEmpty()) textBlock("No messages yet.") else rows.reversed().forEach { row -> val body=firstString(row,"body") ?: if(firstString(row,"deleted_at")!=null) "Message deleted" else compact(row); val edited=if(firstString(row,"edited_at")!=null) " · edited" else ""; val cardText=body+edited; actionCard(if(firstString(row,"sender_id")==featuresUserId()) "You" else "Member",cardText){ val mid=firstString(row,"id"); if(!mid.isNullOrBlank())features.markMessageRead(mid,object:SocialFeatureRepository.Callback<Boolean>{override fun onComplete(_:com.fadcam.tv.social.SocialResult<Boolean>){}}) } }; actionCard("Send message","Use the full native composer in Social for reply, shared-post and media message options."){open(ModernSocialActivity::class.java)} } }
+        })
+    }
+
+    private fun showNotifications() = loadSurface("NOTIFICATIONS", "Your notification activity is loaded from Supabase.", { cb -> features.loadNotifications(50, cb) })
+    private fun showBookmarks() = loadSurface("BOOKMARKS", "Saved posts are read from the authenticated bookmarks table.", { cb -> features.loadBookmarks(50, cb) })
+    private fun showHistory() = loadSurface("HISTORY", "Recently viewed posts are read from post_views for the signed-in user.", { cb -> features.loadHistory(50, cb) })
+    private fun showStories() = loadSurface("STORIES", "Story records are requested directly from Supabase; unavailable schemas are surfaced as backend errors.", { cb -> features.loadStories(50, cb) })
+    private fun showCommunities() = loadSurface("COMMUNITIES", "Community records are requested directly from Supabase.", { cb -> features.loadCommunities(50, cb) })
+    private fun showPolls() = loadSurface("POLLS", "Poll records are requested directly from Supabase.", { cb -> features.loadPolls(50, cb) })
+
+    private fun loadSurface(title: String, description: String, loader: (SocialFeatureRepository.Callback<String>) -> Unit) {
+        content.removeAllViews(); content.addView(back()); card(title, description)
+        if (!hasSession()) { actionCard("Sign in required", "Open Social and sign in first.") { open(ModernSocialActivity::class.java) }; return }
+        val loading = label("Loading from backend…", 14f, muted, false); content.addView(loading, lp(-1,54))
+        loader(object : SocialFeatureRepository.Callback<String> {
+            override fun onComplete(result: com.fadcam.tv.social.SocialResult<String>) { runOnUiThread { content.removeView(loading); if(!result.isSuccess){actionCard("Backend unavailable",result.error?.message?:"The backend did not return this surface."){loadSurface(title,description,loader)};return@runOnUiThread}; val rows=jsonRows(result.value.orEmpty()); if(rows.isEmpty()){textBlock("No records returned.")}else rows.take(50).forEachIndexed { i,row -> actionCard("${title.lowercase().replaceFirstChar{it.uppercase()}} #${i+1}",compact(row)){} } } }
+        })
+    }
+
     private fun showLists() { content.removeAllViews(); content.addView(back()); card("LISTS", "Private or public curated timelines are part of the parity model."); actionCard("Create a list", "Create a named list with optional privacy and add members.") { showComing("Create list", "createList and addListMember are implemented in the native repository.") }; actionCard("List timeline", "Read a list-specific timeline with pagination.") { showComing("List timeline", "get_list_timeline is wired and ready for the native picker surface.") } }
     private fun showSafety() { content.removeAllViews(); content.addView(back()); card("PRIVACY & SAFETY", "Account safety controls are actor-scoped and authenticated."); actionCard("Mute a user", "Hide a user's content without blocking them.") { showComing("Mute", "toggleMute is wired in SocialFeatureRepository.") }; actionCard("Block a user", "Prevent unwanted interactions.") { showComing("Block", "toggleBlock is wired in SocialFeatureRepository.") }; actionCard("Follow requests", "Request, cancel or respond to follows for private accounts.") { showComing("Follow requests", "requestFollow, cancelFollowRequest and respondToFollowRequest are wired.") }; actionCard("Post views", "Record content views for ranking and history.") { showComing("Post views", "record_post_view is wired in SocialFeatureRepository.") } }
+
+    private fun jsonRows(raw: String): List<JsonObject> = try { val el=JsonParser.parseString(raw); when { el.isJsonArray -> el.asJsonArray.mapNotNull{it.takeIf{it.isJsonObject}?.asJsonObject}; el.isJsonObject -> listOf(el.asJsonObject); else -> emptyList() } } catch(_:Throwable){ emptyList() }
+    private fun firstString(o: JsonObject, vararg names: String): String? = names.firstNotNullOfOrNull { n -> o.get(n)?.takeUnless{it.isJsonNull}?.asString?.takeIf{it.isNotBlank()} }
+    private fun compact(o: JsonObject): String { val keys=listOf("body","message","kind","type","name","title","username","display_name","created_at","read_at","media_url"); val parts=keys.mapNotNull{ k->o.get(k)?.takeUnless{it.isJsonNull}?.let{ "$k: ${it.toString().trim('"').take(220)}" }}; return (if(parts.isEmpty()) o.toString() else parts.joinToString("  •  ")).take(900) }
+    private fun featuresUserId(): String? = getSharedPreferences("tv49_social_session", MODE_PRIVATE).getString("user_id", null)
     private fun back(): Button = button("‹  Social home", Color.WHITE, purple) { showOverview() }
     private fun card(title: String, body: String) { val c = column(Color.WHITE); c.setPadding(dp(18), dp(16), dp(18), dp(16)); c.addView(label(title, 11f, purple, true)); c.addView(label(body, 15f, text, false).apply { setPadding(0, dp(5), 0, 0) }); val p = lp(-1, -2); p.topMargin = dp(7); p.bottomMargin = dp(7); content.addView(c, p) }
     private fun actionCard(title: String, body: String, action: () -> Unit) { val b = button("$title\n$body", text, Color.WHITE, action); b.gravity = Gravity.LEFT or Gravity.CENTER_VERTICAL; b.setTextSize(14f); b.setTypeface(Typeface.DEFAULT, Typeface.NORMAL); val p = lp(-1, 76); p.topMargin = dp(5); p.bottomMargin = dp(5); content.addView(b, p) }
