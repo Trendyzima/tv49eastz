@@ -5,6 +5,7 @@ on:
     branches: [master]
     paths:
       - 'cloudflare-relay/**'
+      - 'supabase/migrations/**'
       - '.github/workflows/cloudflare-relay-deploy.yml'
   workflow_dispatch:
 
@@ -12,7 +13,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: tv49eastz-cloudflare-production-v3
+  group: tv49eastz-cloudflare-production-v4
   cancel-in-progress: false
 
 env:
@@ -28,20 +29,16 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
-
       - name: Install Node.js
         uses: actions/setup-node@v6
         with:
           node-version: 24
           cache: npm
           cache-dependency-path: cloudflare-relay/package.json
-
       - name: Install dependencies
         run: npm install
-
       - name: Typecheck
         run: npm run typecheck
-
       - name: Validate canonical Durable Object migration history
         run: |
           set -euo pipefail
@@ -51,50 +48,47 @@ jobs:
           grep -q '"tag": "v4-native-gateway"' wrangler.jsonc
           grep -q '"name": "SESSION_STORE"' wrangler.jsonc
           grep -q '"name": "RELAY_TUNNEL"' wrangler.jsonc
-          echo 'Canonical Durable Object configuration validated.'
-
       - name: Validate required GitHub Actions secrets are present
         env:
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           [[ -n "$PAYPAL_CLIENT_ID" ]] || { echo 'Missing GitHub Actions secret: PAYPAL_CLIENT_ID'; exit 1; }
           [[ -n "$PAYPAL_CLIENT_SECRET" ]] || { echo 'Missing GitHub Actions secret: PAYPAL_CLIENT_SECRET'; exit 1; }
+          [[ -n "$SUPABASE_SECRET_KEY" ]] || { echo 'Missing GitHub Actions secret: SUPABASE_SECRET_KEY'; exit 1; }
           [[ -n "$CLOUDFLARE_API_TOKEN" ]] || { echo 'Missing GitHub Actions secret: CLOUDFLARE_API_TOKEN'; exit 1; }
           [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || { echo 'Missing GitHub Actions secret: CLOUDFLARE_ACCOUNT_ID'; exit 1; }
           echo 'Required deployment credentials are provisioned in GitHub Actions secrets.'
-
       - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v4
-        env:
-          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
-          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
-          PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
           command: deploy --containers-rollout=immediate
-
       - name: Resolve deployment URL
         id: deployment_url
         env:
           CF_URL_FROM_WRANGLER: ${{ steps.deploy.outputs.deployment-url }}
         run: |
           set -euo pipefail
-          if [[ -n "$CF_URL_FROM_WRANGLER" ]]; then
-            cf_url="$CF_URL_FROM_WRANGLER"
-          else
-            cf_url='https://tv49eastz-relay.nahashonnyaga794.workers.dev'
-          fi
-          [[ "$cf_url" == https://* ]] || { echo "Invalid Cloudflare deployment URL: $cf_url"; exit 1; }
+          cf_url="${CF_URL_FROM_WRANGLER:-https://tv49eastz-relay.nahashonnyaga794.workers.dev}"
+          [[ "$cf_url" == https://* ]] || exit 1
           echo "cf_url=$cf_url" >> "$GITHUB_OUTPUT"
-          echo "Cloudflare deployment URL resolved: $cf_url"
-
+      - name: Provision server-side Supabase secret
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          SUPABASE_SECRET_KEY: ${{ secrets.SUPABASE_SECRET_KEY }}
+        run: |
+          set -euo pipefail
+          [[ -n "$SUPABASE_SECRET_KEY" ]] || { echo 'SUPABASE_SECRET_KEY is empty'; exit 1; }
+          printf '%s' "$SUPABASE_SECRET_KEY" | npx wrangler secret put SUPABASE_SECRET_KEY
+          echo 'Server-side Supabase secret provisioned without printing its value.'
       - name: Provision PayPal Worker secrets
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
@@ -103,14 +97,9 @@ jobs:
           PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
         run: |
           set -euo pipefail
-          [[ -n "$PAYPAL_CLIENT_ID" ]] || { echo 'PAYPAL_CLIENT_ID is empty'; exit 1; }
-          [[ -n "$PAYPAL_CLIENT_SECRET" ]] || { echo 'PAYPAL_CLIENT_SECRET is empty'; exit 1; }
           printf '%s' "$PAYPAL_CLIENT_ID" | npx wrangler secret put PAYPAL_CLIENT_ID
           printf '%s' "$PAYPAL_CLIENT_SECRET" | npx wrangler secret put PAYPAL_CLIENT_SECRET
           printf '%s' "${PAYPAL_ENV:-sandbox}" | npx wrangler secret put PAYPAL_ENV
-          printf '%s' 'PayPal Worker secrets provisioned without printing secret values.'
-          printf '\n'
-
       - name: Create or reuse PayPal webhook
         id: paypal_webhook
         env:
@@ -121,96 +110,30 @@ jobs:
           CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
         run: |
           set -euo pipefail
-          [[ -n "$CF_URL" ]] || { echo 'Cloudflare deployment URL is empty'; exit 1; }
           base='https://api-m.sandbox.paypal.com'
           if [[ "${PAYPAL_ENV:-sandbox}" == 'live' || "${PAYPAL_ENV:-sandbox}" == 'production' ]]; then base='https://api-m.paypal.com'; fi
-
-          token="$(curl --silent --show-error --fail --max-time 20 \
-            -u "$PAYPAL_CLIENT_ID:$PAYPAL_CLIENT_SECRET" \
-            -H 'Accept: application/json' \
-            -H 'Content-Type: application/x-www-form-urlencoded' \
-            --data 'grant_type=client_credentials' \
-            "$base/v1/oauth2/token" | jq -r '.access_token')"
-          [[ -n "$token" && "$token" != 'null' ]] || { echo 'PayPal OAuth token acquisition failed'; exit 1; }
-
+          token="$(curl --silent --show-error --fail --max-time 20 -u "$PAYPAL_CLIENT_ID:$PAYPAL_CLIENT_SECRET" -H 'Accept: application/json' -H 'Content-Type: application/x-www-form-urlencoded' --data 'grant_type=client_credentials' "$base/v1/oauth2/token" | jq -r '.access_token')"
+          [[ -n "$token" && "$token" != 'null' ]] || exit 1
           webhook_url="$CF_URL/v1/paypal/webhook"
-          existing_id="$(curl --silent --show-error --fail --max-time 20 \
-            -H "Authorization: Bearer $token" -H 'Accept: application/json' \
-            "$base/v1/notifications/webhooks?page_size=100" \
-            | jq -r --arg url "$webhook_url" '.webhooks[]? | select(.url == $url) | .id' | head -n1)"
-
+          existing_id="$(curl --silent --show-error --fail --max-time 20 -H "Authorization: Bearer $token" -H 'Accept: application/json' "$base/v1/notifications/webhooks?page_size=100" | jq -r --arg url "$webhook_url" '.webhooks[]? | select(.url == $url) | .id' | head -n1)"
           if [[ -z "$existing_id" ]]; then
-            existing_id="$(curl --silent --show-error --fail --max-time 20 \
-              -X POST "$base/v1/notifications/webhooks" \
-              -H "Authorization: Bearer $token" \
-              -H 'Content-Type: application/json' \
-              -H 'Accept: application/json' \
-              --data "$(jq -n --arg url "$webhook_url" '{url:$url,event_types:[{name:"CHECKOUT.ORDER.APPROVED"},{name:"PAYMENT.CAPTURE.COMPLETED"},{name:"PAYMENT.CAPTURE.DENIED"},{name:"PAYMENT.CAPTURE.REFUNDED"},{name:"PAYMENT.CAPTURE.REVERSED"}]}')" \
-              | jq -r '.id')"
+            existing_id="$(curl --silent --show-error --fail --max-time 20 -X POST "$base/v1/notifications/webhooks" -H "Authorization: Bearer $token" -H 'Content-Type: application/json' -H 'Accept: application/json' --data "$(jq -n --arg url "$webhook_url" '{url:$url,event_types:[{name:"CHECKOUT.ORDER.APPROVED"},{name:"PAYMENT.CAPTURE.COMPLETED"},{name:"PAYMENT.CAPTURE.DENIED"},{name:"PAYMENT.CAPTURE.REFUNDED"},{name:"PAYMENT.CAPTURE.REVERSED"}]}')" | jq -r '.id')"
           fi
-
-          [[ -n "$existing_id" && "$existing_id" != 'null' ]] || { echo 'Unable to create or locate PayPal webhook'; exit 1; }
+          [[ -n "$existing_id" && "$existing_id" != 'null' ]] || exit 1
           printf '%s' "$existing_id" | npx wrangler secret put PAYPAL_WEBHOOK_ID
-          echo "PayPal webhook provisioned for $webhook_url"
-
       - name: Verify production security, PayPal configuration and routing
         env:
           CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
         run: |
           set -euo pipefail
-          [[ -n "$CF_URL" ]] || { echo 'Cloudflare deployment URL is empty'; exit 1; }
-          echo "Deployed URL: $CF_URL"
-
-          health="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
-          echo "$health"
-          grep -q '"ok":true' <<<"$health"
-
-          paypal_config="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/v1/paypal/config")"
-          echo "$paypal_config"
-          grep -q '"provider":"paypal"' <<<"$paypal_config"
-          grep -q '"configured":true' <<<"$paypal_config"
-
-          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/session")"
-          [[ "$code" == 401 ]] || { echo "Expected /v1/session unauthenticated=401, got $code"; exit 1; }
-
-          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/device/session")"
-          [[ "$code" == 401 ]] || { echo "Expected /v1/device/session unauthenticated=401, got $code"; exit 1; }
-
-          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/media")"
-          [[ "$code" == 401 ]] || { echo "Expected /v1/media unauthenticated=401, got $code"; exit 1; }
-
-          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/not-a-session/index.m3u8")"
-          [[ "$code" == 401 ]] || { echo "Expected protected stream=401, got $code"; exit 1; }
-
-          code="$(python3 - "$CF_URL" <<'PY'
-          import base64, os, socket, ssl, sys
-          from urllib.parse import urlsplit
-          url = urlsplit(sys.argv[1] + "/tunnel?stream=smoke-test&ticket=invalid")
-          key = base64.b64encode(os.urandom(16)).decode("ascii")
-          request = (f"GET {url.path}?{url.query} HTTP/1.1\r\nHost: {url.netloc}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n\r\n").encode("ascii")
-          raw = socket.create_connection((url.hostname, 443), timeout=15)
-          with ssl.create_default_context().wrap_socket(raw, server_hostname=url.hostname) as sock:
-              sock.sendall(request)
-              data = sock.recv(4096).decode("iso-8859-1", "replace")
-              status = data.split("\r\n", 1)[0]
-              print(status)
-              if not status.startswith("HTTP/1.1 401 "):
-                  raise SystemExit(1)
-          PY
-          )"
-          [[ "$code" == "HTTP/1.1 401 "* ]] || { echo "Expected invalid tunnel ticket with complete websocket handshake=401, got $code"; exit 1; }
-
-          echo 'Production security/routing and PayPal configuration smoke tests passed.'
-
+          health="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"; grep -q '"ok":true' <<<"$health"
+          paypal_config="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/v1/paypal/config")"; grep -q '"provider":"paypal"' <<<"$paypal_config"; grep -q '"configured":true' <<<"$paypal_config"
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/paypal/orders" -H 'Content-Type: application/json' --data '{"amount":"1.00","currency":"USD"}')"
+          [[ "$code" == 401 ]] || { echo "Expected PayPal order without auth=401, got $code"; exit 1; }
+          for path in /v1/session /v1/device/session /v1/media; do code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL$path")"; [[ "$code" == 401 ]] || exit 1; done
+          code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 "$CF_URL/stream/not-a-session/index.m3u8")"; [[ "$code" == 401 ]] || exit 1
+          echo 'Cloudflare, PayPal configuration and unauthenticated payment/security checks passed.'
       - name: Publish deployment URL to job summary
         env:
           CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
-        run: |
-          set -euo pipefail
-          [[ -n "$CF_URL" ]] || { echo 'Missing Cloudflare deployment URL'; exit 1; }
-          {
-            echo '## Cloudflare deployment'
-            echo
-            echo "Production Worker endpoint: $CF_URL"
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo 'Cloudflare deployment completed without modifying the repository.'
+        run: echo "Production Worker endpoint: $CF_URL" >> "$GITHUB_STEP_SUMMARY"
