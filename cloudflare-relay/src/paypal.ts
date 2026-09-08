@@ -1,9 +1,10 @@
-export interface PayPalEnv {
+import { createPendingTopup, createPaypalOrderRecord, finalizePaypalCapture, markPaypalOrderApproved, markWebhookProcessed, recordWebhook, supabaseServerKey, type SupabaseAdminEnv } from "./paypal-payment-ledger";
+
+export interface PayPalEnv extends SupabaseAdminEnv {
   PAYPAL_CLIENT_ID?: string;
   PAYPAL_CLIENT_SECRET?: string;
   PAYPAL_ENV?: string;
   PAYPAL_WEBHOOK_ID?: string;
-  SUPABASE_URL?: string;
   SUPABASE_PUBLISHABLE_KEY?: string;
 }
 
@@ -13,108 +14,79 @@ const ALLOWED_CURRENCIES = /^[A-Z]{3}$/;
 
 export async function handlePayPalRequest(request: Request, env: PayPalEnv): Promise<Response> {
   const url = new URL(request.url);
-  if (request.method === "GET" && url.pathname === "/v1/paypal/config") {
-    return json({ ok: true, provider: "paypal", environment: paypalBaseUrl(env).includes("sandbox") ? "sandbox" : "live", configured: Boolean(env.PAYPAL_CLIENT_ID && env.PAYPAL_CLIENT_SECRET) });
-  }
+  if (request.method === "GET" && url.pathname === "/v1/paypal/config") return json({ ok:true, provider:"paypal", environment:paypalBaseUrl(env).includes("sandbox")?"sandbox":"live", configured:Boolean(env.PAYPAL_CLIENT_ID&&env.PAYPAL_CLIENT_SECRET&&supabaseServerKey(env)) });
   if (url.pathname === "/v1/paypal/orders" && request.method === "POST") {
-    if (!await authenticate(request, env)) return json({ error: "unauthorized" }, 401);
-    return createOrder(request, env);
+    const identity = await authenticate(request, env); if (!identity) return json({error:"unauthorized"},401); return createOrder(request, env, identity.userId);
   }
-  const captureMatch = url.pathname.match(/^\/v1\/paypal\/orders\/([^/]+)\/capture$/);
-  if (captureMatch && request.method === "POST") {
-    if (!await authenticate(request, env)) return json({ error: "unauthorized" }, 401);
-    return captureOrder(captureMatch[1], env);
-  }
-  const orderMatch = url.pathname.match(/^\/v1\/paypal\/orders\/([^/]+)$/);
-  if (orderMatch && request.method === "GET") {
-    if (!await authenticate(request, env)) return json({ error: "unauthorized" }, 401);
-    return showOrder(orderMatch[1], env);
-  }
-  if (url.pathname === "/v1/paypal/webhook" && request.method === "POST") return verifyWebhook(request, env);
-  return json({ error: "paypal_route_not_found" }, 404);
+  const captureMatch=url.pathname.match(/^\/v1\/paypal\/orders\/([^/]+)\/capture$/);
+  if(captureMatch&&request.method==="POST"){const identity=await authenticate(request,env);if(!identity)return json({error:"unauthorized"},401);return captureOrder(captureMatch[1],env,identity.userId);}
+  const orderMatch=url.pathname.match(/^\/v1\/paypal\/orders\/([^/]+)$/);
+  if(orderMatch&&request.method==="GET"){const identity=await authenticate(request,env);if(!identity)return json({error:"unauthorized"},401);return showOrder(orderMatch[1],env,identity.userId);}
+  if(url.pathname==="/v1/paypal/webhook"&&request.method==="POST")return verifyWebhook(request,env);
+  return json({error:"paypal_route_not_found"},404);
 }
 
-async function authenticate(request: Request, env: PayPalEnv): Promise<boolean> {
-  const auth = request.headers.get("Authorization") ?? "";
-  if (!auth.startsWith("Bearer ") || !env.SUPABASE_URL || !env.SUPABASE_PUBLISHABLE_KEY) return false;
-  const token = auth.slice(7).trim();
-  if (!token || token.length > 8192) return false;
-  try {
-    const response = await fetch(`${env.SUPABASE_URL}/auth/v1/user`, { headers: { Authorization: `Bearer ${token}`, apikey: env.SUPABASE_PUBLISHABLE_KEY } });
-    if (!response.ok) return false;
-    const user = await response.json() as { id?: string };
-    return Boolean(user.id && /^[0-9a-f-]{36}$/i.test(user.id));
-  } catch { return false; }
+async function authenticate(request:Request,env:PayPalEnv):Promise<{userId:string}|null>{
+  const auth=request.headers.get("Authorization")??"";if(!auth.startsWith("Bearer ")||!env.SUPABASE_URL||!env.SUPABASE_PUBLISHABLE_KEY)return null;
+  const token=auth.slice(7).trim();if(!token||token.length>8192)return null;
+  try{const r=await fetch(`${env.SUPABASE_URL}/auth/v1/user`,{headers:{Authorization:`Bearer ${token}`,apikey:env.SUPABASE_PUBLISHABLE_KEY}});if(!r.ok)return null;const u=await r.json() as {id?:string};return u.id&&/^[0-9a-f-]{36}$/i.test(u.id)?{userId:u.id}:null;}catch{return null;}
 }
 
-async function createOrder(request: Request, env: PayPalEnv): Promise<Response> {
-  const body = await readJson(request);
-  if (!body) return json({ error: "invalid_json" }, 400);
-  const amount = String(body.amount ?? "").trim();
-  const currency = String(body.currency ?? "USD").trim().toUpperCase();
-  const description = String(body.description ?? "TV49 East purchase").trim().slice(0, 127);
-  const referenceId = String(body.reference_id ?? crypto.randomUUID()).trim().slice(0, 256);
-  const returnUrl = String(body.return_url ?? "").trim();
-  const cancelUrl = String(body.cancel_url ?? "").trim();
-  if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) return json({ error: "invalid_amount" }, 400);
-  if (!ALLOWED_CURRENCIES.test(currency)) return json({ error: "invalid_currency" }, 400);
-  if (returnUrl && !isHttpsUrl(returnUrl)) return json({ error: "return_url_must_be_https" }, 400);
-  if (cancelUrl && !isHttpsUrl(cancelUrl)) return json({ error: "cancel_url_must_be_https" }, 400);
-  const accessToken = await getAccessToken(env);
-  if (!accessToken) return json({ error: "paypal_not_configured" }, 503);
-  const applicationContext: JsonRecord = { shipping_preference: "NO_SHIPPING", user_action: "PAY_NOW" };
-  if (returnUrl) applicationContext.return_url = returnUrl;
-  if (cancelUrl) applicationContext.cancel_url = cancelUrl;
-  const response = await paypalFetch(paypalBaseUrl(env), "/v2/checkout/orders", accessToken, { method: "POST", headers: { "PayPal-Request-Id": `tv49-${crypto.randomUUID()}` }, body: JSON.stringify({ intent: "CAPTURE", purchase_units: [{ reference_id: referenceId, description, amount: { currency_code: currency, value: amount } }], application_context: applicationContext }) });
-  return paypalResponse(response);
+async function createOrder(request:Request,env:PayPalEnv,userId:string):Promise<Response>{
+  const body=await readJson(request);if(!body)return json({error:"invalid_json"},400);
+  const amount=String(body.amount??"").trim(),currency=String(body.currency??"USD").trim().toUpperCase(),description=String(body.description??"TV49 East purchase").trim().slice(0,127),referenceId=String(body.reference_id??crypto.randomUUID()).trim().slice(0,256),returnUrl=String(body.return_url??"").trim(),cancelUrl=String(body.cancel_url??"").trim();
+  if(!/^\d+(?:\.\d{1,2})?$/.test(amount)||Number(amount)<=0)return json({error:"invalid_amount"},400);
+  if(!ALLOWED_CURRENCIES.test(currency))return json({error:"invalid_currency"},400);
+  if(returnUrl&&!isHttpsUrl(returnUrl))return json({error:"return_url_must_be_https"},400);if(cancelUrl&&!isHttpsUrl(cancelUrl))return json({error:"cancel_url_must_be_https"},400);
+  const amountCents=Math.round(Number(amount)*100);const accessToken=await getAccessToken(env);if(!accessToken)return json({error:"paypal_not_configured"},503);
+  const applicationContext:JsonRecord={shipping_preference:"NO_SHIPPING",user_action:"PAY_NOW"};if(returnUrl)applicationContext.return_url=returnUrl;if(cancelUrl)applicationContext.cancel_url=cancelUrl;
+  const response=await paypalFetch(paypalBaseUrl(env),"/v2/checkout/orders",accessToken,{method:"POST",headers:{"PayPal-Request-Id":`tv49-${crypto.randomUUID()}`},body:JSON.stringify({intent:"CAPTURE",purchase_units:[{reference_id:referenceId,description,amount:{currency_code:currency,value:amount}}],application_context:applicationContext})});
+  if(!response.ok)return paypalResponse(response);
+  const paypal=await response.json() as JsonRecord;const orderId=typeof paypal.id==="string"?paypal.id:"";if(!orderId)return json({error:"paypal_order_missing_id"},502);
+  try{
+    const tx=await createPendingTopup(env,userId,orderId,amountCents,currency);
+    const links=Array.isArray(paypal.links)?paypal.links as Array<JsonRecord>:[];const approval=links.find(x=>x.rel==="payer-action"||x.rel==="approve");
+    await createPaypalOrderRecord(env,userId,tx.id,orderId,amountCents,currency,typeof approval?.href==="string"?approval.href:undefined);
+  }catch(error){return json({error:"payment_persistence_failed",detail:error instanceof Error?error.message:"unknown"},503);}
+  return new Response(JSON.stringify(paypal),{status:200,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store"}});
 }
 
-async function captureOrder(orderId: string, env: PayPalEnv): Promise<Response> {
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId)) return json({ error: "invalid_order_id" }, 400);
-  const accessToken = await getAccessToken(env);
-  if (!accessToken) return json({ error: "paypal_not_configured" }, 503);
-  return paypalResponse(await paypalFetch(paypalBaseUrl(env), `/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`, accessToken, { method: "POST", headers: { "PayPal-Request-Id": `tv49-capture-${orderId}` }, body: "{}" }));
+async function captureOrder(orderId:string,env:PayPalEnv,userId:string):Promise<Response>{
+  if(!/^[A-Za-z0-9_-]{1,64}$/.test(orderId))return json({error:"invalid_order_id"},400);if(!supabaseServerKey(env))return json({error:"supabase_not_configured"},503);
+  const lookup=await supabaseQuery(env,`/paypal_orders?paypal_order_id=eq.${encodeURIComponent(orderId)}&user_id=eq.${encodeURIComponent(userId)}&select=paypal_order_id,status&limit=1`);if(!lookup.ok)return json({error:"payment_lookup_failed"},503);const rows=await lookup.json() as unknown[];if(!rows.length)return json({error:"order_not_owned"},404);
+  const accessToken=await getAccessToken(env);if(!accessToken)return json({error:"paypal_not_configured"},503);
+  const r=await paypalFetch(paypalBaseUrl(env),`/v2/checkout/orders/${encodeURIComponent(orderId)}/capture`,accessToken,{method:"POST",headers:{"PayPal-Request-Id":`tv49-capture-${orderId}`},body:"{}"});
+  if(!r.ok)return paypalResponse(r);const captured=await r.clone().json() as JsonRecord;await markPaypalOrderApproved(env,orderId).catch(()=>{});
+  const captureId=findCaptureId(captured);if(captureId&&String(captured.status??"").toUpperCase()==="COMPLETED")await finalizePaypalCapture(env,orderId,captureId);
+  return paypalResponse(r);
 }
 
-async function showOrder(orderId: string, env: PayPalEnv): Promise<Response> {
-  if (!/^[A-Za-z0-9_-]{1,64}$/.test(orderId)) return json({ error: "invalid_order_id" }, 400);
-  const accessToken = await getAccessToken(env);
-  if (!accessToken) return json({ error: "paypal_not_configured" }, 503);
-  return paypalResponse(await paypalFetch(paypalBaseUrl(env), `/v2/checkout/orders/${encodeURIComponent(orderId)}`, accessToken));
+async function showOrder(orderId:string,env:PayPalEnv,userId:string):Promise<Response>{if(!/^[A-Za-z0-9_-]{1,64}$/.test(orderId))return json({error:"invalid_order_id"},400);const lookup=await supabaseQuery(env,`/paypal_orders?paypal_order_id=eq.${encodeURIComponent(orderId)}&user_id=eq.${encodeURIComponent(userId)}&select=paypal_order_id&limit=1`);if(!lookup.ok||!(await lookup.clone().json() as unknown[]).length)return json({error:"order_not_owned"},404);const accessToken=await getAccessToken(env);if(!accessToken)return json({error:"paypal_not_configured"},503);return paypalResponse(await paypalFetch(paypalBaseUrl(env),`/v2/checkout/orders/${encodeURIComponent(orderId)}`,accessToken));}
+
+async function verifyWebhook(request:Request,env:PayPalEnv):Promise<Response>{
+  if(!env.PAYPAL_WEBHOOK_ID)return json({error:"paypal_webhook_not_configured"},503);const rawBody=await request.text();if(new TextEncoder().encode(rawBody).byteLength>MAX_BODY_BYTES)return json({error:"webhook_body_too_large"},413);
+  const transmissionId=request.headers.get("paypal-transmission-id"),transmissionTime=request.headers.get("paypal-transmission-time"),certUrl=request.headers.get("paypal-cert-url"),authAlgo=request.headers.get("paypal-auth-algo"),transmissionSig=request.headers.get("paypal-transmission-sig");if(!transmissionId||!transmissionTime||!certUrl||!authAlgo||!transmissionSig)return json({error:"missing_paypal_webhook_headers"},400);
+  const accessToken=await getAccessToken(env);if(!accessToken)return json({error:"paypal_not_configured"},503);const event=safeJson(rawBody) as JsonRecord;const eventId=typeof event.id==="string"?event.id:"";const eventType=typeof event.event_type==="string"?event.event_type:"UNKNOWN";if(!eventId)return json({error:"missing_event_id"},400);
+  const verifyResponse=await paypalFetch(paypalBaseUrl(env),"/v1/notifications/verify-webhook-signature",accessToken,{method:"POST",body:JSON.stringify({auth_algo:authAlgo,cert_url:certUrl,transmission_id:transmissionId,transmission_sig:transmissionSig,transmission_time:transmissionTime,webhook_id:env.PAYPAL_WEBHOOK_ID,webhook_event:event})});if(!verifyResponse.ok)return paypalResponse(verifyResponse);const verification=await verifyResponse.json() as JsonRecord;if(verification.verification_status!=="SUCCESS")return json({error:"paypal_webhook_signature_invalid"},400);
+  const orderId=extractOrderId(event),captureId=extractCaptureId(event);let inserted=false;try{inserted=await recordWebhook(env,{eventId,eventType,orderId,captureId,transmissionId,payload:event});}catch(error){return json({error:"webhook_persistence_failed",detail:error instanceof Error?error.message:"unknown"},503);}
+  if(!inserted)return json({ok:true,verified:true,duplicate:true,event_id:eventId,event_type:eventType});
+  try{
+    if(eventType==="CHECKOUT.ORDER.APPROVED"&&orderId)await markPaypalOrderApproved(env,orderId);
+    if(eventType==="PAYMENT.CAPTURE.COMPLETED"&&orderId&&captureId)await finalizePaypalCapture(env,orderId,captureId);
+    await markWebhookProcessed(env,eventId);
+  }catch(error){const message=error instanceof Error?error.message:"unknown";await markWebhookProcessed(env,eventId,message).catch(()=>{});return json({error:"webhook_processing_failed"},503);}
+  return json({ok:true,verified:true,processed:true,event_id:eventId,event_type:eventType});
 }
 
-async function verifyWebhook(request: Request, env: PayPalEnv): Promise<Response> {
-  if (!env.PAYPAL_WEBHOOK_ID) return json({ error: "paypal_webhook_not_configured" }, 503);
-  const rawBody = await request.text();
-  if (new TextEncoder().encode(rawBody).byteLength > MAX_BODY_BYTES) return json({ error: "webhook_body_too_large" }, 413);
-  const transmissionId = request.headers.get("paypal-transmission-id");
-  const transmissionTime = request.headers.get("paypal-transmission-time");
-  const certUrl = request.headers.get("paypal-cert-url");
-  const authAlgo = request.headers.get("paypal-auth-algo");
-  const transmissionSig = request.headers.get("paypal-transmission-sig");
-  if (!transmissionId || !transmissionTime || !certUrl || !authAlgo || !transmissionSig) return json({ error: "missing_paypal_webhook_headers" }, 400);
-  const accessToken = await getAccessToken(env);
-  if (!accessToken) return json({ error: "paypal_not_configured" }, 503);
-  const verifyResponse = await paypalFetch(paypalBaseUrl(env), "/v1/notifications/verify-webhook-signature", accessToken, { method: "POST", body: JSON.stringify({ auth_algo: authAlgo, cert_url: certUrl, transmission_id: transmissionId, transmission_sig: transmissionSig, transmission_time: transmissionTime, webhook_id: env.PAYPAL_WEBHOOK_ID, webhook_event: safeJson(rawBody) }) });
-  if (!verifyResponse.ok) return paypalResponse(verifyResponse);
-  const verification = await verifyResponse.json<JsonRecord>();
-  if (verification.verification_status !== "SUCCESS") return json({ error: "paypal_webhook_signature_invalid" }, 400);
-  const event = safeJson(rawBody) as JsonRecord;
-  return json({ ok: true, verified: true, event_id: typeof event.id === "string" ? event.id : null, event_type: typeof event.event_type === "string" ? event.event_type : "UNKNOWN" });
-}
-
-async function getAccessToken(env: PayPalEnv): Promise<string | null> {
-  if (!env.PAYPAL_CLIENT_ID || !env.PAYPAL_CLIENT_SECRET) return null;
-  const response = await fetch(`${paypalBaseUrl(env)}/v1/oauth2/token`, { method: "POST", headers: { Authorization: `Basic ${btoa(`${env.PAYPAL_CLIENT_ID}:${env.PAYPAL_CLIENT_SECRET}`)}`, "Content-Type": "application/x-www-form-urlencoded", Accept: "application/json" }, body: "grant_type=client_credentials" });
-  if (!response.ok) return null;
-  const data = await response.json<{ access_token?: string }>();
-  return typeof data.access_token === "string" ? data.access_token : null;
-}
-
-function paypalBaseUrl(env: PayPalEnv): string { const mode = String(env.PAYPAL_ENV ?? "sandbox").toLowerCase(); return mode === "live" || mode === "production" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com"; }
-async function paypalFetch(baseUrl: string, path: string, accessToken: string, init: RequestInit = {}): Promise<Response> { const headers = new Headers(init.headers); headers.set("Authorization", `Bearer ${accessToken}`); headers.set("Accept", "application/json"); if (init.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json"); return fetch(`${baseUrl}${path}`, { ...init, headers }); }
-function isHttpsUrl(value: string): boolean { try { return new URL(value).protocol === "https:"; } catch { return false; } }
-async function readJson(request: Request): Promise<JsonRecord | null> { const length = Number(request.headers.get("content-length") ?? "0"); if (length > MAX_BODY_BYTES) return null; try { const value = await request.json(); return value && typeof value === "object" && !Array.isArray(value) ? value as JsonRecord : null; } catch { return null; } }
-function safeJson(raw: string): unknown { try { return JSON.parse(raw); } catch { return {}; } }
-async function paypalResponse(response: Response): Promise<Response> { const body = await response.text(); return new Response(body || "{}", { status: response.status, headers: { "content-type": response.headers.get("content-type") ?? "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
-function json(value: unknown, status = 200): Response { return new Response(JSON.stringify(value), { status, headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", "x-content-type-options": "nosniff" } }); }
+async function supabaseQuery(env:PayPalEnv,path:string,init:RequestInit={}):Promise<Response>{const key=supabaseServerKey(env);if(!key)throw new Error("missing_supabase_server_key");const headers=new Headers(init.headers);headers.set("apikey",key);headers.set("Authorization",`Bearer ${key}`);headers.set("content-type","application/json");return fetch(`${env.SUPABASE_URL}/rest/v1${path}`,{...init,headers});}
+function extractOrderId(event:JsonRecord):string|undefined{const r=event.resource as JsonRecord|undefined;if(!r)return; if(typeof r.supplementary_data==="object"&&r.supplementary_data){const related=(r.supplementary_data as JsonRecord).related_ids as JsonRecord|undefined;if(related&&typeof related.order_id==="string")return related.order_id;}if(typeof r.id==="string"&&String(event.event_type).startsWith("CHECKOUT.ORDER"))return r.id;return typeof r.links==="object"?undefined:undefined;}
+function extractCaptureId(event:JsonRecord):string|undefined{const r=event.resource as JsonRecord|undefined;if(!r)return;return typeof r.id==="string"&&String(event.event_type).startsWith("PAYMENT.CAPTURE")?r.id:undefined;}
+function findCaptureId(order:JsonRecord):string|undefined{const units=Array.isArray(order.purchase_units)?order.purchase_units as JsonRecord[]:[];for(const u of units){const payments=u.payments as JsonRecord|undefined;const captures=payments?.captures as JsonRecord[]|undefined;if(captures?.[0]&&typeof captures[0].id==="string")return captures[0].id;}return;}
+async function getAccessToken(env:PayPalEnv):Promise<string|null>{if(!env.PAYPAL_CLIENT_ID||!env.PAYPAL_CLIENT_SECRET)return null;const r=await fetch(`${paypalBaseUrl(env)}/v1/oauth2/token`,{method:"POST",headers:{Authorization:`Basic ${btoa(`${env.PAYPAL_CLIENT_ID}:${env.PAYPAL_CLIENT_SECRET}`),}`,"Content-Type":"application/x-www-form-urlencoded",Accept:"application/json"},body:"grant_type=client_credentials"});if(!r.ok)return null;const d=await r.json() as {access_token?:string};return typeof d.access_token==="string"?d.access_token:null;}
+function paypalBaseUrl(env:PayPalEnv):string{const mode=String(env.PAYPAL_ENV??"sandbox").toLowerCase();return mode==="live"||mode==="production"?"https://api-m.paypal.com":"https://api-m.sandbox.paypal.com";}
+async function paypalFetch(baseUrl:string,path:string,accessToken:string,init:RequestInit={}):Promise<Response>{const h=new Headers(init.headers);h.set("Authorization",`Bearer ${accessToken}`);h.set("Accept","application/json");if(init.body&&!h.has("Content-Type"))h.set("Content-Type","application/json");return fetch(`${baseUrl}${path}`,{...init,headers:h});}
+function isHttpsUrl(value:string):boolean{try{return new URL(value).protocol==="https:";}catch{return false;}}
+async function readJson(request:Request):Promise<JsonRecord|null>{const length=Number(request.headers.get("content-length")??"0");if(length>MAX_BODY_BYTES)return null;try{const value=await request.json();return value&&typeof value==="object"&&!Array.isArray(value)?value as JsonRecord:null;}catch{return null;}}
+function safeJson(raw:string):unknown{try{return JSON.parse(raw);}catch{return {};}}
+async function paypalResponse(response:Response):Promise<Response>{const body=await response.text();return new Response(body||"{}",{status:response.status,headers:{"content-type":response.headers.get("content-type")??"application/json; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"}});}
+function json(value:unknown,status=200):Response{return new Response(JSON.stringify(value),{status,headers:{"content-type":"application/json; charset=utf-8","cache-control":"no-store","x-content-type-options":"nosniff"}});}
