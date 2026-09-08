@@ -11,8 +11,6 @@ on:
 permissions:
   contents: read
 
-# A Cloudflare deployment is a shared production operation. Keep only one
-# deployment running at a time so two pushes cannot race the same Worker.
 concurrency:
   group: tv49eastz-cloudflare-production-v3
   cancel-in-progress: false
@@ -55,16 +53,91 @@ jobs:
           grep -q '"name": "RELAY_TUNNEL"' wrangler.jsonc
           echo 'Canonical Durable Object configuration validated.'
 
+      - name: Validate PayPal GitHub secrets are present
+        env:
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          [[ -n "$PAYPAL_CLIENT_ID" ]] || { echo 'Missing GitHub Actions secret: PAYPAL_CLIENT_ID'; exit 1; }
+          [[ -n "$PAYPAL_CLIENT_SECRET" ]] || { echo 'Missing GitHub Actions secret: PAYPAL_CLIENT_SECRET'; exit 1; }
+          echo 'PayPal credentials are provisioned in GitHub Actions secrets.'
+
       - name: Deploy Worker
         id: deploy
         uses: cloudflare/wrangler-action@v4
+        env:
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
           command: deploy --containers-rollout=immediate
 
-      - name: Verify production security and routing
+      - name: Provision PayPal Worker secrets
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
+        run: |
+          set -euo pipefail
+          printf '%s' "$PAYPAL_CLIENT_ID" | npx wrangler secret put PAYPAL_CLIENT_ID --api-token "$CF_API_TOKEN"
+          printf '%s' "$PAYPAL_CLIENT_SECRET" | npx wrangler secret put PAYPAL_CLIENT_SECRET --api-token "$CF_API_TOKEN"
+          printf '%s' "${PAYPAL_ENV:-sandbox}" | npx wrangler secret put PAYPAL_ENV --api-token "$CF_API_TOKEN"
+          printf '%s' "$SUPABASE_URL" | npx wrangler secret put SUPABASE_URL --api-token "$CF_API_TOKEN"
+          printf '%s' "$SUPABASE_PUBLISHABLE_KEY" | npx wrangler secret put SUPABASE_PUBLISHABLE_KEY --api-token "$CF_API_TOKEN"
+          echo 'PayPal and Supabase Worker secrets provisioned without printing secret values.'
+
+      - name: Create or reuse PayPal webhook
+        id: paypal_webhook
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
+          PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
+          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CF_URL" ]] || { echo 'Wrangler did not return a deployment URL'; exit 1; }
+          base='https://api-m.sandbox.paypal.com'
+          if [[ "${PAYPAL_ENV:-sandbox}" == 'live' || "${PAYPAL_ENV:-sandbox}" == 'production' ]]; then base='https://api-m.paypal.com'; fi
+
+          token="$(curl --silent --show-error --fail --max-time 20 \
+            -u "$PAYPAL_CLIENT_ID:$PAYPAL_CLIENT_SECRET" \
+            -H 'Accept: application/json' \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            --data 'grant_type=client_credentials' \
+            "$base/v1/oauth2/token" | jq -r '.access_token')"
+          [[ -n "$token" && "$token" != 'null' ]] || { echo 'PayPal OAuth token acquisition failed'; exit 1; }
+
+          webhook_url="$CF_URL/v1/paypal/webhook"
+          existing_id="$(curl --silent --show-error --fail --max-time 20 \
+            -H "Authorization: Bearer $token" -H 'Accept: application/json' \
+            "$base/v1/notifications/webhooks?page_size=100" \
+            | jq -r --arg url "$webhook_url" '.webhooks[]? | select(.url == $url) | .id' | head -n1)"
+
+          if [[ -z "$existing_id" ]]; then
+            existing_id="$(curl --silent --show-error --fail --max-time 20 \
+              -X POST "$base/v1/notifications/webhooks" \
+              -H "Authorization: Bearer $token" \
+              -H 'Content-Type: application/json' \
+              -H 'Accept: application/json' \
+              --data "$(jq -n --arg url "$webhook_url" '{url:$url,event_types:[{name:"CHECKOUT.ORDER.APPROVED"},{name:"PAYMENT.CAPTURE.COMPLETED"},{name:"PAYMENT.CAPTURE.DENIED"},{name:"PAYMENT.CAPTURE.REFUNDED"},{name:"PAYMENT.CAPTURE.REVERSED"}]}')" \
+              | jq -r '.id')"
+          fi
+
+          [[ -n "$existing_id" && "$existing_id" != 'null' ]] || { echo 'Unable to create or locate PayPal webhook'; exit 1; }
+          printf '%s' "$existing_id" | npx wrangler secret put PAYPAL_WEBHOOK_ID --api-token "$CF_API_TOKEN"
+          echo "PayPal webhook provisioned for $webhook_url"
+
+      - name: Verify production security, PayPal configuration and routing
         env:
           CF_URL: ${{ steps.deploy.outputs.deployment-url }}
         run: |
@@ -75,6 +148,11 @@ jobs:
           health="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
           echo "$health"
           grep -q '"ok":true' <<<"$health"
+
+          paypal_config="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/v1/paypal/config")"
+          echo "$paypal_config"
+          grep -q '"provider":"paypal"' <<<"$paypal_config"
+          grep -q '"configured":true' <<<"$paypal_config"
 
           code="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 15 -X POST "$CF_URL/v1/session")"
           [[ "$code" == 401 ]] || { echo "Expected /v1/session unauthenticated=401, got $code"; exit 1; }
@@ -89,25 +167,11 @@ jobs:
           [[ "$code" == 401 ]] || { echo "Expected protected stream=401, got $code"; exit 1; }
 
           code="$(python3 - "$CF_URL" <<'PY'
-          import base64
-          import os
-          import socket
-          import ssl
-          import sys
+          import base64, os, socket, ssl, sys
           from urllib.parse import urlsplit
-
           url = urlsplit(sys.argv[1] + "/tunnel?stream=smoke-test&ticket=invalid")
           key = base64.b64encode(os.urandom(16)).decode("ascii")
-          request = (
-              f"GET {url.path}?{url.query} HTTP/1.1\r\n"
-              f"Host: {url.netloc}\r\n"
-              "Connection: Upgrade\r\n"
-              "Upgrade: websocket\r\n"
-              "Sec-WebSocket-Version: 13\r\n"
-              f"Sec-WebSocket-Key: {key}\r\n"
-              "\r\n"
-          ).encode("ascii")
-
+          request = (f"GET {url.path}?{url.query} HTTP/1.1\r\nHost: {url.netloc}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\nSec-WebSocket-Version: 13\r\nSec-WebSocket-Key: {key}\r\n\r\n").encode("ascii")
           raw = socket.create_connection((url.hostname, 443), timeout=15)
           with ssl.create_default_context().wrap_socket(raw, server_hostname=url.hostname) as sock:
               sock.sendall(request)
@@ -120,12 +184,8 @@ jobs:
           )"
           [[ "$code" == "HTTP/1.1 401 "* ]] || { echo "Expected invalid tunnel ticket with complete websocket handshake=401, got $code"; exit 1; }
 
-          echo 'Production security/routing smoke tests passed.'
+          echo 'Production security/routing and PayPal configuration smoke tests passed.'
 
-      # Android master builds deploy the same Worker themselves and consume
-      # this step's deployment URL directly. Do not commit that URL back to
-      # master: doing so creates a second writer to master and two concurrent
-      # deploy runs can reject each other's non-fast-forward push.
       - name: Publish deployment URL to job summary
         env:
           CF_URL: ${{ steps.deploy.outputs.deployment-url }}
