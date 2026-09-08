@@ -53,15 +53,19 @@ jobs:
           grep -q '"name": "RELAY_TUNNEL"' wrangler.jsonc
           echo 'Canonical Durable Object configuration validated.'
 
-      - name: Validate PayPal GitHub secrets are present
+      - name: Validate required GitHub Actions secrets are present
         env:
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
         run: |
           set -euo pipefail
           [[ -n "$PAYPAL_CLIENT_ID" ]] || { echo 'Missing GitHub Actions secret: PAYPAL_CLIENT_ID'; exit 1; }
           [[ -n "$PAYPAL_CLIENT_SECRET" ]] || { echo 'Missing GitHub Actions secret: PAYPAL_CLIENT_SECRET'; exit 1; }
-          echo 'PayPal credentials are provisioned in GitHub Actions secrets.'
+          [[ -n "$CLOUDFLARE_API_TOKEN" ]] || { echo 'Missing GitHub Actions secret: CLOUDFLARE_API_TOKEN'; exit 1; }
+          [[ -n "$CLOUDFLARE_ACCOUNT_ID" ]] || { echo 'Missing GitHub Actions secret: CLOUDFLARE_ACCOUNT_ID'; exit 1; }
+          echo 'Required deployment credentials are provisioned in GitHub Actions secrets.'
 
       - name: Deploy Worker
         id: deploy
@@ -70,42 +74,54 @@ jobs:
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
           PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         with:
           apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           workingDirectory: cloudflare-relay
           command: deploy --containers-rollout=immediate
 
+      - name: Resolve deployment URL
+        id: deployment_url
+        env:
+          CF_URL_FROM_WRANGLER: ${{ steps.deploy.outputs.deployment-url }}
+        run: |
+          set -euo pipefail
+          if [[ -n "$CF_URL_FROM_WRANGLER" ]]; then
+            cf_url="$CF_URL_FROM_WRANGLER"
+          else
+            cf_url='https://tv49eastz-relay.nahashonnyaga794.workers.dev'
+          fi
+          [[ "$cf_url" == https://* ]] || { echo "Invalid Cloudflare deployment URL: $cf_url"; exit 1; }
+          echo "cf_url=$cf_url" >> "$GITHUB_OUTPUT"
+          echo "Cloudflare deployment URL resolved: $cf_url"
+
       - name: Provision PayPal Worker secrets
         env:
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
           PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_PUBLISHABLE_KEY: ${{ secrets.SUPABASE_PUBLISHABLE_KEY }}
         run: |
           set -euo pipefail
-          printf '%s' "$PAYPAL_CLIENT_ID" | npx wrangler secret put PAYPAL_CLIENT_ID --api-token "$CF_API_TOKEN"
-          printf '%s' "$PAYPAL_CLIENT_SECRET" | npx wrangler secret put PAYPAL_CLIENT_SECRET --api-token "$CF_API_TOKEN"
-          printf '%s' "${PAYPAL_ENV:-sandbox}" | npx wrangler secret put PAYPAL_ENV --api-token "$CF_API_TOKEN"
-          printf '%s' "$SUPABASE_URL" | npx wrangler secret put SUPABASE_URL --api-token "$CF_API_TOKEN"
-          printf '%s' "$SUPABASE_PUBLISHABLE_KEY" | npx wrangler secret put SUPABASE_PUBLISHABLE_KEY --api-token "$CF_API_TOKEN"
-          echo 'PayPal and Supabase Worker secrets provisioned without printing secret values.'
+          [[ -n "$PAYPAL_CLIENT_ID" ]] || { echo 'PAYPAL_CLIENT_ID is empty'; exit 1; }
+          [[ -n "$PAYPAL_CLIENT_SECRET" ]] || { echo 'PAYPAL_CLIENT_SECRET is empty'; exit 1; }
+          printf '%s' "$PAYPAL_CLIENT_ID" | npx wrangler secret put PAYPAL_CLIENT_ID
+          printf '%s' "$PAYPAL_CLIENT_SECRET" | npx wrangler secret put PAYPAL_CLIENT_SECRET
+          printf '%s' "${PAYPAL_ENV:-sandbox}" | npx wrangler secret put PAYPAL_ENV
+          printf '%s' 'PayPal Worker secrets provisioned without printing secret values.'
+          printf '\n'
 
       - name: Create or reuse PayPal webhook
         id: paypal_webhook
         env:
-          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           PAYPAL_CLIENT_ID: ${{ secrets.PAYPAL_CLIENT_ID }}
           PAYPAL_CLIENT_SECRET: ${{ secrets.PAYPAL_CLIENT_SECRET }}
           PAYPAL_ENV: ${{ secrets.PAYPAL_ENV }}
-          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
+          CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
         run: |
           set -euo pipefail
-          [[ -n "$CF_URL" ]] || { echo 'Wrangler did not return a deployment URL'; exit 1; }
+          [[ -n "$CF_URL" ]] || { echo 'Cloudflare deployment URL is empty'; exit 1; }
           base='https://api-m.sandbox.paypal.com'
           if [[ "${PAYPAL_ENV:-sandbox}" == 'live' || "${PAYPAL_ENV:-sandbox}" == 'production' ]]; then base='https://api-m.paypal.com'; fi
 
@@ -134,15 +150,15 @@ jobs:
           fi
 
           [[ -n "$existing_id" && "$existing_id" != 'null' ]] || { echo 'Unable to create or locate PayPal webhook'; exit 1; }
-          printf '%s' "$existing_id" | npx wrangler secret put PAYPAL_WEBHOOK_ID --api-token "$CF_API_TOKEN"
+          printf '%s' "$existing_id" | npx wrangler secret put PAYPAL_WEBHOOK_ID
           echo "PayPal webhook provisioned for $webhook_url"
 
       - name: Verify production security, PayPal configuration and routing
         env:
-          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
+          CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
         run: |
           set -euo pipefail
-          [[ -n "$CF_URL" ]] || { echo 'Wrangler did not return a deployment URL'; exit 1; }
+          [[ -n "$CF_URL" ]] || { echo 'Cloudflare deployment URL is empty'; exit 1; }
           echo "Deployed URL: $CF_URL"
 
           health="$(curl --silent --show-error --max-time 15 --fail "$CF_URL/health")"
@@ -188,7 +204,7 @@ jobs:
 
       - name: Publish deployment URL to job summary
         env:
-          CF_URL: ${{ steps.deploy.outputs.deployment-url }}
+          CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
         run: |
           set -euo pipefail
           [[ -n "$CF_URL" ]] || { echo 'Missing Cloudflare deployment URL'; exit 1; }
