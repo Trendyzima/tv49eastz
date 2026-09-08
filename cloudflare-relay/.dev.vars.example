@@ -3,3 +3,10 @@ RELAY_SIGNING_SECRET=replace-with-local-secret
 RELAY_DEVICE_SECRET=replace-with-local-secret
 GATEWAY_API_KEY=replace-with-local-secret
 GATEWAY_CAPABILITY_KEY=replace-with-local-secret
+
+# PayPal REST API
+# Use sandbox while developing; use live only with production PayPal credentials.
+PAYPAL_CLIENT_ID=replace-with-paypal-client-id
+PAYPAL_CLIENT_SECRET=replace-with-paypal-client-secret
+PAYPAL_ENV=sandbox
+PAYPAL_WEBHOOK_ID=replace-with-registered-webhook-id
