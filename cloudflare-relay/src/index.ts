@@ -1,6 +1,7 @@
 import { DurableObject } from "cloudflare:workers";
+import { handlePayPalRequest, type PayPalEnv } from "./paypal";
 
-export interface Env {
+export interface Env extends PayPalEnv {
   RELAY_TUNNEL: DurableObjectNamespace<RelayTunnel>;
   RELAY_SIGNING_SECRET: string;
   RELAY_DEVICE_SECRET: string;
@@ -55,6 +56,10 @@ export default {
       });
     }
 
+    if (url.pathname.startsWith("/v1/paypal/")) {
+      return handlePayPalRequest(request, env);
+    }
+
     if (request.method === "GET" && url.pathname === "/tunnel") {
       return handleTunnelUpgrade(request, env);
     }
@@ -66,7 +71,7 @@ export default {
     return json({
       ok: true,
       service: "tv49eastz-cloudflare-relay",
-      endpoints: ["/health", "/tunnel", "/v1/relay"],
+      endpoints: ["/health", "/tunnel", "/v1/relay", "/v1/paypal/config", "/v1/paypal/orders", "/v1/paypal/webhook"],
     });
   },
 };
@@ -105,8 +110,6 @@ async function handleRelayRequest(request: Request, env: Env, ctx: ExecutionCont
     return json({ error: "invalid_or_expired_ticket" }, 401);
   }
 
-  // Never include the viewer ticket in a cache key. The signed ticket is
-  // authorization; the stream/path pair is the media identity.
   const cacheTtl = cacheTtlForPath(path);
   if (cacheTtl > 0) {
     const cacheKey = makeCacheKey(request, stream, path);
@@ -122,8 +125,6 @@ async function handleRelayRequest(request: Request, env: Env, ctx: ExecutionCont
       const cacheable = new Response(response.body, response);
       cacheable.headers.set("cache-control", `public, max-age=0, s-maxage=${cacheTtl}`);
       cacheable.headers.set("x-tv49-cache", "MISS");
-      // Cache is intentionally best-effort. A cache failure must never break
-      // playback, and Cache API entries are data-center local.
       ctx.waitUntil(caches.default.put(cacheKey, cacheable.clone()).catch(() => undefined));
       return cacheable;
     }
@@ -297,8 +298,6 @@ export class RelayTunnel extends DurableObject<Env> {
 
     const existing = this.findProducer(stream);
     if (existing) {
-      // Reconnects are expected. Close the stale tunnel and replace it instead
-      // of making the mobile producer permanently stuck in a 409 loop.
       try { existing.close(1000, "producer_replaced"); } catch { /* ignore */ }
     }
 
