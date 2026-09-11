@@ -87,6 +87,7 @@ func main() {
 	mux.HandleFunc("/metrics", g.metrics)
 	mux.HandleFunc("/v1/session", g.createSession)
 	mux.HandleFunc("/v1/session/", g.revokeSessionHandler)
+	mux.HandleFunc("/v1/studio/", g.studioRoutes)
 	mux.HandleFunc("/stream/", g.stream)
 	srv := &http.Server{Addr: cfg.Listen, Handler: g.middleware(mux), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
 	tlsConfig, e := LoadGatewayServerTLSConfig(cfg.TLSCertFile, cfg.TLSKeyFile, cfg.ClientCAFile)
@@ -144,6 +145,27 @@ func (g *Gateway) middleware(next http.Handler) http.Handler {
 		}
 		if strings.HasPrefix(r.URL.Path, "/v1/session/") {
 			if r.Method != http.MethodDelete {
+				g.denied.Add(1)
+				http.Error(w, "method not allowed", 405)
+				return
+			}
+			if !g.auth(r) {
+				g.denied.Add(1)
+				http.Error(w, "unauthorized", 401)
+				return
+			}
+			if !g.allowRate(r.RemoteAddr) {
+				g.denied.Add(1)
+				http.Error(w, "rate limit exceeded", 429)
+				return
+			}
+			next.ServeHTTP(w, r)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/v1/studio/") {
+			switch r.Method {
+			case http.MethodGet, http.MethodPost, http.MethodPut, http.MethodDelete:
+			default:
 				g.denied.Add(1)
 				http.Error(w, "method not allowed", 405)
 				return
