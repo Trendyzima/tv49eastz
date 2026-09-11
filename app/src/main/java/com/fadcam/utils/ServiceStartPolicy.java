@@ -12,8 +12,6 @@ import com.fadcam.Constants;
 /**
  * Central policy for recording-action service start mode.
  * Start actions use foreground start; control/query actions use normal startService.
- * Platform rejection paths are contained here so a denied start cannot terminate
- * the caller process.
  */
 public final class ServiceStartPolicy {
     private static final String TAG = "ServiceStartPolicy";
@@ -24,17 +22,10 @@ public final class ServiceStartPolicy {
         final String action = intent.getAction();
         final boolean foreground = isForegroundStartAction(action);
         FLog.d(TAG, "dispatch action=" + action + ", mode=" + (foreground ? "foreground" : "service"));
-        try {
-            if (foreground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                context.startForegroundService(intent);
-            } else {
-                context.startService(intent);
-            }
-        } catch (IllegalStateException | SecurityException error) {
-            // Android may reject starts from an ineligible background state or
-            // when foreground-service prerequisites are unavailable. Treat this
-            // as a recoverable refusal rather than allowing a process crash.
-            FLog.w(TAG, "Service start rejected for action=" + action, error);
+        if (foreground && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            context.startForegroundService(intent);
+        } else {
+            context.startService(intent);
         }
     }
 
