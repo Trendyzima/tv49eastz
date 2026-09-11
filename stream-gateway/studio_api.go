@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strings"
 )
@@ -62,7 +61,8 @@ func (g *Gateway) studioRoutes(w http.ResponseWriter, r *http.Request) {
 		if !decodeJSON(w, r, &req) || strings.TrimSpace(req.SceneID) == "" {
 			return
 		}
-		g.writeStudio(w, defaultStudioRegistry.ActivateScene(sessionID, req.SceneID))
+		value, err := defaultStudioRegistry.ActivateScene(sessionID, req.SceneID)
+		g.writeStudio(w, value, err)
 	case "sources":
 		if r.Method != http.MethodPost {
 			methodNotAllowed(w)
@@ -70,7 +70,8 @@ func (g *Gateway) studioRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		var source StudioSource
 		if !decodeJSON(w, r, &source) { return }
-		g.writeStudio(w, defaultStudioRegistry.RegisterSource(sessionID, source))
+		value, err := defaultStudioRegistry.RegisterSource(sessionID, source)
+		g.writeStudio(w, value, err)
 	case "output":
 		if r.Method != http.MethodPut {
 			methodNotAllowed(w)
@@ -81,7 +82,8 @@ func (g *Gateway) studioRoutes(w http.ResponseWriter, r *http.Request) {
 			Running bool `json:"running"`
 		}
 		if !decodeJSON(w, r, &req) { return }
-		g.writeStudio(w, defaultStudioRegistry.SetOutput(sessionID, req.Output, req.Running))
+		value, err := defaultStudioRegistry.SetOutput(sessionID, req.Output, req.Running)
+		g.writeStudio(w, value, err)
 	case "audio":
 		if r.Method != http.MethodPut {
 			methodNotAllowed(w)
@@ -89,7 +91,8 @@ func (g *Gateway) studioRoutes(w http.ResponseWriter, r *http.Request) {
 		}
 		var req struct{ Audio []StudioAudioBus `json:"audio"` }
 		if !decodeJSON(w, r, &req) { return }
-		g.writeStudio(w, defaultStudioRegistry.SetAudio(sessionID, req.Audio))
+		value, err := defaultStudioRegistry.SetAudio(sessionID, req.Audio)
+		g.writeStudio(w, value, err)
 	default:
 		http.NotFound(w, r)
 	}
@@ -103,8 +106,8 @@ func (g *Gateway) studioCreate(w http.ResponseWriter, r *http.Request, p Princip
 		http.Error(w, "session_id is required", http.StatusBadRequest)
 		return
 	}
-	rt, err := defaultStudioRegistry.Create(spec)
-	g.writeStudio(w, rt, err)
+	value, err := defaultStudioRegistry.Create(spec)
+	g.writeStudio(w, value, err)
 }
 
 func (g *Gateway) studioGet(w http.ResponseWriter, _ *http.Request, p Principal, id string) {
@@ -132,12 +135,14 @@ func (g *Gateway) studioSceneRoutes(w http.ResponseWriter, r *http.Request, sess
 		if r.Method != http.MethodPut { methodNotAllowed(w); return }
 		var scene StudioScene
 		if !decodeJSON(w, r, &scene) { return }
-		g.writeStudio(w, defaultStudioRegistry.UpdateScene(sessionID, scene))
+		value, err := defaultStudioRegistry.UpdateScene(sessionID, scene)
+		g.writeStudio(w, value, err)
 		return
 	}
 	if len(rest) == 1 && rest[0] != "" {
 		if r.Method != http.MethodDelete { methodNotAllowed(w); return }
-		g.writeStudio(w, defaultStudioRegistry.DeleteScene(sessionID, rest[0]))
+		value, err := defaultStudioRegistry.DeleteScene(sessionID, rest[0])
+		g.writeStudio(w, value, err)
 		return
 	}
 	http.NotFound(w, r)
@@ -146,7 +151,7 @@ func (g *Gateway) studioSceneRoutes(w http.ResponseWriter, r *http.Request, sess
 func (g *Gateway) writeStudio(w http.ResponseWriter, value StudioRuntime, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
-		if errors.Is(err, errors.New("studio session not found")) { status = http.StatusNotFound }
+		if strings.Contains(err.Error(), "session not found") { status = http.StatusNotFound }
 		http.Error(w, err.Error(), status)
 		return
 	}
