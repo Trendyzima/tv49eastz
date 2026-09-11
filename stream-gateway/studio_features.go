@@ -1,8 +1,9 @@
 package main
 
 // StudioCapability identifies a production feature exposed by the Live Studio
-// control plane. Runtime implementations can advertise only capabilities that
-// are actually available on the current device/session.
+// control plane. A capability is listed only when the current runtime can
+// execute that capability; roadmap items remain absent until their renderer,
+// media, or transport implementation is actually wired.
 type StudioCapability string
 
 const (
@@ -40,8 +41,9 @@ const (
 )
 
 // StudioFeatureSet is returned to clients so the UI can enable controls only
-// when their backend/device path is genuinely available. It prevents exposing
-// buttons for functionality that has not reached an executable implementation.
+// when their backend/device path is genuinely available. It is intentionally
+// conservative: declaring a roadmap item as available would create a broken
+// control surface and falsely imply that media rendering or transport exists.
 type StudioFeatureSet struct {
 	Phase1 []StudioCapability `json:"phase1"`
 	Phase2 []StudioCapability `json:"phase2"`
@@ -52,10 +54,19 @@ type StudioFeatureSet struct {
 
 func DefaultStudioFeatureSet() StudioFeatureSet {
 	return StudioFeatureSet{
-		Phase1: []StudioCapability{CapabilitySceneManager, CapabilityPreviewProgram, CapabilityCameraSource, CapabilityVideoSource, CapabilityCompositor, CapabilityPIP, CapabilityResolutionSelector, CapabilityProgramRecording, CapabilityAudioMixer},
-		Phase2: []StudioCapability{CapabilityVideoImport, CapabilityPIP, CapabilityPlaybackControls},
-		Phase3: []StudioCapability{CapabilityGraphics, CapabilityLowerThirds, CapabilityTicker, CapabilityLiveBadge, CapabilityGraphicTemplates, CapabilityTransitions},
-		Phase4: []StudioCapability{CapabilityRTMP, CapabilityRTMPS, CapabilitySRT, CapabilityNetworkMonitoring, CapabilityReconnect, CapabilityLocalBackup, CapabilityStreamHealth},
-		Phase5: []StudioCapability{CapabilityMultiCamera, CapabilityRemoteGuests, CapabilityTeleprompter, CapabilityRemoteControl, CapabilityAICaptions, CapabilityMultiDestination, CapabilityISORecording},
+		// Implemented today: authenticated session ownership, scene state,
+		// preview/program selection, source registration/update, and audio state.
+		Phase1: []StudioCapability{
+			CapabilitySceneManager,
+			CapabilityPreviewProgram,
+			CapabilityCameraSource,
+			CapabilityVideoSource,
+			CapabilityAudioMixer,
+		},
+		// These remain disabled until their executable runtime is merged.
+		Phase2: []StudioCapability{},
+		Phase3: []StudioCapability{},
+		Phase4: []StudioCapability{},
+		Phase5: []StudioCapability{},
 	}
 }
