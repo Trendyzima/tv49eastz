@@ -1,17 +1,17 @@
-# APK download and build integration
+# FadCam APK polish and integration
 
-- [x] Audit the Android modules and existing APK workflows.
-- [x] Confirm the FadCam module and TV receiver module have APK-producing Gradle tasks.
-- [x] Confirm the TV receiver application ID is `com.tv49.com`.
-- [x] Add a dedicated APK download page/documentation with stable release links.
-- [x] Add README navigation to the APK download page and direct latest-release APK links.
-- [x] Keep CI APK artifacts and production release APK assets aligned with the documented filenames.
-- [x] Make the verified Android certification workflow publish the two APKs as direct GitHub Release assets.
-- [x] Verify a GitHub Actions APK build passes on the resulting commit.
-- [ ] Verify a tagged production release publishes both signed APKs.
+- [x] Audit current master/feature surfaces and identify disconnected features.
+- [x] Verify capture-quality policy is implemented only in approved boundaries.
+- [x] Harden capture-quality fallback and low-light policy.
+- [x] Stop advertising unimplemented Live Studio roadmap capabilities as executable.
+- [x] Deep-copy Studio runtime state to prevent caller mutation of shared registry state.
+- [x] Add focused regression coverage.
+- [ ] Wire new controls into the existing recording/settings path without competing surfaces.
+- [ ] Audit remaining Live Studio runtime integration gaps.
+- [ ] Run protected-boundary, Go, Android unit/test, APK build, packaging, and artifact checks.
+- [ ] Fix every failing check and rerun until green.
+- [ ] Final review: no stubs, no duplicate settings surfaces, no unsafe fallback.
 
 ## Review
 
-The original download page exposed release URLs before any release assets existed, so the links correctly rendered as empty/404 destinations. The Android certification workflow is now the canonical CI publisher: it builds both release APKs, runs the existing Android tests, verifies APK alignment, checks package IDs, verifies the shared CI signing certificate, uploads the pair as a workflow artifact, and publishes `FadCam.apk` and `TV49East.apk` to the mutable `latest` GitHub Release. The verified run completed successfully on commit `bb81c0c6ae339bb0eb47271b4336c99c3d0e20da`, and the release contains both APK assets.
-
-Production signing remains separate and still requires the production release workflow and its signing secrets.
+The current pass deliberately preserves the protected FadCam application boundary. Android application source, resources, and manifest cannot be changed by policy; executable work must therefore remain in approved runtime/control-plane surfaces unless that boundary policy is explicitly changed.
