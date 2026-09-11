@@ -2,7 +2,7 @@ package main
 
 import "testing"
 
-func validStudioSpec(owner, id string) StudioSessionSpec {
+func validRegistryStudioSpec(owner, id string) StudioSessionSpec {
 	return StudioSessionSpec{
 		SessionID: id,
 		OwnerID: owner,
@@ -17,10 +17,10 @@ func validStudioSpec(owner, id string) StudioSessionSpec {
 
 func TestStudioRegistryLifecycle(t *testing.T) {
 	r := NewStudioRegistry()
-	created, err := r.Create(validStudioSpec("owner-a", "studio-a"))
+	created, err := r.Create(validRegistryStudioSpec("owner-a", "studio-a"))
 	if err != nil { t.Fatalf("create: %v", err) }
 	if created.ProgramScene != "scene-main" { t.Fatalf("unexpected program scene: %q", created.ProgramScene) }
-	if _, err := r.Create(validStudioSpec("owner-a", "studio-a")); err == nil { t.Fatal("duplicate session accepted") }
+	if _, err := r.Create(validRegistryStudioSpec("owner-a", "studio-a")); err == nil { t.Fatal("duplicate session accepted") }
 	if _, err := r.ActivateScene("studio-a", "missing"); err == nil { t.Fatal("missing scene activated") }
 	if _, err := r.RegisterSource("studio-a", StudioSource{ID: "video-1", Kind: SourceVideo, Name: "Clip", URI: "content://clip", Position: StudioRect{X: .7, Y: .7, W: .25, H: .25}}); err != nil { t.Fatalf("register source: %v", err) }
 	if got, ok := r.Get("studio-a"); !ok || got.Sources["video-1"].URI != "content://clip" { t.Fatal("source was not registered") }
@@ -30,7 +30,7 @@ func TestStudioRegistryLifecycle(t *testing.T) {
 
 func TestStudioOwnerIsolation(t *testing.T) {
 	id := "owner-isolation-studio"
-	if _, err := defaultStudioRegistry.Create(validStudioSpec("owner-a", id)); err != nil { t.Fatal(err) }
+	if _, err := defaultStudioRegistry.Create(validRegistryStudioSpec("owner-a", id)); err != nil { t.Fatal(err) }
 	defer defaultStudioRegistry.Delete(id)
 	g := &Gateway{}
 	if g.studioOwner(id, "owner-b") { t.Fatal("foreign owner authorized") }
@@ -39,7 +39,7 @@ func TestStudioOwnerIsolation(t *testing.T) {
 
 func TestStudioRegistryRejectsInvalidAudioAndOutput(t *testing.T) {
 	r := NewStudioRegistry()
-	if _, err := r.Create(validStudioSpec("owner-a", "studio-validation")); err != nil { t.Fatal(err) }
+	if _, err := r.Create(validRegistryStudioSpec("owner-a", "studio-validation")); err != nil { t.Fatal(err) }
 	if _, err := r.SetOutput("studio-validation", StudioOutputConfig{Width: 1, Height: 1, FPS: 30, VideoBitrate: 1, AudioBitrate: 1, RecordLocal: true}, false); err == nil { t.Fatal("invalid output accepted") }
 	if _, err := r.SetAudio("studio-validation", []StudioAudioBus{{SourceID: "not-present", Volume: 1}}); err == nil { t.Fatal("audio for unknown source accepted") }
 }
