@@ -1,8 +1,6 @@
 package main
 
-import (
-	"testing"
-)
+import "testing"
 
 func validStudioSpec(owner, id string) StudioSessionSpec {
 	return StudioSessionSpec{
@@ -31,16 +29,17 @@ func TestStudioRegistryLifecycle(t *testing.T) {
 }
 
 func TestStudioOwnerIsolation(t *testing.T) {
-	r := NewStudioRegistry()
-	if _, err := r.Create(validStudioSpec("owner-a", "studio-a")); err != nil { t.Fatal(err) }
+	id := "owner-isolation-studio"
+	if _, err := defaultStudioRegistry.Create(validStudioSpec("owner-a", id)); err != nil { t.Fatal(err) }
+	defer defaultStudioRegistry.Delete(id)
 	g := &Gateway{}
-	if g.studioOwner("studio-a", "owner-b") { t.Fatal("foreign owner authorized") }
-	if !g.studioOwner("studio-a", "owner-a") { t.Fatal("owner rejected") }
+	if g.studioOwner(id, "owner-b") { t.Fatal("foreign owner authorized") }
+	if !g.studioOwner(id, "owner-a") { t.Fatal("owner rejected") }
 }
 
 func TestStudioRegistryRejectsInvalidAudioAndOutput(t *testing.T) {
 	r := NewStudioRegistry()
-	if _, err := r.Create(validStudioSpec("owner-a", "studio-a")); err != nil { t.Fatal(err) }
-	if _, err := r.SetOutput("studio-a", StudioOutputConfig{Width: 1, Height: 1, FPS: 30, VideoBitrate: 1, AudioBitrate: 1, RecordLocal: true}, false); err == nil { t.Fatal("invalid output accepted") }
-	if _, err := r.SetAudio("studio-a", []StudioAudioBus{{SourceID: "not-present", Volume: 1}}); err == nil { t.Fatal("audio for unknown source accepted") }
+	if _, err := r.Create(validStudioSpec("owner-a", "studio-validation")); err != nil { t.Fatal(err) }
+	if _, err := r.SetOutput("studio-validation", StudioOutputConfig{Width: 1, Height: 1, FPS: 30, VideoBitrate: 1, AudioBitrate: 1, RecordLocal: true}, false); err == nil { t.Fatal("invalid output accepted") }
+	if _, err := r.SetAudio("studio-validation", []StudioAudioBus{{SourceID: "not-present", Volume: 1}}); err == nil { t.Fatal("audio for unknown source accepted") }
 }
