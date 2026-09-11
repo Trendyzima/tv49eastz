@@ -19,7 +19,7 @@ func (g *Gateway) studioRoutes(w http.ResponseWriter,r *http.Request){
  switch action{
  case "scenes":g.studioSceneRoutes(w,r,sid,parts[3:])
  case "preview":if r.Method!=http.MethodPost{methodNotAllowed(w);return};var q struct{SceneID string `json:"scene_id"`};if !decodeJSON(w,r,&q){return};v,e:=defaultStudioRegistry.SetPreviewScene(sid,q.SceneID);g.writeStudio(w,v,e)
- case "activate":if r.Method!=http.MethodPost{methodNotAllowed(w);return};var q struct{SceneID,Style string;DurationMS int `json:"duration_ms"`};if !decodeJSON(w,r,&q){return};v,e:=defaultStudioRegistry.TransitionScene(sid,q.SceneID,q.Style,q.DurationMS);g.writeStudio(w,v,e)
+ case "activate":if r.Method!=http.MethodPost{methodNotAllowed(w);return};var q struct{SceneID string `json:"scene_id"`;Style string `json:"style"`;DurationMS int `json:"duration_ms"`};if !decodeJSON(w,r,&q){return};v,e:=defaultStudioRegistry.TransitionScene(sid,q.SceneID,q.Style,q.DurationMS);g.writeStudio(w,v,e)
  case "sources":g.studioSourceRoutes(w,r,sid,parts[3:])
  case "output":if r.Method!=http.MethodPut{methodNotAllowed(w);return};var q struct{Output StudioOutputConfig `json:"output"`;Running bool `json:"running"`};if !decodeJSON(w,r,&q){return};v,e:=defaultStudioRegistry.SetOutput(sid,q.Output,q.Running);g.writeStudio(w,v,e)
  case "audio":if r.Method!=http.MethodPut{methodNotAllowed(w);return};var q struct{Audio []StudioAudioBus `json:"audio"`};if !decodeJSON(w,r,&q){return};v,e:=defaultStudioRegistry.SetAudio(sid,q.Audio);g.writeStudio(w,v,e)
