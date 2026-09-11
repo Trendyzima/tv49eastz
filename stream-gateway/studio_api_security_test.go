@@ -18,7 +18,7 @@ func TestStudioRoutesRejectsUnauthenticatedMutation(t *testing.T) {
 
 func TestStudioOwnerCannotBeImpersonatedByAnotherPrincipal(t *testing.T) {
 	id := "security-owner-studio"
-	if _, err := defaultStudioRegistry.Create(validStudioSpec("principal-a", id)); err != nil {
+	if _, err := defaultStudioRegistry.Create(validRegistryStudioSpec("principal-a", id)); err != nil {
 		t.Fatal(err)
 	}
 	defer defaultStudioRegistry.Delete(id)
