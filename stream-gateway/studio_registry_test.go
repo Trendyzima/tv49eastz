@@ -43,3 +43,18 @@ func TestStudioRegistryRejectsInvalidAudioAndOutput(t *testing.T) {
 	if _, err := r.SetOutput("studio-validation", StudioOutputConfig{Width: 1, Height: 1, FPS: 30, VideoBitrate: 1, AudioBitrate: 1, RecordLocal: true}, false); err == nil { t.Fatal("invalid output accepted") }
 	if _, err := r.SetAudio("studio-validation", []StudioAudioBus{{SourceID: "not-present", Volume: 1}}); err == nil { t.Fatal("audio for unknown source accepted") }
 }
+
+func TestStudioRegistryReturnsDeepCopies(t *testing.T) {
+	r := NewStudioRegistry()
+	if _, err := r.Create(validRegistryStudioSpec("owner-a", "studio-copy")); err != nil { t.Fatal(err) }
+	first, ok := r.Get("studio-copy")
+	if !ok { t.Fatal("session missing") }
+	first.Spec.Scenes[0].Name = "mutated externally"
+	first.Spec.Scenes[0].Sources[0].Name = "mutated source"
+	first.Sources["camera-1"] = StudioSource{ID: "camera-1", Kind: SourceCamera, Name: "mutated map", Position: StudioRect{X: 0, Y: 0, W: 1, H: 1}}
+	second, ok := r.Get("studio-copy")
+	if !ok { t.Fatal("session missing after mutation") }
+	if second.Spec.Scenes[0].Name != "Main" { t.Fatal("scene slice leaked registry state") }
+	if second.Spec.Scenes[0].Sources[0].Name != "Camera" { t.Fatal("nested source slice leaked registry state") }
+	if second.Sources["camera-1"].Name != "Camera" { t.Fatal("source map leaked registry state") }
+}
