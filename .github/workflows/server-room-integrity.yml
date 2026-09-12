@@ -3,7 +3,8 @@ name: Server Room Integrity
 on:
   pull_request:
   push:
-    branches: [master]
+    branches:
+      - master
 
 permissions:
   contents: read
@@ -25,7 +26,7 @@ jobs:
           set -euo pipefail
           baseline="$(tr -d '[:space:]' < server-room/BASELINE)"
           test -n "$baseline"
-          echo "sha=$baseline" >> "$GITHUB_OUTPUT"
+          printf 'sha=%s\n' "$baseline" >> "$GITHUB_OUTPUT"
 
       - name: Reject unauthorized changes inside protected FadCam boundary
         shell: bash
@@ -34,21 +35,26 @@ jobs:
         run: |
           set -euo pipefail
 
-          if ! git cat-file -e "$BASELINE^{commit}"; then
-            echo "Protected baseline $BASELINE is unavailable in this checkout."
+          if ! git cat-file -e "${BASELINE}^{commit}"; then
+            echo "Protected baseline ${BASELINE} is unavailable in this checkout."
             exit 1
           fi
 
-          echo "Protected baseline: $BASELINE"
+          echo "Protected baseline: ${BASELINE}"
           echo "Current revision:    $(git rev-parse HEAD)"
 
-          changed="$(git diff --name-only --no-renames "$BASELINE" HEAD -- \
+          changed_file="$(mktemp)"
+          exceptions_file="server-room/PROTECTED_EXCEPTIONS"
+          approved_file="$(mktemp)"
+          unauthorized_file="$(mktemp)"
+          trap 'rm -f "$changed_file" "$approved_file" "$unauthorized_file"' EXIT
+
+          git diff --name-only --no-renames "${BASELINE}" HEAD -- \
             'app/src/main/java/com/fadcam/**' \
             'app/src/main/res/**' \
-            'app/src/main/AndroidManifest.xml')"
+            'app/src/main/AndroidManifest.xml' > "$changed_file"
 
-          exceptions_file="server-room/PROTECTED_EXCEPTIONS"
-          approved_exceptions=""
+          : > "$approved_file"
           if [ -f "$exceptions_file" ]; then
             today="$(date -u +%F)"
             while IFS='|' read -r raw_path raw_approval raw_expiry raw_purpose; do
@@ -56,39 +62,44 @@ jobs:
               approval="$(printf '%s' "$raw_approval" | xargs)"
               expiry="$(printf '%s' "$raw_expiry" | xargs)"
               purpose="$(printf '%s' "$raw_purpose" | sed 's/^ *//')"
+
               [ -z "$path" ] && continue
               case "$path" in
                 \#*) continue ;;
               esac
+
               if [ -z "$approval" ] || [ -z "$expiry" ] || [ -z "$purpose" ]; then
                 echo "Malformed protected exception entry: $path"
                 exit 1
               fi
+
               if ! [[ "$expiry" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
                 echo "Invalid exception expiry for $path: $expiry"
                 exit 1
               fi
+
               if [[ "$expiry" < "$today" ]]; then
                 echo "Expired protected exception: $path (expired $expiry)"
                 exit 1
               fi
-              approved_exceptions="${approved_exceptions}${path}\n"
+
+              printf '%s\n' "$path" >> "$approved_file"
               echo "Approved exception: $path | $approval | expires $expiry | $purpose"
             done < "$exceptions_file"
           fi
 
-          unauthorized=""
+          : > "$unauthorized_file"
           while IFS= read -r path; do
             [ -z "$path" ] && continue
-            if printf '%b' "$approved_exceptions" | grep -Fxq "$path"; then
+            if grep -F -x -q "$path" "$approved_file"; then
               continue
             fi
-            unauthorized="${unauthorized}${path}\n"
-          done <<< "$changed"
+            printf '%s\n' "$path" >> "$unauthorized_file"
+          done < "$changed_file"
 
-          if [ -n "$(printf '%b' "$unauthorized" | sed '/^[[:space:]]*$/d')" ]; then
+          if [ -s "$unauthorized_file" ]; then
             echo "Unauthorized protected FadCam changes detected:"
-            printf '%b' "$unauthorized" | sed '/^[[:space:]]*$/d'
+            cat "$unauthorized_file"
             exit 1
           fi
 
