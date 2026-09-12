@@ -57,7 +57,9 @@ jobs:
               expiry="$(printf '%s' "$raw_expiry" | xargs)"
               purpose="$(printf '%s' "$raw_purpose" | sed 's/^ *//')"
               [ -z "$path" ] && continue
-              case "$path" in \#*) continue ;; esac
+              case "$path" in
+                \#*) continue ;;
+              esac
               if [ -z "$approval" ] || [ -z "$expiry" ] || [ -z "$purpose" ]; then
                 echo "Malformed protected exception entry: $path"
                 exit 1
@@ -70,8 +72,7 @@ jobs:
                 echo "Expired protected exception: $path (expired $expiry)"
                 exit 1
               fi
-              approved_exceptions="$approved_exceptions
-$path"
+              approved_exceptions="${approved_exceptions}${path}\n"
               echo "Approved exception: $path | $approval | expires $expiry | $purpose"
             done < "$exceptions_file"
           fi
@@ -79,16 +80,15 @@ $path"
           unauthorized=""
           while IFS= read -r path; do
             [ -z "$path" ] && continue
-            if printf '%s\n' "$approved_exceptions" | grep -Fxq "$path"; then
+            if printf '%b' "$approved_exceptions" | grep -Fxq "$path"; then
               continue
             fi
-            unauthorized="$unauthorized
-$path"
+            unauthorized="${unauthorized}${path}\n"
           done <<< "$changed"
 
-          if [ -n "$(printf '%s' "$unauthorized" | sed '/^[[:space:]]*$/d')" ]; then
+          if [ -n "$(printf '%b' "$unauthorized" | sed '/^[[:space:]]*$/d')" ]; then
             echo "Unauthorized protected FadCam changes detected:"
-            printf '%s\n' "$unauthorized" | sed '/^[[:space:]]*$/d'
+            printf '%b' "$unauthorized" | sed '/^[[:space:]]*$/d'
             exit 1
           fi
 
