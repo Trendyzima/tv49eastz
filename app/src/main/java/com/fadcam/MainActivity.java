@@ -361,10 +361,10 @@ public class MainActivity extends AppCompatActivity {
         } catch (Exception e) {
             FLog.w("UpdateCheck", "App identity log failed: " + e.getMessage());
         }
+        // AndroidX requires splash installation before Activity.onCreate().
+        SplashScreen.installSplashScreen(this);
         super.onCreate(savedInstanceState);
         swipeTouchSlop = ViewConfiguration.get(this).getScaledTouchSlop();
-        // Install splash screen (shows the themed windowSplashScreenAnimatedIcon)
-        SplashScreen.installSplashScreen(this);
         // Apply user-selected theme AFTER splash so postSplashScreenTheme replaced by
         // dynamic choice
         applyTheme();
