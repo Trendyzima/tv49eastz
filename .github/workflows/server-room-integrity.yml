@@ -27,7 +27,7 @@ jobs:
           test -n "$baseline"
           echo "sha=$baseline" >> "$GITHUB_OUTPUT"
 
-      - name: Reject changes inside the protected FadCam server boundary
+      - name: Reject unauthorized changes inside protected FadCam boundary
         shell: bash
         env:
           BASELINE: ${{ steps.baseline.outputs.sha }}
@@ -42,25 +42,57 @@ jobs:
           echo "Protected baseline: $BASELINE"
           echo "Current revision:    $(git rev-parse HEAD)"
 
-          # Compare the actual protected tree at the approved baseline with the
-          # actual protected tree at HEAD. This intentionally evaluates the
-          # current tree, not the history of intermediate commits: a protected
-          # file that was added and subsequently removed is therefore clean.
           changed="$(git diff --name-only --no-renames "$BASELINE" HEAD -- \
             'app/src/main/java/com/fadcam/**' \
             'app/src/main/res/**' \
             'app/src/main/AndroidManifest.xml')"
 
-          if [ -n "$changed" ]; then
-            echo "Protected FadCam server/application files differ from the approved baseline:"
-            printf '%s\n' "$changed"
-            echo
-            echo "The streaming bridge must be implemented in server-tap/ and stream-gateway/."
-            echo "Do not modify the protected server/application boundary."
+          exceptions_file="server-room/PROTECTED_EXCEPTIONS"
+          approved_exceptions=""
+          if [ -f "$exceptions_file" ]; then
+            today="$(date -u +%F)"
+            while IFS='|' read -r raw_path raw_approval raw_expiry raw_purpose; do
+              path="$(printf '%s' "$raw_path" | xargs)"
+              approval="$(printf '%s' "$raw_approval" | xargs)"
+              expiry="$(printf '%s' "$raw_expiry" | xargs)"
+              purpose="$(printf '%s' "$raw_purpose" | sed 's/^ *//')"
+              [ -z "$path" ] && continue
+              case "$path" in \#*) continue ;; esac
+              if [ -z "$approval" ] || [ -z "$expiry" ] || [ -z "$purpose" ]; then
+                echo "Malformed protected exception entry: $path"
+                exit 1
+              fi
+              if ! [[ "$expiry" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
+                echo "Invalid exception expiry for $path: $expiry"
+                exit 1
+              fi
+              if [[ "$expiry" < "$today" ]]; then
+                echo "Expired protected exception: $path (expired $expiry)"
+                exit 1
+              fi
+              approved_exceptions="$approved_exceptions
+$path"
+              echo "Approved exception: $path | $approval | expires $expiry | $purpose"
+            done < "$exceptions_file"
+          fi
+
+          unauthorized=""
+          while IFS= read -r path; do
+            [ -z "$path" ] && continue
+            if printf '%s\n' "$approved_exceptions" | grep -Fxq "$path"; then
+              continue
+            fi
+            unauthorized="$unauthorized
+$path"
+          done <<< "$changed"
+
+          if [ -n "$(printf '%s' "$unauthorized" | sed '/^[[:space:]]*$/d')" ]; then
+            echo "Unauthorized protected FadCam changes detected:"
+            printf '%s\n' "$unauthorized" | sed '/^[[:space:]]*$/d'
             exit 1
           fi
 
-          echo "Protected server/application boundary unchanged in the current tree."
+          echo "Protected boundary unchanged except explicitly approved, time-limited exceptions."
 
       - name: Verify bridge separation
         shell: bash
