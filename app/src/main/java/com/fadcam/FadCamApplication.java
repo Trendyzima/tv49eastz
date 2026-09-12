@@ -51,13 +51,26 @@ public class FadCamApplication extends Application implements LifecycleObserver 
         }
     }
 
+    private void safelyNotifyRecordingService(String action) {
+        Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
+        intent.setAction(action);
+        try {
+            startService(intent);
+        } catch (IllegalStateException e) {
+            // Modern Android may reject a background service start. Lifecycle
+            // notification must never crash the application process.
+            com.fadcam.FLog.w("FadCamApplication", "Lifecycle service start rejected: " + action, e);
+        } catch (SecurityException e) {
+            // Treat policy/security rejection as a non-fatal lifecycle event.
+            com.fadcam.FLog.w("FadCamApplication", "Lifecycle service start denied: " + action, e);
+        }
+    }
+
     @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
     public void onAppBackgrounded() {
         // App is in background, reset AppLock session
         SharedPreferencesManager.getInstance(this).setAppLockSessionUnlocked(false);
-        Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
-        intent.setAction("ACTION_APP_BACKGROUND");
-        startService(intent);
+        safelyNotifyRecordingService("ACTION_APP_BACKGROUND");
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_START)
@@ -81,9 +94,7 @@ public class FadCamApplication extends Application implements LifecycleObserver 
                                                activityClassName.contains("RecordingActivity");
                     
                     if (isRecordingRelated) {
-                        Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
-                        intent.setAction("ACTION_APP_FOREGROUND");
-                        startService(intent);
+                        safelyNotifyRecordingService("ACTION_APP_FOREGROUND");
                     }
                     return;
                 }
@@ -91,8 +102,6 @@ public class FadCamApplication extends Application implements LifecycleObserver 
         }
         
         // Fallback: send the broadcast anyway (error case)
-        Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
-        intent.setAction("ACTION_APP_FOREGROUND");
-        startService(intent);
+        safelyNotifyRecordingService("ACTION_APP_FOREGROUND");
     }
-} 
+}
