@@ -1,3 +1,4 @@
 # Time-limited, surgical exceptions to the protected FadCam boundary.
 # Format: path | approval-reference | expiry (YYYY-MM-DD) | purpose
 app/src/main/java/com/fadcam/FadCamApplication.java | USER-AUTHORIZED-2026-09-12 | 2026-10-12 | Prevent lifecycle-triggered service-start crashes on modern Android
+app/src/main/java/com/fadcam/MainActivity.java | USER-AUTHORIZED-2026-09-12 | 2026-10-12 | Correct AndroidX SplashScreen installation order causing launch-time failure
