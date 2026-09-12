@@ -136,4 +136,4 @@ jobs:
       - name: Publish deployment URL to job summary
         env:
           CF_URL: ${{ steps.deployment_url.outputs.cf_url }}
-        run: echo "Production Worker endpoint: $CF_URL" >> "$GITHUB_STEP_SUMMARY"
+        run: 'echo "Production Worker endpoint: $CF_URL" >> "$GITHUB_STEP_SUMMARY"'
