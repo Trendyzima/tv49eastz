@@ -1,107 +1,126 @@
 package com.fadcam;
 
-import android.app.Application;
 import android.app.ActivityManager;
-import androidx.lifecycle.ProcessLifecycleOwner;
+import android.app.Application;
+import android.content.ComponentName;
+import android.content.Context;
+import android.content.Intent;
+
+import androidx.lifecycle.Lifecycle;
 import androidx.lifecycle.LifecycleObserver;
 import androidx.lifecycle.OnLifecycleEvent;
-import androidx.lifecycle.Lifecycle;
-import android.content.Intent;
-import android.content.ComponentName;
+import androidx.lifecycle.ProcessLifecycleOwner;
 
 public class FadCamApplication extends Application implements LifecycleObserver {
+    private static final String TAG = "FadCamApplication";
+
     @Override
     public void onCreate() {
         super.onCreate();
         ProcessLifecycleOwner.get().getLifecycle().addObserver(this);
-        // Room DB open + invalidation observer registration is deferred off the
-        // main thread: cold start must not block on SQLite open. The observer
-        // still catches post-kill index writes (invocation is on Room's own
-        // background invalidation thread either way).
+
+        // Keep Room observer registration off the main thread. This observer must
+        // never be allowed to interfere with application launch.
         new Thread(this::registerSelfHealingScanObserver, "selfheal-observer").start();
     }
 
     /**
-     * Native, instant self-healing trigger (issue #332): Room fires this callback
-     * the moment ANY row is inserted/updated in the video index — e.g. an
-     * abandoned recording being indexed after the process was killed. No polling,
-     * no timers: the scan runs exactly when a new file enters the index and only
-     * touches rows still marked pending (finalized=0). Single-flight coalescing
-     * in the scan itself absorbs bursts.
+     * Register the native self-healing trigger without starting RecordingService.
+     * The observer only reacts to index changes after Room has initialized.
      */
     private void registerSelfHealingScanObserver() {
         try {
-            final android.content.Context app = this;
-            androidx.room.RoomDatabase db = com.fadcam.data.VideoIndexDatabase.getInstance(this);
-            db.getInvalidationTracker().addObserver(new androidx.room.InvalidationTracker.Observer(
-                    new String[]{"video_index"}) {
-                @Override
-                public void onInvalidated(@androidx.annotation.NonNull java.util.Set<String> tables) {
-                    // Runs on Room's invalidation thread (background).
-                    try {
-                        com.fadcam.services.RecordingService.runSelfHealingScan(app, null);
-                    } catch (Exception e) {
-                        com.fadcam.FLog.w("FadCamApplication", "Self-healing scan trigger failed", e);
-                    }
-                }
-            });
-            com.fadcam.FLog.d("FadCamApplication", "Self-healing scan observer registered (video_index)");
+            final Context app = getApplicationContext();
+            androidx.room.RoomDatabase db =
+                    com.fadcam.data.VideoIndexDatabase.getInstance(app);
+            db.getInvalidationTracker().addObserver(
+                    new androidx.room.InvalidationTracker.Observer(new String[]{"video_index"}) {
+                        @Override
+                        public void onInvalidated(
+                                @androidx.annotation.NonNull java.util.Set<String> tables) {
+                            try {
+                                com.fadcam.services.RecordingService.runSelfHealingScan(app, null);
+                            } catch (Exception e) {
+                                FLog.w(TAG, "Self-healing scan trigger failed", e);
+                            }
+                        }
+                    });
+            FLog.d(TAG, "Self-healing scan observer registered (video_index)");
         } catch (Exception e) {
-            com.fadcam.FLog.w("FadCamApplication", "Failed to register self-healing scan observer", e);
+            FLog.w(TAG, "Failed to register self-healing scan observer", e);
         }
     }
 
-    private void safelyNotifyRecordingService(String action) {
+    /**
+     * Lifecycle notifications must never create RecordingService implicitly.
+     * Creating the full camera service from Application ON_START/ON_STOP caused
+     * launch-time crashes when optional service initialization failed or Android
+     * rejected a background start. Notify the service only when it is already
+     * running; actual service creation remains owned by explicit user actions.
+     */
+    private void safelyNotifyRunningRecordingService(String action) {
+        if (!isRecordingServiceRunning()) {
+            FLog.d(TAG, "Skipping lifecycle notification; RecordingService is not running: " + action);
+            return;
+        }
+
         Intent intent = new Intent(this, com.fadcam.services.RecordingService.class);
         intent.setAction(action);
         try {
+            // Explicitly target the already-running service without creating a new
+            // service instance merely to deliver a lifecycle event.
             startService(intent);
         } catch (IllegalStateException e) {
-            // Modern Android may reject a background service start. Lifecycle
-            // notification must never crash the application process.
-            com.fadcam.FLog.w("FadCamApplication", "Lifecycle service start rejected: " + action, e);
+            FLog.w(TAG, "Lifecycle service notification rejected: " + action, e);
         } catch (SecurityException e) {
-            // Treat policy/security rejection as a non-fatal lifecycle event.
-            com.fadcam.FLog.w("FadCamApplication", "Lifecycle service start denied: " + action, e);
+            FLog.w(TAG, "Lifecycle service notification denied: " + action, e);
+        } catch (RuntimeException e) {
+            FLog.w(TAG, "Unexpected lifecycle notification failure: " + action, e);
         }
+    }
+
+    private boolean isRecordingServiceRunning() {
+        try {
+            ActivityManager manager =
+                    (ActivityManager) getSystemService(Context.ACTIVITY_SERVICE);
+            if (manager == null) {
+                return false;
+            }
+            java.util.List<ActivityManager.RunningServiceInfo> services =
+                    manager.getRunningServices(Integer.MAX_VALUE);
+            String packageName = getPackageName();
+            for (ActivityManager.RunningServiceInfo service : services) {
+                ComponentName name = service.service;
+                if (name != null
+                        && packageName.equals(name.getPackageName())
+                        && com.fadcam.services.RecordingService.class.getName()
+                                .equals(name.getClassName())) {
+                    return true;
+                }
+            }
+        } catch (SecurityException e) {
+            FLog.w(TAG, "Unable to inspect running services", e);
+        } catch (RuntimeException e) {
+            FLog.w(TAG, "Running-service inspection failed", e);
+        }
+        return false;
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
     public void onAppBackgrounded() {
-        // App is in background, reset AppLock session
-        SharedPreferencesManager.getInstance(this).setAppLockSessionUnlocked(false);
-        safelyNotifyRecordingService("ACTION_APP_BACKGROUND");
+        try {
+            SharedPreferencesManager.getInstance(this).setAppLockSessionUnlocked(false);
+        } catch (RuntimeException e) {
+            FLog.w(TAG, "Failed to reset AppLock lifecycle state", e);
+        }
+        safelyNotifyRunningRecordingService("ACTION_APP_BACKGROUND");
     }
 
     @OnLifecycleEvent(Lifecycle.Event.ON_START)
     public void onAppForegrounded() {
-        // Don't send it for TextEditorActivity, TransparentPermissionActivity, etc.
-        // which are transparent/standalone and shouldn't wake up the main app
-        
-        // Get the currently focused activity
-        ActivityManager am = (ActivityManager) getSystemService(ACTIVITY_SERVICE);
-        if (am != null) {
-            java.util.List<ActivityManager.RunningTaskInfo> tasks = am.getRunningTasks(1);
-            if (!tasks.isEmpty()) {
-                ComponentName topActivity = tasks.get(0).topActivity;
-                if (topActivity != null) {
-                    String activityClassName = topActivity.getClassName();
-                    
-                    // Only send ACTION_APP_FOREGROUND for MainActivity (camera) or FadRecHomeFragment
-                    // Skip for transparent activities like TextEditorActivity, TransparentPermissionActivity
-                    boolean isRecordingRelated = activityClassName.contains("MainActivity") || 
-                                               activityClassName.contains("FadRecHomeActivity") ||
-                                               activityClassName.contains("RecordingActivity");
-                    
-                    if (isRecordingRelated) {
-                        safelyNotifyRecordingService("ACTION_APP_FOREGROUND");
-                    }
-                    return;
-                }
-            }
-        }
-        
-        // Fallback: send the broadcast anyway (error case)
-        safelyNotifyRecordingService("ACTION_APP_FOREGROUND");
+        // Do not inspect or launch activities/services during cold start. If the
+        // recording service is already alive, it may receive the notification;
+        // otherwise no lifecycle action is required.
+        safelyNotifyRunningRecordingService("ACTION_APP_FOREGROUND");
     }
 }
