@@ -1,1 +1,1 @@
-/* SURGICAL UPDATE REQUIRED: fetch the complete current MainActivity.java before applying a line-level patch. */
+package com.fadcam;
